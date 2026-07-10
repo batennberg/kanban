@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Almaly Kanban{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    {% block body %}{% endblock %}
+    <div id="toastContainer"></div>
+
+    <!-- ===== SHORTCUTS MODAL ===== -->
+    <div id="shortcutsModal" class="shortcuts-overlay" style="display:none" onclick="if(event.target===this)closeShortcuts()">
+        <div class="shortcuts-panel">
+            <div class="shortcuts-header">
+                <span class="shortcuts-title">Горячие клавиши</span>
+                <button class="shortcuts-close" onclick="closeShortcuts()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="shortcuts-list">
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>Esc</kbd></span><span>Закрыть модал / dropdown</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>?</kbd></span><span>Эта подсказка</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>K</kbd></span><span>Глобальный поиск</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>,</kbd></span><span>Открыть профиль</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>Enter</kbd></span><span>Отправить комментарий</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== SEARCH MODAL ===== -->
+    <div id="searchModal" class="search-overlay" style="display:none" onclick="if(event.target===this)closeSearch()">
+        <div class="search-panel">
+            <div class="search-input-wrap">
+                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input id="searchInput" class="search-input" type="text" placeholder="Поиск карточек..." autocomplete="off">
+                <kbd class="search-esc-kbd">Esc</kbd>
+            </div>
+            <div id="searchResults" class="search-results"></div>
+        </div>
+    </div>
+
+    {% block scripts %}{% endblock %}
+    <script>
+    function showToast(msg, type, duration) {
+        type = type || 'default';
+        duration = duration || 3000;
+        var c = document.getElementById('toastContainer');
+        var t = document.createElement('div');
+        t.className = 'toast toast--' + type;
+        t.textContent = msg;
+        c.appendChild(t);
+        requestAnimationFrame(function() {
+            requestAnimationFrame(function() { t.classList.add('toast--visible'); });
+        });
+        setTimeout(function() {
+            t.classList.remove('toast--visible');
+            t.addEventListener('transitionend', function() { t.remove(); }, { once: true });
+        }, duration);
+    }
+
+    function openShortcuts()  { document.getElementById('shortcutsModal').style.display = 'flex'; }
+    function closeShortcuts() { document.getElementById('shortcutsModal').style.display = 'none'; }
+
+    document.addEventListener('keydown', function(e) {
+        var tag = e.target.tagName;
+        var inInput = ['INPUT','TEXTAREA','SELECT'].includes(tag) || e.target.isContentEditable;
+
+        if (e.key === 'Escape') {
+            var srch = document.getElementById('searchModal');
+            var sm   = document.getElementById('shortcutsModal');
+            var cm   = document.getElementById('cardModal');
+            var qo   = document.getElementById('quickEditOverlay');
+            var bs   = document.getElementById('boardSwitcherPanel');
+            var pm   = document.getElementById('profileModal');
+            var pd   = document.getElementById('profileDropdown');
+            if (srch && srch.style.display !== 'none')                      { closeSearch(); }
+            else if (sm && sm.style.display !== 'none')                     { closeShortcuts(); }
+            else if (cm && cm.style.display !== 'none')                     { window.closeCardModal     && window.closeCardModal(); }
+            else if (qo && qo.classList.contains('active'))                 { window.closeQuickEdit     && window.closeQuickEdit(); }
+            else if (bs && bs.style.display !== 'none')                     { window.closeBoardSwitcher && window.closeBoardSwitcher(); }
+            else if (pm && pm.style.display !== 'none')                     { window.closeProfileModal  && window.closeProfileModal(); }
+            else if (pd && pd.classList.contains('profile-dropdown--open')) { window.closeProfileDropdown && window.closeProfileDropdown(); }
+            return;
+        }
+        if (e.ctrlKey && e.code === 'KeyK') { e.preventDefault(); openSearch(); return; }
+        if (inInput) return;
+        if (e.key === '?') { openShortcuts(); }
+        if (e.ctrlKey && e.code === 'Comma') { e.preventDefault(); window.openProfileModal && window.openProfileModal(); }
+    });
+
+    function openSearch() {
+        document.getElementById('searchModal').style.display = 'flex';
+        setTimeout(function() { document.getElementById('searchInput').focus(); }, 30);
+    }
+    function closeSearch() {
+        document.getElementById('searchModal').style.display = 'none';
+        document.getElementById('searchInput').value = '';
+        document.getElementById('searchResults').innerHTML = '';
+    }
+
+    var _searchTimer;
+    document.getElementById('searchInput').addEventListener('input', function() {
+        clearTimeout(_searchTimer);
+        var q = this.value.trim();
+        if (q.length < 2) { document.getElementById('searchResults').innerHTML = ''; return; }
+        _searchTimer = setTimeout(function() { _doSearch(q); }, 280);
+    });
+    document.getElementById('searchInput').addEventListener('keydown', function(e) {
+        var items = document.querySelectorAll('.search-result-item');
+        if (!items.length) return;
+        var active = document.querySelector('.search-result-item--active');
+        var idx = active ? parseInt(active.dataset.index) : -1;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            items.forEach(function(el) { el.classList.remove('search-result-item--active'); });
+            items[Math.min(idx + 1, items.length - 1)].classList.add('search-result-item--active');
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            items.forEach(function(el) { el.classList.remove('search-result-item--active'); });
+            items[Math.max(idx - 1, 0)].classList.add('search-result-item--active');
+        } else if (e.key === 'Enter') {
+            var a = document.querySelector('.search-result-item--active');
+            if (a) a.click();
+        }
+    });
+
+    function _escHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+    async function _doSearch(q) {
+        var res = await fetch('/api/search?q=' + encodeURIComponent(q));
+        if (!res.ok) return;
+        var data = await res.json();
+        var container = document.getElementById('searchResults');
+        if (!data.length) {
+            container.innerHTML = '<p class="search-empty">Ничего не найдено</p>';
+            return;
+        }
+        container.innerHTML = data.map(function(r, i) {
+            var color = _escHtml(r.board_color || '#4361EE');
+            return '<a class="search-result-item" href="/board/' + r.board_id + '" data-index="' + i + '">' +
+                '<span class="sr-dot" style="background:' + color + '"></span>' +
+                '<span class="sr-body">' +
+                    '<span class="sr-title">' + _escHtml(r.title) + '</span>' +
+                    '<span class="sr-meta">' + _escHtml(r.board_name) + ' · ' + _escHtml(r.column_name) + '</span>' +
+                '</span>' +
+            '</a>';
+        }).join('');
+    }
+
+    function showUndoToast(msg, onCommit, onUndo) {
+        var c = document.getElementById('toastContainer');
+        var t = document.createElement('div');
+        t.className = 'toast toast--undo';
+        t.innerHTML = '<span>' + msg + '</span><button class="toast-undo-btn">Отменить</button>';
+        c.appendChild(t);
+        requestAnimationFrame(function() {
+            requestAnimationFrame(function() { t.classList.add('toast--visible'); });
+        });
+        var timer = setTimeout(function() {
+            dismiss();
+            onCommit();
+        }, 5000);
+        function dismiss() {
+            t.classList.remove('toast--visible');
+            t.addEventListener('transitionend', function() { t.remove(); }, { once: true });
+        }
+        t.querySelector('.toast-undo-btn').onclick = function() {
+            clearTimeout(timer);
+            dismiss();
+            onUndo();
+        };
+    }
+    </script>
+</body>
+</html>

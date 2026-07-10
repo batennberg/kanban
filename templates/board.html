@@ -1,0 +1,689 @@
+{% extends 'base.html' %}
+{% block title %}{{ board.name }} — Almaly Kanban{% endblock %}
+
+{% block head %}
+<style>
+    html, body { overflow: hidden; height: 100%; }
+    .board-page { --bcolor: {{ board.color }}; }
+    {% if board.bg_image %}
+    .board-page {
+        background-image: url('/static/uploads/board-bg/{{ board.bg_image }}');
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+    }
+    .board-page::before {
+        content: ''; position: fixed; inset: 0;
+        background: rgba(0,0,0,0.38); z-index: 0; pointer-events: none;
+    }
+    .navbar--board { background: rgba(0,0,0,0.48) !important; backdrop-filter: blur(14px); }
+    .board-columns-wrap { position: relative; z-index: 1; }
+    .column { background: rgba(255,255,255,0.13); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.18); }
+    .column-header h3, .column-count, .btn-add-card { color: #fff; }
+    .btn-board-action { color: rgba(255,255,255,0.9); }
+    .btn-board-action:hover { background: rgba(255,255,255,0.15); }
+    {% endif %}
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="board-page">
+    <nav class="navbar navbar--board" style="background: {{ board.color }}cc; backdrop-filter: blur(8px);">
+        <div class="navbar-left">
+            <a href="/boards" class="btn-back" title="К доскам">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M19 12H5M12 5l-7 7 7 7"/>
+                </svg>
+            </a>
+            <div class="board-breadcrumb">
+                {% if board.workspace_name %}
+                <a href="/boards" class="board-bc-ws">{{ board.workspace_name }}</a>
+                <span class="board-bc-sep">›</span>
+                {% endif %}
+                <span class="board-bc-name">{{ board.name }}</span>
+            </div>
+        </div>
+        <div class="navbar-right">
+            <button class="btn-board-action" id="btnBoardSwitcher" onclick="openBoardSwitcher(this)" title="Перейти к другой доске (b)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                    <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+                </svg><span class="btn-act-text">Доски</span>
+            </button>
+            <button class="btn-board-action" id="btnMembers" onclick="openMembersPanel(this)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg><span class="btn-act-text">Участники</span>
+            </button>
+            <button class="btn-board-action" id="btnFilters" onclick="toggleFiltersPanel()">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px">
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                </svg><span class="btn-act-text">Фильтры</span>
+            </button>
+            <button class="btn-board-action" id="btnBoardSettings" onclick="openBoardSettings(this)" title="Настройки доски">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="btn-act-text">Настройки</span>
+            </button>
+            <button class="btn-board-action" onclick="openArchivePanel()" title="Архив карточек">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12v6M14 12v6"/></svg><span class="btn-act-text">Архив</span>
+            </button>
+            <a href="/api/boards/{{ board.id }}/export" class="btn-board-action" title="Экспорт в CSV">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span class="btn-act-text">Экспорт</span>
+            </a>
+            <button class="user-avatar-btn" id="userAvatarBtn"
+                    onclick="toggleProfileDropdown(event)"
+                    data-color="{{ user.avatar_color or '#4361EE' }}">
+                {% if user.avatar_photo %}
+                <img src="/uploads/avatars/{{ user.avatar_photo }}" class="ua-photo" alt="">
+                {% else %}
+                <span class="ua-initials" style="background:{{ user.avatar_color or '#4361EE' }}">{{ user.name[0].upper() }}</span>
+                {% endif %}
+            </button>
+        </div>
+    </nav>
+
+    <!-- ===== FILTER BAR ===== -->
+    <div id="filterBar" class="filter-bar" style="display:none">
+        <div class="fb-section">
+            <span class="fb-label">Метка</span>
+            <div id="fbLabelChips" class="fb-chips"></div>
+        </div>
+        <div class="fb-section">
+            <span class="fb-label">Срок</span>
+            <button class="fb-chip" data-filter-due="overdue" onclick="toggleDueFilter(this)">Просрочено</button>
+            <button class="fb-chip" data-filter-due="today" onclick="toggleDueFilter(this)">Сегодня / завтра</button>
+        </div>
+        <div class="fb-section">
+            <span class="fb-label">Статус</span>
+            <button class="fb-chip" data-filter-done="active" onclick="toggleDoneFilter(this)">Активные</button>
+            <button class="fb-chip" data-filter-done="done" onclick="toggleDoneFilter(this)">Выполненные</button>
+        </div>
+        <button class="fb-clear-btn" onclick="clearFilters()">Сбросить</button>
+    </div>
+
+    <!-- ===== ARCHIVE PANEL ===== -->
+    <div id="archivePanel" class="archive-panel" style="display:none">
+        <div class="ap-header">
+            <span class="ap-title">Архив карточек</span>
+            <button class="mp-close" onclick="closeArchivePanel()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div id="archiveList" class="ap-list">
+            <div class="ap-loading">Загрузка...</div>
+        </div>
+    </div>
+
+    <!-- ===== MEMBERS PANEL ===== -->
+    <div id="membersPanel" class="members-panel" style="display:none">
+        <div class="mp-header">
+            <span class="mp-title">Участники доски</span>
+            <button class="mp-close" onclick="closeMembersPanel()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div id="mpList" class="mp-list">
+            <div class="mp-loading">Загрузка...</div>
+        </div>
+    </div>
+
+    <!-- ===== BOARD SWITCHER PANEL ===== -->
+    <div id="boardSwitcherPanel" class="board-switcher" style="display:none">
+        <div class="bs-header">
+            <span class="bs-title">Перейти к доске</span>
+            <button class="mp-close" onclick="closeBoardSwitcher()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="bs-search-wrap">
+            <input class="bs-search-input" id="bsSearchInput" type="text"
+                   placeholder="Поиск досок..." oninput="filterBoardSwitcher(this.value)">
+        </div>
+        <div id="bsList" class="bs-list">
+            <div class="mp-loading">Загрузка...</div>
+        </div>
+    </div>
+
+    <!-- ===== BOARD SETTINGS PANEL ===== -->
+    <div id="boardSettingsPanel" class="board-settings-panel" style="display:none">
+        <div class="bsp-header">
+            <span class="bsp-title">Настройки доски</span>
+            <button class="bsp-close" onclick="closeBoardSettings()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="bsp-body">
+            <div class="bsp-field-group">
+                <label class="bsp-label">Название доски</label>
+                <input class="bsp-input" id="bspNameInput" type="text" value="{{ board.name }}">
+            </div>
+
+            <div class="bsp-field-group">
+                <label class="bsp-label">Цвет акцента</label>
+                <div class="bsp-colors" id="bspColorPalette">
+                    {% for c in ['#0052cc','#4361EE','#7B2FBE','#00875a','#de350b','#ff8b00','#00b8d9','#1a1a2e'] %}
+                    <button class="bsp-color-swatch {{ 'bsp-color-swatch--active' if board.color == c else '' }}"
+                            style="background:{{ c }}" onclick="selectBoardColor('{{ c }}')" data-color="{{ c }}"></button>
+                    {% endfor %}
+                    <label class="bsp-color-custom" title="Любой цвет">
+                        <input type="color" id="bspColorCustom" value="{{ board.color }}" oninput="selectBoardColor(this.value)">
+                        <span>+</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="bsp-field-group">
+                <label class="bsp-label">Фон доски</label>
+                {% if board.bg_image %}
+                <div class="bsp-bg-preview" id="bspBgPreview">
+                    <img src="/static/uploads/board-bg/{{ board.bg_image }}" alt="Фон доски">
+                    <button class="bsp-bg-remove" onclick="removeBoardBackground()">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        Удалить фото
+                    </button>
+                </div>
+                {% else %}
+                <div id="bspBgPreview" style="display:none" class="bsp-bg-preview">
+                    <img id="bspBgImg" src="" alt="Фон доски">
+                    <button class="bsp-bg-remove" onclick="removeBoardBackground()">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        Удалить фото
+                    </button>
+                </div>
+                {% endif %}
+                <label class="bsp-upload-btn" id="bspUploadLabel" {% if board.bg_image %}style="display:none"{% endif %}>
+                    <input type="file" accept="image/*" hidden id="bspBgInput" onchange="uploadBoardBackground(this)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Загрузить фото
+                </label>
+            </div>
+
+            <button class="btn-primary bsp-save-btn" onclick="saveBoardSettings()">Сохранить</button>
+            <div class="bsp-msg" id="bspMsg"></div>
+        </div>
+    </div>
+
+    <!-- ===== COLUMN MENU DROPDOWN ===== -->
+    <div id="colMenuDropdown" class="col-menu-dd" style="display:none">
+        <button class="col-menu-item" onclick="colMenuRename()">Переименовать</button>
+        <div class="col-menu-sep"></div>
+        <button class="col-menu-item" onclick="colMenuSort('name')">Сортировать А→Я</button>
+        <button class="col-menu-item" onclick="colMenuSort('due')">Сортировать по сроку</button>
+        <button class="col-menu-item" onclick="colMenuSort('created')">Сортировать по дате создания</button>
+        <div class="col-menu-sep"></div>
+        <button class="col-menu-item col-menu-item--danger" onclick="colMenuDelete()">Удалить список</button>
+    </div>
+
+    <div class="board-columns-wrap">
+        <div class="board-columns" id="boardColumns" data-board-id="{{ board_id }}" data-user-role="{{ user.role }}">
+            {% for col in board.columns %}
+            <div class="column" id="column-{{ col.id }}" data-col-id="{{ col.id }}">
+                <div class="column-header">
+                    <h3 class="column-title"
+                        onclick="startRenameColumn(this)"
+                        title="Нажмите для переименования">{{ col.name }}</h3>
+                    <span class="column-count">{{ col.cards | length }}</span>
+                    <button class="column-menu-btn" onclick="openColumnMenu(event, this)" title="Меню">⋯</button>
+                </div>
+                <div class="cards-list" id="cards-{{ col.id }}" data-col-id="{{ col.id }}">
+                    {% for card in col.cards %}
+                    <div class="card{% if card.completed %} card--done{% endif %}"
+                         id="card-{{ card.id }}"
+                         data-card-id="{{ card.id }}"
+                         data-linked-board-id="{{ card.linked_board_id or '' }}"
+                         draggable="true"
+                         onclick="openCardModal(event, this)">
+                        {% if card.cover_color %}
+                        <div class="card-cover" style="background:{{ card.cover_color }}"></div>
+                        {% endif %}
+                        <button class="card-check-btn"
+                                onclick="toggleComplete(event, this)"
+                                title="Отметить выполненной">✓</button>
+                        <button class="card-edit-btn"
+                                onclick="openQuickEdit(event, this)"
+                                title="Быстрое редактирование">✎</button>
+                        {% if card.label %}
+                        <span class="card-label"
+                              style="background:{{ card.label_color }}20;color:{{ card.label_color }};border:1px solid {{ card.label_color }}40">
+                            {{ card.label }}
+                        </span>
+                        {% endif %}
+                        <p class="card-title">{{ card.title }}</p>
+                        {% if card.due_date %}
+                        <div class="card-due">
+                            <span class="due-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> {{ card.due_date }}
+                        </div>
+                        {% endif %}
+                        {% if card.linked_board_id %}
+                        <div class="card-board-badge" title="Связана с другой доской">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                            Доска
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="inline-add-card" id="inline-add-{{ col.id }}" style="display:none">
+                    <textarea class="inline-card-input" id="inline-input-{{ col.id }}"
+                              placeholder="Название карточки..."
+                              onkeydown="inlineCardKey(event, {{ col.id }})"></textarea>
+                    <div class="inline-add-actions">
+                        <button class="btn-primary btn-sm" onclick="inlineCardSave({{ col.id }})">Добавить карточку</button>
+                        <button class="inline-cancel-btn" onclick="inlineCardCancel({{ col.id }})">✕</button>
+                    </div>
+                </div>
+                <button class="btn-add-card" id="btn-add-{{ col.id }}" onclick="addCard({{ col.id }})">
+                    <span>+</span> Добавить карточку
+                </button>
+            </div>
+            {% endfor %}
+
+            {% if not board.columns %}
+            <div class="board-empty-state">
+                <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>
+                    <rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+                </svg>
+                <p class="bes-title">Доска пуста</p>
+                <p class="bes-sub">Создайте первый список, чтобы начать работу</p>
+            </div>
+            {% endif %}
+
+            <div class="column column--add" id="columnAddBox">
+                <button class="btn-add-column" id="btnAddColumn" onclick="addColumn()">
+                    <span>+</span> Добавить список
+                </button>
+                <div class="inline-add-col" id="inlineAddCol" style="display:none">
+                    <input class="inline-col-input" id="inlineColInput"
+                           type="text" placeholder="Название списка..."
+                           onkeydown="inlineColKey(event)">
+                    <div class="inline-add-actions">
+                        <button class="btn-primary btn-sm" onclick="inlineColSave()">Добавить список</button>
+                        <button class="inline-cancel-btn" onclick="inlineColCancel()">✕</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== CARD DETAIL MODAL ===== -->
+<div class="card-modal-overlay" id="cardDetailModal" style="display:none" onclick="handleModalOverlayClick(event)">
+    <div class="card-modal">
+        <div class="cm-header">
+            <div class="cm-breadcrumb">
+                <span class="cm-breadcrumb-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+                <span id="cmColName"></span>
+            </div>
+            <button class="cm-close-btn" onclick="closeCardModal()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+
+        <div class="cm-title-row">
+            <h2 class="cm-title" id="cmTitle" contenteditable="true" spellcheck="false"></h2>
+        </div>
+
+        <div class="cm-meta" id="cmMeta"></div>
+
+        <div class="cm-body">
+            <div class="cm-main">
+                <div class="cm-section">
+                    <div class="cm-section-head">
+                        <span class="cm-sec-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg></span>
+                        <h3 class="cm-sec-title">Описание</h3>
+                    </div>
+                    <textarea class="cm-description" id="cmDescription" placeholder="Добавьте подробное описание задачи..."></textarea>
+                </div>
+
+                <div class="cm-section" id="cmChecklistSection" style="display:none">
+                    <div class="cm-section-head">
+                        <span class="cm-sec-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
+                        <h3 class="cm-sec-title">Чеклист</h3>
+                        <span class="cm-checklist-progress-text" id="cmChecklistProgressText"></span>
+                    </div>
+                    <div class="cm-checklist-bar-wrap">
+                        <div class="cm-checklist-bar" id="cmChecklistBar"></div>
+                    </div>
+                    <div class="cm-checklist-items" id="cmChecklistItems"></div>
+                    <div class="cm-checklist-add">
+                        <input class="cm-checklist-input" id="cmChecklistInput"
+                               type="text" placeholder="Добавить пункт...">
+                        <button class="btn-primary btn-sm" onclick="submitChecklistItem()">Добавить</button>
+                    </div>
+                </div>
+
+                <div class="cm-section">
+                    <div class="cm-section-head">
+                        <span class="cm-sec-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>
+                        <h3 class="cm-sec-title">Вложения</h3>
+                        <label class="btn-attach-inline">
+                            <input type="file" multiple hidden id="cmFileInput" onchange="handleAttach(this)">
+                            + Добавить
+                        </label>
+                    </div>
+                    <div class="cm-attachments" id="cmAttachments">
+                        <p class="cm-empty-hint" id="cmAttachEmpty">Нет вложений</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cm-comments-col">
+                <div class="cm-section">
+                    <div class="cm-section-head">
+                        <span class="cm-sec-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+                        <h3 class="cm-sec-title">Комментарии</h3>
+                    </div>
+                    <div class="cm-compose">
+                        <div class="cm-compose-avatar" id="cmUserAvatar">R</div>
+                        <div class="cm-compose-right">
+                            <textarea class="cm-compose-input" id="cmCommentInput"
+                                placeholder="Напишите комментарий... (Ctrl+Enter — отправить)"
+                                onfocus="showCommentActions()"></textarea>
+                            <div class="cm-compose-actions" id="cmCommentActions" style="display:none">
+                                <button class="btn-primary btn-sm" onclick="submitComment()">Отправить</button>
+                                <button class="btn-secondary btn-sm" onclick="cancelComment()">Отмена</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cm-comments-list" id="cmCommentsList">
+                        <p class="cm-empty-hint" id="cmCommentsEmpty">Нет комментариев</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cm-sidebar">
+                <!-- Основные кнопки -->
+                <div id="cmSidebarDefault">
+                    <p class="cm-sidebar-label">Добавить</p>
+                    <label class="cm-sidebar-btn" for="cmFileInput">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span> Прикрепить файл
+                    </label>
+                    <button class="cm-sidebar-btn" onclick="toggleChecklist()">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span> Чеклист
+                    </button>
+                    <button class="cm-sidebar-btn" onclick="openCoverPopover()">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span> Обложка
+                    </button>
+                    <button class="cm-sidebar-btn" onclick="openBoardLinkPopover()">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> Связать доску
+                    </button>
+                    <button class="cm-sidebar-btn" onclick="openLabelPopover()">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span> Метка
+                    </button>
+                    <button class="cm-sidebar-btn" onclick="openMembersPopover()">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span> Участники
+                    </button>
+                    <button class="cm-sidebar-btn" onclick="openDueDatePopover()">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> Срок
+                    </button>
+
+                    <p class="cm-sidebar-label" style="margin-top:14px">Карточка</p>
+                    <button class="cm-sidebar-btn" onclick="openMovePopover()">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 16 12 21 17 16"/><polyline points="7 8 12 3 17 8"/></svg></span> Переместить
+                    </button>
+                    <button class="cm-sidebar-btn" onclick="duplicateCard()">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span> Копировать
+                    </button>
+                    <button class="cm-sidebar-btn cm-sidebar-btn--danger" onclick="deleteCurrentCard()">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12v6M14 12v6"/></svg></span> В архив
+                    </button>
+                </div>
+
+                <!-- Поповер (заменяет кнопки) -->
+                <div id="cmSidebarPopover" style="display:none">
+                    <div class="csp-header">
+                        <button class="csp-back" onclick="closePopover()">← Назад</button>
+                        <span class="csp-title" id="cspTitle"></span>
+                    </div>
+                    <div class="csp-body" id="cspBody"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Edit Popup -->
+<div id="quickEditPopup" style="display:none">
+    <textarea id="qeTitle" class="qe-title" rows="3"></textarea>
+    <div class="qe-actions">
+        <button class="btn-primary btn-sm" onclick="saveQuickEdit()">Сохранить</button>
+    </div>
+    <div class="qe-sidebar">
+        <button class="qe-btn" onclick="qeOpenCardModal()"><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></span> Открыть</button>
+        <button class="qe-btn" onclick="qeMoveCard()"><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 16 12 21 17 16"/><polyline points="7 8 12 3 17 8"/></svg></span> Переместить</button>
+        <button class="qe-btn" onclick="qeLabel()"><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span> Метка</button>
+        <button class="qe-btn" onclick="qeDueDate()"><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> Срок</button>
+        <button class="qe-btn qe-btn--danger" onclick="qeDelete()"><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12v6M14 12v6"/></svg></span> В архив</button>
+    </div>
+</div>
+<div id="quickEditOverlay" onclick="closeQuickEdit()"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script src="{{ url_for('static', filename='js/kanban.js') }}"></script>
+<script>
+// ===== HORIZONTAL PAN SCROLL =====
+(function () {
+    const wrap = document.querySelector('.board-columns-wrap');
+    if (!wrap) return;
+
+    let active = false, startX = 0, startScroll = 0;
+
+    // Не активируем пан если кликнули на карточку, хедер колонки или интерактивный элемент
+    function shouldSkip(el) {
+        let node = el;
+        while (node && node !== wrap) {
+            if (['BUTTON','INPUT','TEXTAREA','A','SELECT'].includes(node.tagName)) return true;
+            if (node.classList.contains('card'))          return true;
+            if (node.classList.contains('column-header')) return true;
+            node = node.parentElement;
+        }
+        return false;
+    }
+
+    wrap.addEventListener('mousedown', e => {
+        if (e.button !== 0 || shouldSkip(e.target)) return;
+        active     = true;
+        startX     = e.pageX;
+        startScroll = wrap.scrollLeft;
+        wrap.classList.add('is-panning');
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', e => {
+        if (!active) return;
+        wrap.scrollLeft = startScroll - (e.pageX - startX);
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!active) return;
+        active = false;
+        wrap.classList.remove('is-panning');
+    });
+
+    // Сброс если мышь ушла за пределы окна
+    document.addEventListener('mouseleave', () => {
+        active = false;
+        wrap.classList.remove('is-panning');
+    });
+})();
+</script>
+
+<!-- ===== PROFILE DROPDOWN ===== -->
+<div class="profile-dropdown" id="profileDropdown">
+    <div class="pd-user-info">
+        <div class="pd-avatar" id="pdAvatarPreview">
+            {% if user.avatar_photo %}
+            <img src="/uploads/avatars/{{ user.avatar_photo }}" class="ua-photo" alt="">
+            {% else %}
+            <span class="ua-initials" style="background:{{ user.avatar_color or '#4361EE' }}">{{ user.name[0].upper() }}</span>
+            {% endif %}
+        </div>
+        <div class="pd-info">
+            <div class="pd-name" id="pdName">{{ user.name }}</div>
+            <div class="pd-email">{{ user.email }}</div>
+        </div>
+    </div>
+    <button class="pd-item" onclick="openProfileModal(); closeProfileDropdown()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Мой профиль
+    </button>
+    <a href="/logout" class="pd-item pd-item--danger">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Выйти
+    </a>
+</div>
+
+<!-- ===== PROFILE MODAL ===== -->
+<div class="profile-modal-overlay" id="profileModal" style="display:none" onclick="handleProfileOverlayClick(event)">
+    <div class="profile-modal">
+        <div class="pm-header">
+            <h3 class="pm-title">Мой профиль</h3>
+            <button class="pm-close" onclick="closeProfileModal()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+        <div class="pm-body">
+            <div class="pm-avatar-section">
+                <div class="pm-avatar-preview" id="pmAvatarPreview">
+                    {% if user.avatar_photo %}
+                    <img src="/uploads/avatars/{{ user.avatar_photo }}" class="ua-photo" id="pmAvatarImg" alt="">
+                    {% else %}
+                    <span class="ua-initials" id="pmAvatarInitials" style="background:{{ user.avatar_color or '#4361EE' }}">{{ user.name[0].upper() }}</span>
+                    {% endif %}
+                </div>
+                <div class="pm-avatar-actions">
+                    <label class="pm-upload-btn">
+                        <input type="file" accept="image/*" hidden id="pmPhotoInput" onchange="uploadProfilePhoto(this)">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Загрузить фото
+                    </label>
+                    <button class="pm-remove-photo-btn" id="pmRemovePhotoBtn" onclick="removeProfilePhoto()" {% if not user.avatar_photo %}style="display:none"{% endif %}>Удалить фото</button>
+                </div>
+            </div>
+
+            <div class="pm-field-group">
+                <label class="pm-label">Цвет аватара</label>
+                <div class="pm-colors" id="pmColorPalette">
+                    {% for c in ['#4361EE','#7B2FBE','#00875a','#de350b','#ff8b00','#00b8d9','#6554c0','#1a1a2e'] %}
+                    <button class="pm-color-swatch {{ 'pm-color-swatch--active' if (user.avatar_color or '#4361EE') == c else '' }}"
+                            style="background:{{ c }}" onclick="selectAvatarColor('{{ c }}')" data-color="{{ c }}"></button>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="pm-field-group">
+                <label class="pm-label" for="pmNameInput">Отображаемое имя</label>
+                <input class="pm-input" id="pmNameInput" type="text" value="{{ user.name }}" placeholder="Ваше имя">
+            </div>
+
+            <button class="btn-primary pm-save-btn" onclick="saveProfile()">Сохранить изменения</button>
+            <div class="pm-msg" id="pmMsg"></div>
+
+            <div class="pm-divider"></div>
+
+            <div class="pm-field-group">
+                <label class="pm-label" for="pmCurrentPwd">Текущий пароль</label>
+                <input class="pm-input" id="pmCurrentPwd" type="password" placeholder="••••••••" autocomplete="current-password">
+            </div>
+            <div class="pm-field-group">
+                <label class="pm-label" for="pmNewPwd">Новый пароль</label>
+                <input class="pm-input" id="pmNewPwd" type="password" placeholder="••••••••" autocomplete="new-password">
+            </div>
+            <button class="btn-secondary pm-save-btn" onclick="changePassword()">Изменить пароль</button>
+            <div class="pm-msg" id="pmPwdMsg"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── Profile (board page) ──
+let _profileColor = document.querySelector('#userAvatarBtn')?.dataset.color || '#4361EE';
+
+function toggleProfileDropdown(e) {
+    e.stopPropagation();
+    const dd = document.getElementById('profileDropdown');
+    const btn = document.getElementById('userAvatarBtn');
+    const rect = btn.getBoundingClientRect();
+    const isOpen = dd.classList.contains('profile-dropdown--open');
+    if (!isOpen) {
+        dd.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+        dd.style.right = (window.innerWidth - rect.right) + 'px';
+    }
+    dd.classList.toggle('profile-dropdown--open', !isOpen);
+}
+function closeProfileDropdown() {
+    document.getElementById('profileDropdown')?.classList.remove('profile-dropdown--open');
+}
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#profileDropdown') && !e.target.closest('#userAvatarBtn')) closeProfileDropdown();
+});
+function openProfileModal() {
+    document.getElementById('profileModal').style.display = 'flex';
+}
+function closeProfileModal() {
+    document.getElementById('profileModal').style.display = 'none';
+    document.getElementById('pmMsg').textContent = '';
+    document.getElementById('pmPwdMsg').textContent = '';
+}
+function handleProfileOverlayClick(e) {
+    if (e.target === document.getElementById('profileModal')) closeProfileModal();
+}
+function selectAvatarColor(c) {
+    _profileColor = c;
+    document.querySelectorAll('.pm-color-swatch').forEach(s => s.classList.toggle('pm-color-swatch--active', s.dataset.color === c));
+    const el = document.getElementById('pmAvatarInitials');
+    if (el) el.style.background = c;
+}
+function _showMsg(id, text, ok) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.style.color = ok ? '#00875a' : '#de350b';
+}
+async function saveProfile() {
+    const name = document.getElementById('pmNameInput').value.trim();
+    if (!name) return _showMsg('pmMsg', 'Имя не может быть пустым', false);
+    const res = await fetch('/api/profile', { method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ name, avatar_color: _profileColor }) });
+    const data = await res.json();
+    if (!res.ok) return _showMsg('pmMsg', data.error || 'Ошибка', false);
+    _showMsg('pmMsg', 'Сохранено', true);
+    document.getElementById('pdName').textContent = data.name;
+    document.querySelectorAll('.ua-initials').forEach(el => { el.textContent = data.name[0].toUpperCase(); el.style.background = data.avatar_color; });
+}
+async function changePassword() {
+    const cur = document.getElementById('pmCurrentPwd').value;
+    const nw  = document.getElementById('pmNewPwd').value;
+    if (!cur || !nw) return _showMsg('pmPwdMsg', 'Заполните оба поля', false);
+    if (nw.length < 4) return _showMsg('pmPwdMsg', 'Пароль слишком короткий', false);
+    const res = await fetch('/api/profile', { method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ current_password: cur, new_password: nw }) });
+    const data = await res.json();
+    if (!res.ok) return _showMsg('pmPwdMsg', data.error || 'Ошибка', false);
+    _showMsg('pmPwdMsg', 'Пароль изменён', true);
+    document.getElementById('pmCurrentPwd').value = '';
+    document.getElementById('pmNewPwd').value = '';
+}
+async function uploadProfilePhoto(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append('photo', file);
+    const res = await fetch('/api/profile/photo', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) return _showMsg('pmMsg', data.error || 'Ошибка загрузки', false);
+    const prev = document.getElementById('pmAvatarPreview');
+    prev.innerHTML = `<img src="${data.photo_url}" class="ua-photo" id="pmAvatarImg" alt="">`;
+    document.getElementById('pdAvatarPreview').innerHTML = `<img src="${data.photo_url}" class="ua-photo" alt="">`;
+    document.getElementById('userAvatarBtn').innerHTML = `<img src="${data.photo_url}" class="ua-photo" alt="">`;
+    const rm = document.getElementById('pmRemovePhotoBtn');
+    if (rm) rm.style.display = '';
+}
+async function removeProfilePhoto() {
+    const res = await fetch('/api/profile', { method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ remove_photo: true }) });
+    if (!res.ok) return;
+    const color = _profileColor;
+    const initial = (document.getElementById('pmNameInput').value || 'U')[0].toUpperCase();
+    const html = `<span class="ua-initials" id="pmAvatarInitials" style="background:${color}">${initial}</span>`;
+    document.getElementById('pmAvatarPreview').innerHTML = html;
+    document.getElementById('pdAvatarPreview').innerHTML = `<span class="ua-initials" style="background:${color}">${initial}</span>`;
+    document.getElementById('userAvatarBtn').innerHTML = `<span class="ua-initials" style="background:${color}">${initial}</span>`;
+    const rm = document.getElementById('pmRemovePhotoBtn');
+    if (rm) rm.style.display = 'none';
+}
+</script>
+{% endblock %}

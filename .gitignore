@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+kanban.db
+uploads/
+static/uploads/
+google_credentials.json
+google_oauth_client.json
+.claude/
+.obsidian/

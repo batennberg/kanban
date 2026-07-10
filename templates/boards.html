@@ -1,0 +1,1253 @@
+{% extends 'base.html' %}
+{% block title %}Рабочее пространство — Almaly Kanban{% endblock %}
+
+{% block head %}
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+{% endblock %}
+
+{% block body %}
+<div class="ws-layout">
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="ws-sidebar">
+        <div class="ws-sidebar-top">
+            <div class="ws-logo">
+                <div class="ws-logo-icon">АК</div>
+                <span class="ws-logo-text">Almaly Kanban</span>
+            </div>
+        </div>
+
+        <nav class="ws-nav">
+            <a href="/boards" class="ws-nav-item ws-nav-item--active" id="navAllBoards">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
+                    <rect x="1" y="1" width="6" height="6" rx="1.2"/>
+                    <rect x="9" y="1" width="6" height="6" rx="1.2"/>
+                    <rect x="1" y="9" width="6" height="6" rx="1.2"/>
+                    <rect x="9" y="9" width="6" height="6" rx="1.2"/>
+                </svg>
+                Все доски
+            </a>
+            <button class="ws-nav-item" id="navFavourites" onclick="filterFavourites(this)" style="display:none">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+                Избранное
+            </button>
+            {% if user.role == 'admin' %}
+            <button class="ws-nav-item" onclick="openUsersModal()">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+                Пользователи
+            </button>
+            {% endif %}
+        </nav>
+
+        <div class="ws-sidebar-divider"></div>
+
+        <div class="ws-workspaces-nav">
+            <p class="ws-workspaces-label">Рабочие пространства</p>
+            <button class="ws-workspace-item ws-workspace-item--all ws-workspace-item--active"
+                    id="wsAll" onclick="filterWorkspace(null, this)">
+                <div class="ws-ws-icon" style="background:#3a3a3a">
+                    <svg width="11" height="11" viewBox="0 0 16 16" fill="white">
+                        <rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/>
+                        <rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>
+                    </svg>
+                </div>
+                <span class="ws-ws-name">Все доски</span>
+                <span class="ws-ws-count">{{ boards | length }}</span>
+            </button>
+            {% for ws in workspaces %}
+            {% if ws.board_count > 0 %}
+            <button class="ws-workspace-item"
+                    id="wsi-{{ ws.id }}"
+                    data-ws-id="{{ ws.id }}"
+                    onclick="filterWorkspace({{ ws.id }}, this)">
+                <div class="ws-ws-icon" style="background: {{ ws.color }}">{{ ws.name[0].upper() }}</div>
+                <span class="ws-ws-name">{{ ws.name }}</span>
+                <span class="ws-ws-count">{{ ws.board_count }}</span>
+                {% if user.role == 'admin' %}
+                <div class="ws-item-actions">
+                    <span class="ws-item-act-btn"
+                          onclick="editWorkspace(event, {{ ws.id }}, '{{ ws.name | e }}', '{{ ws.color }}')"
+                          title="Редактировать">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                    </span>
+                    <span class="ws-item-act-btn ws-item-act-del"
+                          onclick="deleteWorkspace(event, {{ ws.id }}, '{{ ws.name | e }}')"
+                          title="Удалить">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                        </svg>
+                    </span>
+                </div>
+                {% endif %}
+            </button>
+            {% endif %}
+            {% endfor %}
+            {% if user.role == 'admin' %}
+            <button class="ws-add-ws-btn" onclick="showAddWorkspaceModal()">
+                <span>+</span> Добавить компанию
+            </button>
+            {% endif %}
+        </div>
+
+        <div class="ws-sidebar-footer">
+            <div class="ws-sidebar-user">
+                <div class="ws-s-avatar">{{ user.name[0].upper() }}</div>
+                <div class="ws-s-user-info">
+                    <span class="ws-s-user-name">{{ user.name }}</span>
+                    <span class="ws-s-user-role">
+                        {% if user.role == 'admin' %}Администратор{% else %}Пользователь{% endif %}
+                    </span>
+                </div>
+                <a href="/logout" class="ws-logout-btn" title="Выйти">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                        <polyline points="16 17 21 12 16 7"/>
+                        <line x1="21" y1="12" x2="9" y2="12"/>
+                    </svg>
+                </a>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ===== MAIN ===== -->
+    <div class="ws-main">
+
+        <!-- Top bar -->
+        <header class="ws-topbar">
+            <button class="ws-hamburger" id="wsSidebarToggle" onclick="toggleSidebar()" aria-label="Меню">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                    <line x1="3" y1="6" x2="21" y2="6"/>
+                    <line x1="3" y1="12" x2="21" y2="12"/>
+                    <line x1="3" y1="18" x2="21" y2="18"/>
+                </svg>
+            </button>
+            <div class="ws-search">
+                <svg class="ws-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                </svg>
+                <input type="text" class="ws-search-input" id="boardSearch"
+                       placeholder="Поиск досок..." autocomplete="off"
+                       oninput="filterBoards(this.value)">
+            </div>
+            <div class="ws-topbar-right">
+                {% if user.role == 'admin' %}
+                <button class="ws-create-btn" onclick="showCreateModal()">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                    <span class="ws-create-btn-text">Создать доску</span>
+                </button>
+                {% endif %}
+                <button class="user-avatar-btn" id="userAvatarBtn"
+                        onclick="toggleProfileDropdown(event)"
+                        data-color="{{ user.avatar_color or '#4361EE' }}">
+                    {% if user.avatar_photo %}
+                    <img src="/uploads/avatars/{{ user.avatar_photo }}" class="ua-photo" alt="">
+                    {% else %}
+                    <span class="ua-initials" style="background:{{ user.avatar_color or '#4361EE' }}">{{ user.name[0].upper() }}</span>
+                    {% endif %}
+                </button>
+            </div>
+        </header>
+
+        <!-- Boards content -->
+        <div class="ws-content" id="wsContent">
+            {% for company, company_boards in boards | groupby('company') %}
+            <section class="ws-section" id="wssec-{{ company | replace(' ', '-') | lower }}"
+                     data-company="{{ company }}"
+                     data-ws-id="{{ (company_boards | first).workspace_id or '' }}">
+                <div class="ws-section-head">
+                    {% set first_board = company_boards | first %}
+                    <div class="ws-sec-icon"
+                         style="background: {{ first_board.workspace_color or '#1a1a1a' }}">{{ company[0].upper() }}</div>
+                    <h2 class="ws-section-title">{{ company }}</h2>
+                    {% if first_board.workspace_id %}
+                    <a href="/api/workspaces/{{ first_board.workspace_id }}/export"
+                       class="ws-export-btn" title="Экспорт в CSV">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        <span class="ws-export-label">CSV</span>
+                    </a>
+                    {% endif %}
+                </div>
+                <div class="ws-boards-grid">
+                    {% for board in company_boards %}
+                    <a href="/board/{{ board.id }}"
+                       class="ws-board-card"
+                       data-name="{{ board.name | lower }}"
+                       data-company="{{ board.company | lower }}"
+                       style="--bcolor: {{ board.color }}; --i: {{ loop.index0 }}">
+                        <div class="ws-board-thumb">
+                            <div class="ws-board-bg" {% if board.bg_image %}style="background-image:url('/static/uploads/board-bg/{{ board.bg_image }}');background-size:cover;background-position:center;"{% endif %}></div>
+                            <div class="ws-board-deco"></div>
+                            {% if user.role == 'admin' %}
+                            <button class="ws-board-access-btn" title="Управление доступом"
+                                    onclick="openAccessModal(event, {{ board.id }}, '{{ board.name | e }}')">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                    <circle cx="9" cy="7" r="4"/>
+                                    <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+                                </svg>
+                            </button>
+                            {% endif %}
+                        </div>
+                        <div class="ws-board-foot">
+                            <span class="ws-board-name">{{ board.name }}</span>
+                            {% if user.role == 'admin' %}
+                            <span class="ws-board-num">#{{ board.id }}</span>
+                            {% endif %}
+                            <button class="ws-board-star" onclick="toggleFavourite(event, this, {{ board.id }})" data-board-id="{{ board.id }}" title="В избранное">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </a>
+                    {% endfor %}
+
+                    {% if user.role == 'admin' %}
+                    <button class="ws-board-card ws-board-new" onclick="showCreateModal()">
+                        <div class="ws-board-thumb ws-board-new-thumb">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M12 5v14M5 12h14"/>
+                            </svg>
+                        </div>
+                        <div class="ws-board-foot">
+                            <span class="ws-board-name">Создать доску</span>
+                        </div>
+                    </button>
+                    {% endif %}
+                </div>
+            </section>
+            {% endfor %}
+
+            {% if not boards %}
+            <div class="ws-empty-state">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#b3bac5" stroke-width="1.5">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                    <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+                </svg>
+                <p>Нет доступных досок</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Sidebar overlay (mobile) -->
+<div class="ws-sidebar-overlay" id="wsSidebarOverlay" onclick="closeSidebar()"></div>
+
+<!-- ===== USERS MODAL ===== -->
+<div class="modal-overlay" id="usersModal" style="display:none">
+    <div class="modal modal--lg">
+        <div class="modal-header">
+            <h2>Пользователи</h2>
+            <button class="modal-close" onclick="closeUsersModal()">✕</button>
+        </div>
+        <div class="modal-body" id="usersModalBody" style="padding:0">
+            <!-- список пользователей -->
+            <div id="usersList" style="padding:16px 20px"></div>
+
+            <!-- форма добавления (скрыта по умолчанию) -->
+            <div id="addUserForm" style="display:none; border-top:1px solid var(--border); padding:16px 20px">
+                <p style="font-weight:600;font-size:13px;margin-bottom:12px">Новый пользователь</p>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" id="nuEmail" placeholder="user@company.kz" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Отображаемое имя</label>
+                        <input type="text" id="nuName" placeholder="Иван Иванов" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Пароль</label>
+                        <input type="text" id="nuPassword" placeholder="Минимум 4 символа" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Роль</label>
+                        <select id="nuRole" class="form-select" onchange="toggleBoardsField()">
+                            <option value="user">Пользователь</option>
+                            <option value="admin">Администратор</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group" id="nuBoardsGroup" style="margin-top:6px">
+                    <label>Доступные доски</label>
+                    <div class="nu-boards-list" id="nuBoardsList">
+                        {% for company, company_boards in boards | groupby('company') %}
+                        <div class="nu-boards-group">
+                            <span class="nu-boards-group-label">{{ company }}</span>
+                            {% for board in company_boards %}
+                            <label class="nu-board-check">
+                                <input type="checkbox" name="nuBoards" value="{{ board.id }}">
+                                {{ board.name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:14px">
+                    <button class="btn-secondary" onclick="hideAddUserForm()">Отмена</button>
+                    <button class="btn-primary" id="saveUserBtn" onclick="saveUser()">Добавить пользователя</button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="closeUsersModal()">Закрыть</button>
+            <button class="btn-primary" id="showAddUserBtn" onclick="showAddUserForm()">+ Добавить пользователя</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== ACCESS MODAL ===== -->
+<div class="modal-overlay" id="accessModal" style="display:none">
+    <div class="modal modal--sm">
+        <div class="modal-header">
+            <h2>Доступ: <span id="accessBoardName"></span></h2>
+            <button class="modal-close" onclick="closeAccessModal()">✕</button>
+        </div>
+        <div class="modal-body" id="accessModalBody">
+            <p style="color:#6b778c;font-size:13px">Загрузка...</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="closeAccessModal()">Закрыть</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== ADD WORKSPACE MODAL ===== -->
+<div class="modal-overlay" id="addWorkspaceModal" style="display:none">
+    <div class="modal modal--sm">
+        <div class="modal-header">
+            <h2 id="wsModalTitle">Новое рабочее пространство</h2>
+            <button class="modal-close" onclick="hideAddWorkspaceModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Название компании</label>
+                <input type="text" id="newWsName" placeholder="Например: Almaly ABC">
+            </div>
+            <div class="form-group">
+                <label>Цвет</label>
+                <div class="color-picker" id="wsColorPicker">
+                    <div class="color-option active" style="background:#0052cc" data-color="#0052cc"></div>
+                    <div class="color-option" style="background:#6554c0" data-color="#6554c0"></div>
+                    <div class="color-option" style="background:#00875a" data-color="#00875a"></div>
+                    <div class="color-option" style="background:#de350b" data-color="#de350b"></div>
+                    <div class="color-option" style="background:#ff8b00" data-color="#ff8b00"></div>
+                    <div class="color-option" style="background:#00b8d9" data-color="#00b8d9"></div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="hideAddWorkspaceModal()">Отмена</button>
+            <button class="btn-primary" id="saveWsBtn" onclick="saveWorkspace()">Создать</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== CREATE BOARD MODAL ===== -->
+<div class="modal-overlay" id="createModal" style="display:none">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Новая доска</h2>
+            <button class="modal-close" onclick="hideCreateModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Название доски</label>
+                <input type="text" id="newBoardName" placeholder="Например: Маркетинг Q3">
+            </div>
+            <div class="form-group">
+                <label>Рабочее пространство</label>
+                <select id="newBoardWorkspace" class="form-select">
+                    {% for ws in workspaces %}
+                    <option value="{{ ws.id }}">{{ ws.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Цвет</label>
+                <div class="color-picker" id="boardColorPicker">
+                    <div class="color-option active" style="background:#0052cc" data-color="#0052cc"></div>
+                    <div class="color-option" style="background:#6554c0" data-color="#6554c0"></div>
+                    <div class="color-option" style="background:#00875a" data-color="#00875a"></div>
+                    <div class="color-option" style="background:#de350b" data-color="#de350b"></div>
+                    <div class="color-option" style="background:#ff8b00" data-color="#ff8b00"></div>
+                    <div class="color-option" style="background:#00b8d9" data-color="#00b8d9"></div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="hideCreateModal()">Отмена</button>
+            <button class="btn-primary" id="saveBoardBtn" onclick="saveBoard()">Создать</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ===== MOBILE SIDEBAR DRAWER =====
+function toggleSidebar() {
+    const sidebar = document.querySelector('.ws-sidebar');
+    const overlay = document.getElementById('wsSidebarOverlay');
+    const isOpen  = sidebar.classList.toggle('ws-sidebar--open');
+    overlay.classList.toggle('ws-sidebar-overlay--visible', isOpen);
+}
+
+function closeSidebar() {
+    document.querySelector('.ws-sidebar').classList.remove('ws-sidebar--open');
+    document.getElementById('wsSidebarOverlay').classList.remove('ws-sidebar-overlay--visible');
+}
+
+// ===== SEARCH =====
+let activeWorkspaceId = null;
+
+function filterBoards(query) {
+    const q = query.toLowerCase().trim();
+    document.querySelectorAll('.ws-section').forEach(section => {
+        const wsId = section.dataset.wsId ? parseInt(section.dataset.wsId) : null;
+        const wsMatch = activeWorkspaceId === null || wsId === activeWorkspaceId;
+        if (!wsMatch) { section.style.display = 'none'; return; }
+
+        let visible = 0;
+        section.querySelectorAll('.ws-board-card:not(.ws-board-new)').forEach(card => {
+            const match = !q || card.dataset.name.includes(q) || card.dataset.company.includes(q);
+            card.style.display = match ? '' : 'none';
+            if (match) visible++;
+        });
+        section.style.display = (visible === 0 && q) ? 'none' : '';
+    });
+}
+
+// ===== WORKSPACE FILTER =====
+function filterWorkspace(wsId, btn) {
+    activeWorkspaceId = wsId;
+    closeSidebar();
+
+    // Обновляем активную кнопку в сайдбаре
+    document.querySelectorAll('.ws-workspace-item, .ws-nav-item').forEach(b => b.classList.remove('ws-workspace-item--active'));
+    if (btn) btn.classList.add('ws-workspace-item--active');
+
+    // Сбрасываем видимость отдельных карточек (может остаться от режима избранного)
+    document.querySelectorAll('.ws-board-card').forEach(c => c.style.display = '');
+
+    // Показываем/скрываем секции
+    document.querySelectorAll('.ws-section').forEach(section => {
+        if (wsId === null) {
+            section.style.display = '';
+        } else {
+            const sectionWsId = section.dataset.wsId ? parseInt(section.dataset.wsId) : null;
+            section.style.display = (sectionWsId === wsId) ? '' : 'none';
+        }
+    });
+
+    // Сбрасываем поиск
+    const searchInput = document.getElementById('boardSearch');
+    if (searchInput) searchInput.value = '';
+}
+
+// ===== ACCESS MODAL =====
+let accessBoardId = null;
+
+async function openAccessModal(e, boardId, boardName) {
+    e.preventDefault();
+    e.stopPropagation();
+    accessBoardId = boardId;
+    document.getElementById('accessBoardName').textContent = boardName;
+    document.getElementById('accessModalBody').innerHTML = '<p style="color:#6b778c;font-size:13px">Загрузка...</p>';
+    document.getElementById('accessModal').style.display = 'flex';
+
+    const res   = await fetch(`/api/boards/${boardId}/access`);
+    const users = await res.json();
+    renderAccessUsers(users);
+}
+
+function renderAccessUsers(users) {
+    const body = document.getElementById('accessModalBody');
+    if (!users.length) {
+        body.innerHTML = '<p style="color:#6b778c;font-size:13px">Нет пользователей</p>';
+        return;
+    }
+    body.innerHTML = users.map(u => `
+        <div class="access-user-row" id="access-row-${u.id}">
+            <div class="access-user-avatar">${escHtml((u.name || 'П')[0].toUpperCase())}</div>
+            <div class="access-user-info">
+                <span class="access-user-name">${escHtml(u.name)}</span>
+                <span class="access-user-email">${escHtml(u.email)}</span>
+            </div>
+            <button class="access-toggle-btn ${u.has_access ? 'active' : ''}"
+                    onclick="toggleAccess(${u.id}, ${u.has_access ? 1 : 0}, this)">
+                ${u.has_access ? 'Есть доступ' : 'Нет доступа'}
+            </button>
+        </div>
+    `).join('');
+}
+
+async function toggleAccess(userId, hasAccess, btn) {
+    btn.disabled = true;
+    if (hasAccess) {
+        await fetch(`/api/boards/${accessBoardId}/access/${userId}`, { method: 'DELETE' });
+        btn.textContent = 'Нет доступа';
+        btn.classList.remove('active');
+        btn.onclick = () => toggleAccess(userId, 0, btn);
+    } else {
+        await fetch(`/api/boards/${accessBoardId}/access`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId })
+        });
+        btn.textContent = 'Есть доступ';
+        btn.classList.add('active');
+        btn.onclick = () => toggleAccess(userId, 1, btn);
+    }
+    btn.disabled = false;
+}
+
+function closeAccessModal() {
+    document.getElementById('accessModal').style.display = 'none';
+    accessBoardId = null;
+}
+
+document.getElementById('accessModal').addEventListener('click', function(e) {
+    if (e.target === this) closeAccessModal();
+});
+
+// ===== BOARD CREATION =====
+let selectedBoardColor = '#0052cc';
+
+function showCreateModal() {
+    document.getElementById('newBoardName').value = '';
+    selectedBoardColor = '#0052cc';
+    document.querySelectorAll('#boardColorPicker .color-option').forEach(o => o.classList.remove('active'));
+    document.querySelector('#boardColorPicker .color-option').classList.add('active');
+    // Если активен workspace — предвыбираем его в селекте
+    if (activeWorkspaceId) {
+        const sel = document.getElementById('newBoardWorkspace');
+        if (sel) sel.value = activeWorkspaceId;
+    }
+    document.getElementById('createModal').style.display = 'flex';
+    setTimeout(() => document.getElementById('newBoardName').focus(), 50);
+}
+
+function hideCreateModal() {
+    document.getElementById('createModal').style.display = 'none';
+}
+
+async function saveBoard() {
+    const name        = document.getElementById('newBoardName').value.trim();
+    const workspaceId = parseInt(document.getElementById('newBoardWorkspace').value) || null;
+    if (!name) { document.getElementById('newBoardName').focus(); return; }
+
+    const btn = document.getElementById('saveBoardBtn');
+    btn.disabled = true;
+    btn.textContent = 'Создаю...';
+
+    try {
+        const res   = await fetch('/api/boards', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, workspace_id: workspaceId, color: selectedBoardColor })
+        });
+        const board = await res.json();
+        hideCreateModal();
+        appendBoardCard(board);
+        // Обновляем счётчик в sidebar
+        updateWsSidebarCount(workspaceId, +1);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Создать';
+    }
+}
+
+function appendBoardCard(board) {
+    const company  = board.company || 'Без проекта';
+    const wsId     = board.workspace_id;
+    const wsColor  = board.workspace_color || '#1a1a1a';
+
+    // Ищем существующую секцию по data-ws-id, а не по сконструированному ID
+    let section = wsId
+        ? document.querySelector(`.ws-section[data-ws-id="${wsId}"]`)
+        : document.querySelector(`.ws-section[data-company="${company}"]`);
+
+    if (!section) {
+        const secId = 'wssec-' + (wsId || company.replace(/ /g, '-').toLowerCase());
+        section = document.createElement('section');
+        section.className = 'ws-section';
+        section.id = secId;
+        section.dataset.wsId = wsId || '';
+        section.dataset.company = company;
+        section.innerHTML = `
+            <div class="ws-section-head">
+                <div class="ws-sec-icon" style="background:${escHtml(wsColor)}">${escHtml(company[0].toUpperCase())}</div>
+                <h2 class="ws-section-title">${escHtml(company)}</h2>
+            </div>
+            <div class="ws-boards-grid"></div>
+        `;
+        document.getElementById('wsContent').appendChild(section);
+    }
+
+    const grid   = section.querySelector('.ws-boards-grid');
+    const newBtn = grid.querySelector('.ws-board-new');
+    const a      = document.createElement('a');
+    a.href       = '/board/' + board.id;
+    a.className  = 'ws-board-card';
+    a.dataset.name    = board.name.toLowerCase();
+    a.dataset.company = company.toLowerCase();
+    a.style.setProperty('--bcolor', board.color);
+    a.innerHTML = `
+        <div class="ws-board-thumb">
+            <div class="ws-board-bg" ${board.bg_image ? `style="background-image:url('/static/uploads/board-bg/${board.bg_image}');background-size:cover;background-position:center;"` : ''}></div>
+            <div class="ws-board-deco"></div>
+            <button class="ws-board-access-btn" title="Управление доступом"
+                    onclick="openAccessModal(event, ${board.id}, '${escHtml(board.name)}')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+            </button>
+        </div>
+        <div class="ws-board-foot">
+            <span class="ws-board-name">${escHtml(board.name)}</span>
+            <span class="ws-board-num">#${board.id}</span>
+            <button class="ws-board-star" onclick="toggleFavourite(event, this, ${board.id})" data-board-id="${board.id}" title="В избранное">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+            </button>
+        </div>
+    `;
+    grid.insertBefore(a, newBtn || null);
+}
+
+function updateWsSidebarCount(wsId, delta) {
+    if (!wsId) return;
+    const btn = document.getElementById('wsi-' + wsId);
+    if (btn) {
+        const badge = btn.querySelector('.ws-ws-count');
+        if (badge) badge.textContent = Math.max(0, parseInt(badge.textContent || '0') + delta);
+    }
+    // Обновляем счётчик "Все доски"
+    const allBadge = document.querySelector('#wsAll .ws-ws-count');
+    if (allBadge) allBadge.textContent = Math.max(0, parseInt(allBadge.textContent || '0') + delta);
+}
+
+// ===== ADD / EDIT WORKSPACE =====
+let selectedWsColor = '#0052cc';
+let editingWsId = null;
+
+function showAddWorkspaceModal() {
+    editingWsId = null;
+    document.getElementById('wsModalTitle').textContent = 'Новое рабочее пространство';
+    document.getElementById('saveWsBtn').textContent = 'Создать';
+    document.getElementById('newWsName').value = '';
+    selectedWsColor = '#0052cc';
+    document.querySelectorAll('#wsColorPicker .color-option').forEach(o => o.classList.remove('active'));
+    document.querySelector('#wsColorPicker .color-option').classList.add('active');
+    document.getElementById('addWorkspaceModal').style.display = 'flex';
+    setTimeout(() => document.getElementById('newWsName').focus(), 50);
+}
+
+function editWorkspace(e, wsId, wsName, wsColor) {
+    e.stopPropagation();
+    editingWsId = wsId;
+    document.getElementById('wsModalTitle').textContent = 'Редактировать компанию';
+    document.getElementById('saveWsBtn').textContent = 'Сохранить';
+    document.getElementById('newWsName').value = wsName;
+    selectedWsColor = wsColor;
+    document.querySelectorAll('#wsColorPicker .color-option').forEach(o => {
+        o.classList.toggle('active', o.dataset.color === wsColor);
+    });
+    document.getElementById('addWorkspaceModal').style.display = 'flex';
+    setTimeout(() => document.getElementById('newWsName').focus(), 50);
+}
+
+async function deleteWorkspace(e, wsId, wsName) {
+    e.stopPropagation();
+    if (!confirm(`Удалить компанию «${wsName}»?\n\nДоски останутся, но будут откреплены.`)) return;
+    const res = await fetch(`/api/workspaces/${wsId}`, { method: 'DELETE' });
+    if (res.ok) {
+        const btn = document.getElementById('wsi-' + wsId);
+        if (btn) btn.remove();
+        const opt = document.querySelector(`#newBoardWorkspace option[value="${wsId}"]`);
+        if (opt) opt.remove();
+        const section = document.querySelector(`.ws-section[data-ws-id="${wsId}"]`);
+        if (section) section.remove();
+        // Пересчитываем счётчик "Все доски" по оставшимся карточкам
+        const allBadge = document.querySelector('#wsAll .ws-ws-count');
+        if (allBadge) {
+            allBadge.textContent = document.querySelectorAll('.ws-board-card:not(.ws-board-new)').length;
+        }
+    } else {
+        alert('Ошибка при удалении');
+    }
+}
+
+function hideAddWorkspaceModal() {
+    document.getElementById('addWorkspaceModal').style.display = 'none';
+    editingWsId = null;
+}
+
+async function saveWorkspace() {
+    const name = document.getElementById('newWsName').value.trim();
+    if (!name) { document.getElementById('newWsName').focus(); return; }
+
+    const btn = document.getElementById('saveWsBtn');
+    btn.disabled = true;
+    btn.textContent = editingWsId ? 'Сохраняю...' : 'Создаю...';
+
+    try {
+        if (editingWsId) {
+            const res = await fetch(`/api/workspaces/${editingWsId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, color: selectedWsColor })
+            });
+            if (!res.ok) { alert('Ошибка при сохранении'); return; }
+            // Обновляем sidebar без перезагрузки
+            const item = document.getElementById('wsi-' + editingWsId);
+            if (item) {
+                item.querySelector('.ws-ws-icon').style.background = selectedWsColor;
+                item.querySelector('.ws-ws-icon').textContent = name[0].toUpperCase();
+                item.querySelector('.ws-ws-name').textContent = name;
+            }
+            // Обновляем select в create board modal
+            const opt = document.querySelector(`#newBoardWorkspace option[value="${editingWsId}"]`);
+            if (opt) opt.textContent = name;
+            hideAddWorkspaceModal();
+        } else {
+            const res = await fetch('/api/workspaces', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, color: selectedWsColor })
+            });
+            if (res.status === 409) { alert('Компания с таким названием уже существует'); return; }
+            const ws = await res.json();
+            hideAddWorkspaceModal();
+            appendWorkspaceToSidebar(ws);
+            appendWorkspaceToSelect(ws);
+        }
+    } finally {
+        btn.disabled = false;
+        btn.textContent = editingWsId ? 'Сохранить' : 'Создать';
+    }
+}
+
+function appendWorkspaceToSidebar(ws) {
+    const nav     = document.querySelector('.ws-workspaces-nav');
+    const addBtn  = nav.querySelector('.ws-add-ws-btn');
+    const btn     = document.createElement('button');
+    btn.className = 'ws-workspace-item';
+    btn.id        = 'wsi-' + ws.id;
+    btn.dataset.wsId = ws.id;
+    btn.onclick   = () => filterWorkspace(ws.id, btn);
+    btn.innerHTML = `
+        <div class="ws-ws-icon" style="background:${escHtml(ws.color)}">${escHtml(ws.name[0].toUpperCase())}</div>
+        <span class="ws-ws-name">${escHtml(ws.name)}</span>
+        <span class="ws-ws-count">0</span>
+    `;
+    nav.insertBefore(btn, addBtn || null);
+}
+
+function appendWorkspaceToSelect(ws) {
+    const sel = document.getElementById('newBoardWorkspace');
+    if (!sel) return;
+    const opt = document.createElement('option');
+    opt.value = ws.id;
+    opt.textContent = ws.name;
+    sel.appendChild(opt);
+}
+
+// ===== USERS MODAL =====
+async function openUsersModal() {
+    closeSidebar();
+    document.getElementById('usersModal').style.display = 'flex';
+    hideAddUserForm();
+    await loadUsers();
+}
+
+function closeUsersModal() {
+    document.getElementById('usersModal').style.display = 'none';
+}
+
+async function loadUsers() {
+    const list = document.getElementById('usersList');
+    list.innerHTML = '<p style="color:var(--text-2);font-size:13px">Загрузка...</p>';
+    const res   = await fetch('/api/users');
+    const users = await res.json();
+    if (!users.length) {
+        list.innerHTML = '<p style="color:var(--text-2);font-size:13px">Нет пользователей</p>';
+        return;
+    }
+    list.innerHTML = `
+        <table class="users-table">
+            <thead>
+                <tr>
+                    <th>Имя</th><th>Email</th><th>Роль</th><th>Доски</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                ${users.map(u => `
+                    <tr id="urow-${escHtml(u.email)}">
+                        <td class="ut-name">${escHtml(u.name || u.email)}</td>
+                        <td class="ut-email">${escHtml(u.email)}</td>
+                        <td>
+                            <span class="ut-role-badge ${u.role === 'admin' ? 'ut-role-admin' : ''}">
+                                ${u.role === 'admin' ? 'Администратор' : 'Пользователь'}
+                            </span>
+                        </td>
+                        <td class="ut-boards">${escHtml(u.boards || (u.role === 'admin' ? '* все' : '—'))}</td>
+                        <td style="display:flex;gap:4px">
+                            <button class="ut-edit-btn" onclick="startEditUser('${escHtml(u.email)}', '${escHtml(u.name)}', '${escHtml(u.role)}', '${escHtml(u.boards || '')}')" title="Редактировать">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                </svg>
+                            </button>
+                            <button class="ut-del-btn" onclick="deleteUser('${escHtml(u.email)}')" title="Удалить">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                                    <polyline points="3 6 5 6 21 6"/>
+                                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                    <path d="M10 11v6M14 11v6"/>
+                                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                                </svg>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+async function deleteUser(email) {
+    if (!confirm(`Удалить пользователя ${email}?`)) return;
+    const res = await fetch('/api/users/' + encodeURIComponent(email), { method: 'DELETE' });
+    if (res.ok) {
+        const row = document.getElementById('urow-' + email);
+        if (row) row.remove();
+    } else {
+        const d = await res.json();
+        alert(d.error || 'Ошибка удаления');
+    }
+}
+
+function showAddUserForm() {
+    document.getElementById('addUserForm').style.display = '';
+    document.getElementById('showAddUserBtn').style.display = 'none';
+    document.getElementById('nuEmail').focus();
+    toggleBoardsField();
+}
+
+function hideAddUserForm() {
+    if (editingUserEmail) { cancelEditUser(); return; }
+    document.getElementById('addUserForm').style.display = 'none';
+    document.getElementById('showAddUserBtn').style.display = '';
+    document.getElementById('nuEmail').disabled = false;
+    ['nuEmail','nuName','nuPassword'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+    document.getElementById('nuRole').value = 'user';
+    document.getElementById('saveUserBtn').textContent = 'Добавить пользователя';
+    document.getElementById('saveUserBtn').onclick = saveUser;
+    document.querySelectorAll('#nuBoardsList input[type=checkbox]').forEach(cb => cb.checked = false);
+}
+
+function toggleBoardsField() {
+    const role = document.getElementById('nuRole').value;
+    document.getElementById('nuBoardsGroup').style.display = role === 'admin' ? 'none' : '';
+}
+
+async function saveUser() {
+    const email    = document.getElementById('nuEmail').value.trim().toLowerCase();
+    const name     = document.getElementById('nuName').value.trim();
+    const password = document.getElementById('nuPassword').value.trim();
+    const role     = document.getElementById('nuRole').value;
+
+    if (!email || !name || !password) {
+        alert('Заполните email, имя и пароль'); return;
+    }
+
+    let boards = '';
+    if (role === 'admin') {
+        boards = '';
+    } else {
+        const checked = [...document.querySelectorAll('#nuBoardsList input[type=checkbox]:checked')];
+        boards = checked.length ? checked.map(cb => cb.value).join(',') : '';
+    }
+
+    const btn = document.getElementById('saveUserBtn');
+    btn.disabled = true; btn.textContent = 'Добавляю...';
+
+    try {
+        const res = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, name, password, role, boards })
+        });
+        const d = await res.json();
+        if (!res.ok) { alert(d.error || 'Ошибка'); return; }
+        hideAddUserForm();
+        await loadUsers();
+    } finally {
+        btn.disabled = false; btn.textContent = 'Добавить пользователя';
+    }
+}
+
+document.getElementById('usersModal').addEventListener('click', function(e) {
+    if (e.target === this) closeUsersModal();
+});
+
+// ===== EDIT USER =====
+let editingUserEmail = null;
+
+function startEditUser(email, name, role, boards) {
+    editingUserEmail = email;
+    // Переключаем форму в режим редактирования
+    document.getElementById('nuEmail').value    = email;
+    document.getElementById('nuEmail').disabled = true;
+    document.getElementById('nuName').value     = name;
+    document.getElementById('nuPassword').value = '';
+    document.getElementById('nuRole').value     = role;
+    // Расставляем чекбоксы досок
+    const boardIds = boards ? boards.split(',').map(s => s.trim()) : [];
+    document.querySelectorAll('#nuBoardsList input[type=checkbox]').forEach(cb => {
+        cb.checked = boardIds.includes(cb.value);
+    });
+    // Переключаем заголовок и кнопку
+    document.getElementById('saveUserBtn').textContent = 'Сохранить изменения';
+    document.getElementById('saveUserBtn').onclick = updateUser;
+    toggleBoardsField();
+    document.getElementById('addUserForm').style.display = '';
+    document.getElementById('showAddUserBtn').style.display = 'none';
+    document.getElementById('nuName').focus();
+}
+
+async function updateUser() {
+    const name     = document.getElementById('nuName').value.trim();
+    const password = document.getElementById('nuPassword').value.trim();
+    const role     = document.getElementById('nuRole').value;
+    if (!name) { alert('Введите имя'); return; }
+
+    let boards = '';
+    if (role !== 'admin') {
+        const checked = [...document.querySelectorAll('#nuBoardsList input[type=checkbox]:checked')];
+        boards = checked.map(cb => cb.value).join(',');
+    }
+
+    const btn = document.getElementById('saveUserBtn');
+    btn.disabled = true; btn.textContent = 'Сохраняю...';
+
+    try {
+        const body = { name, role, boards };
+        if (password) body.password = password;
+        const res = await fetch('/api/users/' + encodeURIComponent(editingUserEmail), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const d = await res.json();
+        if (!res.ok) { alert(d.error || 'Ошибка'); return; }
+        cancelEditUser();
+        await loadUsers();
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Сохранить изменения';
+    }
+}
+
+function cancelEditUser() {
+    editingUserEmail = null;
+    document.getElementById('nuEmail').disabled = false;
+    document.getElementById('saveUserBtn').textContent = 'Добавить пользователя';
+    document.getElementById('saveUserBtn').onclick = saveUser;
+    hideAddUserForm();
+}
+
+function escHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+document.getElementById('createModal').addEventListener('click', function(e) {
+    if (e.target === this) hideCreateModal();
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('newBoardName')?.addEventListener('keydown', e => {
+        if (e.key === 'Enter') saveBoard();
+    });
+
+    // Цветопикер создания доски
+    document.querySelectorAll('#boardColorPicker .color-option').forEach(el => {
+        el.addEventListener('click', function() {
+            document.querySelectorAll('#boardColorPicker .color-option').forEach(o => o.classList.remove('active'));
+            this.classList.add('active');
+            selectedBoardColor = this.dataset.color;
+        });
+    });
+
+    // Цветопикер воркспейса
+    document.querySelectorAll('#wsColorPicker .color-option').forEach(el => {
+        el.addEventListener('click', function() {
+            document.querySelectorAll('#wsColorPicker .color-option').forEach(o => o.classList.remove('active'));
+            this.classList.add('active');
+            selectedWsColor = this.dataset.color;
+        });
+    });
+
+    initFavourites();
+});
+
+// ===== FAVOURITES =====
+
+const FAV_KEY = 'kanban_fav';
+
+function getFavs() {
+    try { return new Set(JSON.parse(localStorage.getItem(FAV_KEY) || '[]')); }
+    catch { return new Set(); }
+}
+
+function saveFavs(favs) {
+    localStorage.setItem(FAV_KEY, JSON.stringify([...favs]));
+}
+
+window.toggleFavourite = function(e, btn, boardId) {
+    e.preventDefault();
+    e.stopPropagation();
+    const favs = getFavs();
+    if (favs.has(boardId)) {
+        favs.delete(boardId);
+        btn.classList.remove('ws-board-star--active');
+    } else {
+        favs.add(boardId);
+        btn.classList.add('ws-board-star--active');
+    }
+    saveFavs(favs);
+    updateFavNavBtn(favs);
+};
+
+function updateFavNavBtn(favs) {
+    const btn = document.getElementById('navFavourites');
+    if (btn) btn.style.display = favs.size > 0 ? '' : 'none';
+}
+
+function initFavourites() {
+    const favs = getFavs();
+    favs.forEach(id => {
+        const star = document.querySelector(`.ws-board-star[data-board-id="${id}"]`);
+        if (star) star.classList.add('ws-board-star--active');
+    });
+    updateFavNavBtn(favs);
+}
+
+window.filterFavourites = function(btn) {
+    const favs = getFavs();
+    closeSidebar();
+    document.querySelectorAll('.ws-workspace-item, .ws-nav-item').forEach(b => b.classList.remove('ws-workspace-item--active'));
+    btn.classList.add('ws-workspace-item--active');
+    activeWorkspaceId = null;
+
+    document.querySelectorAll('.ws-board-card:not(.ws-board-new)').forEach(card => {
+        const boardId = parseInt(card.querySelector('.ws-board-star')?.dataset.boardId || '0');
+        card.style.display = favs.has(boardId) ? '' : 'none';
+    });
+
+    document.querySelectorAll('.ws-section').forEach(sec => {
+        const visible = [...sec.querySelectorAll('.ws-board-card:not(.ws-board-new)')].some(c => c.style.display !== 'none');
+        sec.style.display = visible ? '' : 'none';
+    });
+};
+</script>
+
+<!-- ===== PROFILE DROPDOWN ===== -->
+<div class="profile-dropdown" id="profileDropdown">
+    <div class="pd-user-info">
+        <div class="pd-avatar" id="pdAvatarPreview">
+            {% if user.avatar_photo %}
+            <img src="/uploads/avatars/{{ user.avatar_photo }}" class="ua-photo" alt="">
+            {% else %}
+            <span class="ua-initials" style="background:{{ user.avatar_color or '#4361EE' }}">{{ user.name[0].upper() }}</span>
+            {% endif %}
+        </div>
+        <div class="pd-info">
+            <div class="pd-name" id="pdName">{{ user.name }}</div>
+            <div class="pd-email">{{ user.email }}</div>
+        </div>
+    </div>
+    <button class="pd-item" onclick="openProfileModal(); closeProfileDropdown()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Мой профиль
+    </button>
+    <a href="/logout" class="pd-item pd-item--danger">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Выйти
+    </a>
+</div>
+
+<!-- ===== PROFILE MODAL ===== -->
+<div class="profile-modal-overlay" id="profileModal" style="display:none" onclick="handleProfileOverlayClick(event)">
+    <div class="profile-modal">
+        <div class="pm-header">
+            <h3 class="pm-title">Мой профиль</h3>
+            <button class="pm-close" onclick="closeProfileModal()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+        <div class="pm-body">
+            <div class="pm-avatar-section">
+                <div class="pm-avatar-preview" id="pmAvatarPreview">
+                    {% if user.avatar_photo %}
+                    <img src="/uploads/avatars/{{ user.avatar_photo }}" class="ua-photo" id="pmAvatarImg" alt="">
+                    {% else %}
+                    <span class="ua-initials" id="pmAvatarInitials" style="background:{{ user.avatar_color or '#4361EE' }}">{{ user.name[0].upper() }}</span>
+                    {% endif %}
+                </div>
+                <div class="pm-avatar-actions">
+                    <label class="pm-upload-btn">
+                        <input type="file" accept="image/*" hidden id="pmPhotoInput" onchange="uploadProfilePhoto(this)">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Загрузить фото
+                    </label>
+                    <button class="pm-remove-photo-btn" id="pmRemovePhotoBtn" onclick="removeProfilePhoto()" {% if not user.avatar_photo %}style="display:none"{% endif %}>Удалить фото</button>
+                </div>
+            </div>
+            <div class="pm-field-group">
+                <label class="pm-label">Цвет аватара</label>
+                <div class="pm-colors" id="pmColorPalette">
+                    {% for c in ['#4361EE','#7B2FBE','#00875a','#de350b','#ff8b00','#00b8d9','#6554c0','#1a1a2e'] %}
+                    <button class="pm-color-swatch {{ 'pm-color-swatch--active' if (user.avatar_color or '#4361EE') == c else '' }}"
+                            style="background:{{ c }}" onclick="selectAvatarColor('{{ c }}')" data-color="{{ c }}"></button>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="pm-field-group">
+                <label class="pm-label" for="pmNameInput">Отображаемое имя</label>
+                <input class="pm-input" id="pmNameInput" type="text" value="{{ user.name }}" placeholder="Ваше имя">
+            </div>
+            <button class="btn-primary pm-save-btn" onclick="saveProfile()">Сохранить изменения</button>
+            <div class="pm-msg" id="pmMsg"></div>
+            <div class="pm-divider"></div>
+            <div class="pm-field-group">
+                <label class="pm-label" for="pmCurrentPwd">Текущий пароль</label>
+                <input class="pm-input" id="pmCurrentPwd" type="password" placeholder="••••••••" autocomplete="current-password">
+            </div>
+            <div class="pm-field-group">
+                <label class="pm-label" for="pmNewPwd">Новый пароль</label>
+                <input class="pm-input" id="pmNewPwd" type="password" placeholder="••••••••" autocomplete="new-password">
+            </div>
+            <button class="btn-secondary pm-save-btn" onclick="changePassword()">Изменить пароль</button>
+            <div class="pm-msg" id="pmPwdMsg"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── Profile (boards page) ──
+let _profileColor = document.querySelector('#userAvatarBtn')?.dataset.color || '#4361EE';
+
+function toggleProfileDropdown(e) {
+    e.stopPropagation();
+    const dd = document.getElementById('profileDropdown');
+    const btn = document.getElementById('userAvatarBtn');
+    const rect = btn.getBoundingClientRect();
+    const isOpen = dd.classList.contains('profile-dropdown--open');
+    if (!isOpen) {
+        dd.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+        dd.style.right = (window.innerWidth - rect.right) + 'px';
+    }
+    dd.classList.toggle('profile-dropdown--open', !isOpen);
+}
+function closeProfileDropdown() {
+    document.getElementById('profileDropdown')?.classList.remove('profile-dropdown--open');
+}
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#profileDropdown') && !e.target.closest('#userAvatarBtn')) closeProfileDropdown();
+});
+function openProfileModal() {
+    document.getElementById('profileModal').style.display = 'flex';
+}
+function closeProfileModal() {
+    document.getElementById('profileModal').style.display = 'none';
+    document.getElementById('pmMsg').textContent = '';
+    document.getElementById('pmPwdMsg').textContent = '';
+}
+function handleProfileOverlayClick(e) {
+    if (e.target === document.getElementById('profileModal')) closeProfileModal();
+}
+function selectAvatarColor(c) {
+    _profileColor = c;
+    document.querySelectorAll('.pm-color-swatch').forEach(s => s.classList.toggle('pm-color-swatch--active', s.dataset.color === c));
+    const el = document.getElementById('pmAvatarInitials');
+    if (el) el.style.background = c;
+}
+function _showMsg(id, text, ok) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.style.color = ok ? '#00875a' : '#de350b';
+}
+async function saveProfile() {
+    const name = document.getElementById('pmNameInput').value.trim();
+    if (!name) return _showMsg('pmMsg', 'Имя не может быть пустым', false);
+    const res = await fetch('/api/profile', { method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ name, avatar_color: _profileColor }) });
+    const data = await res.json();
+    if (!res.ok) return _showMsg('pmMsg', data.error || 'Ошибка', false);
+    _showMsg('pmMsg', 'Сохранено', true);
+    document.getElementById('pdName').textContent = data.name;
+    document.querySelectorAll('.ua-initials').forEach(el => { el.textContent = data.name[0].toUpperCase(); el.style.background = data.avatar_color; });
+}
+async function changePassword() {
+    const cur = document.getElementById('pmCurrentPwd').value;
+    const nw  = document.getElementById('pmNewPwd').value;
+    if (!cur || !nw) return _showMsg('pmPwdMsg', 'Заполните оба поля', false);
+    if (nw.length < 4) return _showMsg('pmPwdMsg', 'Пароль слишком короткий', false);
+    const res = await fetch('/api/profile', { method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ current_password: cur, new_password: nw }) });
+    const data = await res.json();
+    if (!res.ok) return _showMsg('pmPwdMsg', data.error || 'Ошибка', false);
+    _showMsg('pmPwdMsg', 'Пароль изменён', true);
+    document.getElementById('pmCurrentPwd').value = '';
+    document.getElementById('pmNewPwd').value = '';
+}
+async function uploadProfilePhoto(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append('photo', file);
+    const res = await fetch('/api/profile/photo', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) return _showMsg('pmMsg', data.error || 'Ошибка загрузки', false);
+    const prev = document.getElementById('pmAvatarPreview');
+    prev.innerHTML = `<img src="${data.photo_url}" class="ua-photo" id="pmAvatarImg" alt="">`;
+    document.getElementById('pdAvatarPreview').innerHTML = `<img src="${data.photo_url}" class="ua-photo" alt="">`;
+    document.getElementById('userAvatarBtn').innerHTML = `<img src="${data.photo_url}" class="ua-photo" alt="">`;
+    const rm = document.getElementById('pmRemovePhotoBtn');
+    if (rm) rm.style.display = '';
+}
+async function removeProfilePhoto() {
+    const res = await fetch('/api/profile', { method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ remove_photo: true }) });
+    if (!res.ok) return;
+    const color = _profileColor;
+    const initial = (document.getElementById('pmNameInput').value || 'U')[0].toUpperCase();
+    const html = `<span class="ua-initials" id="pmAvatarInitials" style="background:${color}">${initial}</span>`;
+    document.getElementById('pmAvatarPreview').innerHTML = html;
+    document.getElementById('pdAvatarPreview').innerHTML = `<span class="ua-initials" style="background:${color}">${initial}</span>`;
+    document.getElementById('userAvatarBtn').innerHTML = `<span class="ua-initials" style="background:${color}">${initial}</span>`;
+    const rm = document.getElementById('pmRemovePhotoBtn');
+    if (rm) rm.style.display = 'none';
+}
+</script>
+{% endblock %}
