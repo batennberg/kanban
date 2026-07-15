@@ -5,7 +5,7 @@ from flask import Flask, render_template, redirect, url_for, session, request, j
 from models import get_db, init_db
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash
-import sqlite3, os, uuid, csv, io
+import sqlite3, os, uuid, csv, io, shutil
 from urllib.parse import quote as url_quote
 
 UPLOAD_FOLDER   = os.path.join(os.path.dirname(__file__), 'uploads')
@@ -292,6 +292,42 @@ def api_board_background_delete(board_id):
             if os.path.exists(old_path):
                 os.remove(old_path)
             conn.execute('UPDATE boards SET bg_image=NULL WHERE id=?', (board_id,))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/boards/<int:board_id>', methods=['DELETE'])
+def api_delete_board(board_id):
+    if 'user' not in session or session['user']['role'] != 'admin':
+        return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        if not board:
+            return jsonify({'error': 'not found'}), 404
+
+        col_ids = [r[0] for r in conn.execute('SELECT id FROM columns WHERE board_id=?', (board_id,)).fetchall()]
+        card_ids = []
+        if col_ids:
+            ph = ','.join('?' * len(col_ids))
+            card_ids = [r[0] for r in conn.execute(f'SELECT id FROM cards WHERE column_id IN ({ph})', col_ids).fetchall()]
+        if card_ids:
+            ph = ','.join('?' * len(card_ids))
+            conn.execute(f'DELETE FROM checklist_items WHERE card_id IN ({ph})', card_ids)
+            conn.execute(f'DELETE FROM comments WHERE card_id IN ({ph})', card_ids)
+            conn.execute(f'DELETE FROM attachments WHERE card_id IN ({ph})', card_ids)
+            conn.execute(f'DELETE FROM card_members WHERE card_id IN ({ph})', card_ids)
+            conn.execute(f'DELETE FROM cards WHERE id IN ({ph})', card_ids)
+        conn.execute('DELETE FROM columns WHERE board_id=?', (board_id,))
+        conn.execute('DELETE FROM board_access WHERE board_id=?', (board_id,))
+        bg_image = board['bg_image']
+        conn.execute('DELETE FROM boards WHERE id=?', (board_id,))
+
+    if bg_image:
+        bg_path = os.path.join(BOARD_BG_FOLDER, bg_image)
+        if os.path.exists(bg_path):
+            os.remove(bg_path)
+    for card_id in card_ids:
+        shutil.rmtree(os.path.join(UPLOAD_FOLDER, str(card_id)), ignore_errors=True)
+
     return jsonify({'ok': True})
 
 

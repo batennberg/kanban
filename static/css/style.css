@@ -3200,6 +3200,27 @@ kbd {
 .ws-board-card:hover .ws-board-access-btn { opacity: 1; }
 .ws-board-access-btn:hover { background: rgba(0,0,0,0.5); }
 
+.ws-board-delete-btn {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    background: rgba(0,0,0,0.3);
+    color: rgba(255,255,255,0.92);
+    border: none;
+    border-radius: 6px;
+    padding: 4px 6px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s var(--ease-spring), background 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+.ws-board-card:hover .ws-board-delete-btn { opacity: 1; }
+.ws-board-delete-btn:hover { background: #de350b; }
+
 /* Footer row — inside outer shell, transparent */
 .ws-board-foot {
     display: flex;
