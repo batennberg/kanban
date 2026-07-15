@@ -90,29 +90,9 @@ def get_label(labels):
     return '', ''
 
 
-def run(json_path, board_id, skip_archived):
-    # Проверяем файл
-    if not os.path.exists(json_path):
-        print(f'Файл не найден: {json_path}')
-        sys.exit(1)
-
-    with open(json_path, encoding='utf-8') as f:
-        data = json.load(f)
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA foreign_keys = ON')
-
-    # Проверяем доску
-    board = conn.execute('SELECT id, name FROM boards WHERE id=?', (board_id,)).fetchone()
-    if not board:
-        print(f'Доска с id={board_id} не найдена в базе данных.')
-        conn.close()
-        sys.exit(1)
-
-    board_name = data.get('name', '(без названия)')
-    print(f'\nИмпорт из Trello: «{board_name}»')
-    print(f'Целевая доска: [{board_id}] {board["name"]}\n')
+def import_board_data(conn, board_id, data, skip_archived):
+    """Импортирует списки/карточки/чеклисты/комментарии Trello-доски (data)
+    в существующую доску board_id. Возвращает словарь со статистикой."""
 
     # ── Списки (→ колонки) ──────────────────────────────────────────────────
     lists_raw = data.get('lists', [])
@@ -259,6 +239,42 @@ def run(json_path, board_id, skip_archived):
     print(f'  Комментариев импортировано: {comment_count}')
     if skipped_comments:
         print(f'  Комментариев пропущено (карточка не импортирована): {skipped_comments}')
+
+    return {
+        'columns': col_count,
+        'cards': card_count,
+        'cards_skipped': skipped,
+        'checklist_items': item_count,
+        'comments': comment_count,
+        'comments_skipped': skipped_comments,
+    }
+
+
+def run(json_path, board_id, skip_archived):
+    # Проверяем файл
+    if not os.path.exists(json_path):
+        print(f'Файл не найден: {json_path}')
+        sys.exit(1)
+
+    with open(json_path, encoding='utf-8') as f:
+        data = json.load(f)
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys = ON')
+
+    # Проверяем доску
+    board = conn.execute('SELECT id, name FROM boards WHERE id=?', (board_id,)).fetchone()
+    if not board:
+        print(f'Доска с id={board_id} не найдена в базе данных.')
+        conn.close()
+        sys.exit(1)
+
+    board_name = data.get('name', '(без названия)')
+    print(f'\nИмпорт из Trello: «{board_name}»')
+    print(f'Целевая доска: [{board_id}] {board["name"]}\n')
+
+    import_board_data(conn, board_id, data, skip_archived)
 
     conn.commit()
     conn.close()
