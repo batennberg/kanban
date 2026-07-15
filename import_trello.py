@@ -7,6 +7,9 @@
 
 Экспорт из Trello:
     Меню доски → Показать меню → Ещё → Печать и экспорт → Экспорт в JSON
+
+Комментарии берутся из массива actions (type=commentCard).
+В JSON-экспорте Trello включает не более 1000 последних действий на доске.
 """
 
 import json
@@ -42,6 +45,39 @@ def parse_due(due_str):
         return dt.astimezone(timezone.utc).strftime('%Y-%m-%d')
     except Exception:
         return ''
+
+
+def parse_datetime(iso_str):
+    """ISO 8601 → YYYY-MM-DD HH:MM:SS (локальное время), или пустая строка."""
+    if not iso_str:
+        return ''
+    try:
+        dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+        return dt.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return ''
+
+
+def build_member_map(members):
+    """id участника Trello → отображаемое имя."""
+    result = {}
+    for m in members:
+        name = (m.get('fullName') or m.get('username') or '').strip()
+        if name:
+            result[m['id']] = name
+    return result
+
+
+def get_comment_author(action, member_map):
+    """Имя автора комментария из action."""
+    creator = action.get('memberCreator') or {}
+    name = (creator.get('fullName') or creator.get('username') or '').strip()
+    if name:
+        return name
+    member_id = action.get('idMemberCreator')
+    if member_id:
+        return member_map.get(member_id, 'Пользователь')
+    return 'Пользователь'
 
 
 def get_label(labels):
@@ -180,6 +216,49 @@ def run(json_path, board_id, skip_archived):
                 item_count += 1
 
     print(f'  Пунктов чеклистов: {item_count}')
+
+    # ── Комментарии (actions → commentCard) ─────────────────────────────────
+    member_map = build_member_map(data.get('members', []))
+    comment_count = 0
+    skipped_comments = 0
+
+    # Trello хранит комментарии в actions; в JSON-экспорте — не более 1000 последних
+    comment_actions = [
+        a for a in data.get('actions', [])
+        if a.get('type') in ('commentCard', 'copyCommentCard')
+    ]
+    comment_actions.sort(key=lambda a: a.get('date', ''))
+
+    for action in comment_actions:
+        card_data = (action.get('data') or {}).get('card') or {}
+        trello_card_id = card_data.get('id')
+        our_card_id = card_map.get(trello_card_id)
+        if our_card_id is None:
+            skipped_comments += 1
+            continue
+
+        text = ((action.get('data') or {}).get('text') or '').strip()
+        if not text:
+            continue
+
+        author = get_comment_author(action, member_map)
+        created_at = parse_datetime(action.get('date'))
+
+        if created_at:
+            conn.execute(
+                'INSERT INTO comments (card_id, author, text, created_at) VALUES (?, ?, ?, ?)',
+                (our_card_id, author, text, created_at),
+            )
+        else:
+            conn.execute(
+                'INSERT INTO comments (card_id, author, text) VALUES (?, ?, ?)',
+                (our_card_id, author, text),
+            )
+        comment_count += 1
+
+    print(f'  Комментариев импортировано: {comment_count}')
+    if skipped_comments:
+        print(f'  Комментариев пропущено (карточка не импортирована): {skipped_comments}')
 
     conn.commit()
     conn.close()
