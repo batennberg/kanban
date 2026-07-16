@@ -24,29 +24,6 @@ input { font-family: inherit; }
     animation: lpFadeIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.lp-brand-solo {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    margin-bottom: 28px;
-    animation: lfUp 0.5s 0.05s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-.lp-brand-dot--dark {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #1a1a1a;
-    flex-shrink: 0;
-}
-
-.lp-brand-name-solo {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--text-2, #6b6b68);
-    letter-spacing: 0.4px;
-}
-
 /* — CSS Houdini: animated glow angle — */
 @property --glow-angle {
     syntax: '<angle>';
@@ -58,7 +35,7 @@ input { font-family: inherit; }
 .lp-glow-ring {
     position: relative;
     width: 100%;
-    max-width: 380px;
+    max-width: 480px;
     border-radius: 22px;
     padding: 1.5px;
     background: conic-gradient(
@@ -101,7 +78,7 @@ input { font-family: inherit; }
     width: 100%;
     background: #fff;
     border-radius: 20.5px;
-    padding: 44px 40px;
+    padding: 52px 52px;
     box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 0 rgba(255,255,255,0.9) inset;
 }
 
