@@ -6,6 +6,7 @@ from models import get_db, init_db
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash
 import sqlite3, os, uuid, csv, io, shutil
+from datetime import timedelta
 from urllib.parse import quote as url_quote
 
 UPLOAD_FOLDER   = os.path.join(os.path.dirname(__file__), 'uploads')
@@ -35,6 +36,7 @@ app.secret_key = os.environ.get('SECRET_KEY') or 'dev-stub-key-change-in-prod'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 МБ
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
 
 
 # ===== AUTH =====
@@ -49,6 +51,7 @@ def login():
     if request.method == 'POST':
         email    = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
+        remember = bool(request.form.get('remember'))
 
         from sheets import is_configured, get_user, get_board_ids
         if is_configured():
@@ -70,6 +73,7 @@ def login():
                     'avatar_color': (local['avatar_color'] if local else None) or '#4361EE',
                     'avatar_photo': (local['avatar_photo'] if local else None),
                 }
+                session.permanent = remember
                 return redirect(url_for('boards'))
         else:
             # Fallback: SQLite (если Google Sheets не настроен)
@@ -85,6 +89,7 @@ def login():
                     'avatar_color': user['avatar_color'] or '#4361EE',
                     'avatar_photo': user['avatar_photo'],
                 }
+                session.permanent = remember
                 return redirect(url_for('boards'))
 
         error = 'Неверный email или пароль'
