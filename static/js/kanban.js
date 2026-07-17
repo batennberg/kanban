@@ -1517,6 +1517,61 @@ window.colMenuRename = function() {
     if (h3) startRenameColumn(h3);
 };
 
+window.colMenuDuplicate = async function() {
+    document.getElementById('colMenuDropdown').style.display = 'none';
+    const colId = colMenuTargetId;
+    if (!colId) return;
+
+    const res = await fetch('/api/columns/' + colId + '/duplicate', { method: 'POST' });
+    if (!res.ok) { showToast('Не удалось дублировать список', 'error'); return; }
+    const data = await res.json();
+
+    const col = document.createElement('div');
+    col.className     = 'column';
+    col.id            = 'column-' + data.id;
+    col.dataset.colId = data.id;
+    col.innerHTML = `
+        <div class="column-header">
+            <h3 class="column-title" onclick="startRenameColumn(this)"
+                title="Нажмите для переименования">${escHtml(data.name)}</h3>
+            <span class="column-count">0</span>
+            <button class="column-menu-btn" onclick="openColumnMenu(event, this)" title="Меню">⋯</button>
+        </div>
+        <div class="cards-list" id="cards-${data.id}" data-col-id="${data.id}"></div>
+        <div class="inline-add-card" id="inline-add-${data.id}" style="display:none">
+            <textarea class="inline-card-input" id="inline-input-${data.id}"
+                      placeholder="Название карточки..."
+                      onkeydown="inlineCardKey(event, ${data.id})"></textarea>
+            <div class="inline-add-actions">
+                <button class="btn-primary btn-sm" onclick="inlineCardSave(${data.id})">Добавить карточку</button>
+                <button class="inline-cancel-btn" onclick="inlineCardCancel(${data.id})">✕</button>
+            </div>
+        </div>
+        <button class="btn-add-card" id="btn-add-${data.id}" onclick="addCard(${data.id})">
+            <span>+</span> Добавить карточку
+        </button>
+    `;
+
+    const srcCol = document.querySelector(`.column[data-col-id="${colId}"]`);
+    if (srcCol) srcCol.after(col); else document.querySelector('.column--add').before(col);
+
+    (data.cards || []).forEach(card => appendCardToDOM(card, data.id));
+
+    new Sortable(col.querySelector('.cards-list'), {
+        group: 'cards',
+        animation: 150,
+        ghostClass: 'sortable-ghost',
+        dragClass: 'sortable-drag',
+        delay: 300,
+        delayOnTouchOnly: true,
+        touchStartThreshold: 8,
+        onEnd: () => { updateColumnCounts(); persistOrder(); }
+    });
+
+    updateColumnCounts();
+    showToast('Список продублирован');
+};
+
 window.colMenuDelete = function() {
     document.getElementById('colMenuDropdown').style.display = 'none';
     const colId   = colMenuTargetId;

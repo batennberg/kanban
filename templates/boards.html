@@ -198,6 +198,13 @@
                                     <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
                                 </svg>
                             </button>
+                            <button class="ws-board-duplicate-btn" title="Дублировать доску"
+                                    onclick="duplicateBoard(event, {{ board.id }}, '{{ board.name | e }}')">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2"/>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                </svg>
+                            </button>
                             <button class="ws-board-delete-btn" title="Удалить доску"
                                     onclick="deleteBoard(event, {{ board.id }}, '{{ board.name | e }}')">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
@@ -626,6 +633,13 @@ function appendBoardCard(board) {
                     <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
                 </svg>
             </button>
+            <button class="ws-board-duplicate-btn" title="Дублировать доску"
+                    onclick="duplicateBoard(event, ${board.id}, '${escHtml(board.name)}')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <rect x="9" y="9" width="13" height="13" rx="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+            </button>
             <button class="ws-board-delete-btn" title="Удалить доску"
                     onclick="deleteBoard(event, ${board.id}, '${escHtml(board.name)}')">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
@@ -687,6 +701,20 @@ function editWorkspace(e, wsId, wsName, wsColor) {
     });
     document.getElementById('addWorkspaceModal').style.display = 'flex';
     setTimeout(() => document.getElementById('newWsName').focus(), 50);
+}
+
+async function duplicateBoard(e, boardId, boardName) {
+    e.preventDefault();
+    e.stopPropagation();
+    const res = await fetch(`/api/boards/${boardId}/duplicate`, { method: 'POST' });
+    if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || 'Ошибка при дублировании доски');
+        return;
+    }
+    const board = await res.json();
+    appendBoardCard(board);
+    updateWsSidebarCount(board.workspace_id, +1);
 }
 
 async function deleteBoard(e, boardId, boardName) {

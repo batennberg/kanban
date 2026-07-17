@@ -31,6 +31,71 @@ def _file_type(filename):
     if ext in docs:   return 'document'
     return 'file'
 
+
+# ===== DUPLICATE HELPERS (карточка → список → доска) =====
+# Комментарии и вложения сознательно не копируются (как в Trello) — это история
+# оригинала, а не шаблон для копии.
+
+def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=''):
+    src = conn.execute('SELECT * FROM cards WHERE id=?', (src_card_id,)).fetchone()
+    cur = conn.execute(
+        '''INSERT INTO cards
+           (column_id, title, description, label, label_color, due_date, position, cover_color)
+           VALUES (?,?,?,?,?,?,?,?)''',
+        (target_column_id, src['title'] + title_suffix, src['description'],
+         src['label'], src['label_color'], src['due_date'], position, src['cover_color'])
+    )
+    new_card_id = cur.lastrowid
+    for item in conn.execute(
+        'SELECT * FROM checklist_items WHERE card_id=? ORDER BY position', (src_card_id,)
+    ):
+        conn.execute(
+            'INSERT INTO checklist_items (card_id, text, checked, position) VALUES (?,?,?,?)',
+            (new_card_id, item['text'], item['checked'], item['position'])
+        )
+    for m in conn.execute('SELECT * FROM card_members WHERE card_id=?', (src_card_id,)):
+        conn.execute(
+            'INSERT OR IGNORE INTO card_members (card_id, user_email, user_name) VALUES (?,?,?)',
+            (new_card_id, m['user_email'], m['user_name'])
+        )
+    return new_card_id
+
+def _duplicate_column(conn, src_col_id, target_board_id, position, name_suffix=''):
+    src = conn.execute('SELECT * FROM columns WHERE id=?', (src_col_id,)).fetchone()
+    cur = conn.execute(
+        'INSERT INTO columns (board_id, name, position) VALUES (?,?,?)',
+        (target_board_id, src['name'] + name_suffix, position)
+    )
+    new_col_id = cur.lastrowid
+    cards = conn.execute(
+        'SELECT id FROM cards WHERE column_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
+        (src_col_id,)
+    ).fetchall()
+    for i, card in enumerate(cards):
+        _duplicate_card(conn, card['id'], new_col_id, i)
+    return new_col_id
+
+def _duplicate_board(conn, src_board_id, name_suffix=' (копия)'):
+    src = conn.execute('SELECT * FROM boards WHERE id=?', (src_board_id,)).fetchone()
+    cur = conn.execute(
+        'INSERT INTO boards (name, company, color, workspace_id, description) VALUES (?,?,?,?,?)',
+        (src['name'] + name_suffix, src['company'], src['color'], src['workspace_id'], src['description'])
+    )
+    new_board_id = cur.lastrowid
+    cols = conn.execute(
+        'SELECT id FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
+        (src_board_id,)
+    ).fetchall()
+    for i, col in enumerate(cols):
+        _duplicate_column(conn, col['id'], new_board_id, i)
+    for row in conn.execute('SELECT user_id FROM board_access WHERE board_id=?', (src_board_id,)):
+        conn.execute(
+            'INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (?,?)',
+            (row['user_id'], new_board_id)
+        )
+    return new_board_id
+
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY') or 'dev-stub-key-change-in-prod'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -243,6 +308,24 @@ def api_create_board():
         'color': color, 'workspace_id': workspace_id,
         'workspace_color': ws_color
     })
+
+@app.route('/api/boards/<int:board_id>/duplicate', methods=['POST'])
+def api_duplicate_board(board_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        src = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        if not src: return jsonify({'error': 'not found'}), 404
+        new_board_id = _duplicate_board(conn, board_id)
+        b = conn.execute('''
+            SELECT b.id, b.name, b.company, b.color, b.bg_image, b.workspace_id,
+                   w.name AS workspace_name, w.color AS workspace_color
+            FROM boards b LEFT JOIN workspaces w ON w.id = b.workspace_id
+            WHERE b.id=?
+        ''', (new_board_id,)).fetchone()
+    return jsonify(dict(b))
 
 @app.route('/api/boards/<int:board_id>', methods=['PUT'])
 def api_update_board(board_id):
@@ -482,6 +565,23 @@ def api_create_column():
     return jsonify({'id': cid, 'name': name})
 
 
+@app.route('/api/columns/<int:col_id>/duplicate', methods=['POST'])
+def api_duplicate_column(col_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        src = conn.execute('SELECT * FROM columns WHERE id=?', (col_id,)).fetchone()
+        if not src: return jsonify({'error': 'not found'}), 404
+        pos = conn.execute(
+            'SELECT COALESCE(MAX(position),-1)+1 FROM columns WHERE board_id=?', (src['board_id'],)
+        ).fetchone()[0]
+        new_col_id = _duplicate_column(conn, col_id, src['board_id'], pos, name_suffix=' (копия)')
+        new_col = dict(conn.execute('SELECT * FROM columns WHERE id=?', (new_col_id,)).fetchone())
+        new_col['cards'] = [dict(c) for c in conn.execute(
+            'SELECT * FROM cards WHERE column_id=? ORDER BY position', (new_col_id,)
+        )]
+    return jsonify(new_col)
+
+
 # ===== API — CARDS =====
 
 @app.route('/api/cards', methods=['POST'])
@@ -672,11 +772,11 @@ def api_duplicate_card(card_id):
         src = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
         if not src: return jsonify({'error': 'not found'}), 404
         pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=?', (src['column_id'],)).fetchone()[0]
-        cur = conn.execute(
-            'INSERT INTO cards (column_id,title,label,label_color,due_date,position) VALUES(?,?,?,?,?,?)',
-            (src['column_id'], src['title'] + ' (копия)', src['label'], src['label_color'], src['due_date'], pos)
-        )
-        new_card = dict(conn.execute('SELECT * FROM cards WHERE id=?', (cur.lastrowid,)).fetchone())
+        new_card_id = _duplicate_card(conn, card_id, src['column_id'], pos, title_suffix=' (копия)')
+        new_card = dict(conn.execute('SELECT * FROM cards WHERE id=?', (new_card_id,)).fetchone())
+        new_card['checklist'] = [dict(c) for c in conn.execute(
+            'SELECT * FROM checklist_items WHERE card_id=? ORDER BY position', (new_card_id,)
+        )]
     return jsonify(new_card)
 
 
