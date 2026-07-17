@@ -1526,7 +1526,7 @@ window.colMenuDelete = function() {
     const nextSib = col?.nextSibling;
     if (col) col.remove();
     updateColumnCounts();
-    showUndoToast(`Список «${name}» удалён`,
+    showUndoToast(`Список «${name}» отправлен в архив`,
         function() { fetch('/api/columns/' + colId, { method: 'DELETE' }); },
         function() { if (parent) parent.insertBefore(col, nextSib); updateColumnCounts(); }
     );
@@ -2143,18 +2143,23 @@ window.openArchivePanel = async function() {
         return;
     }
 
-    list.innerHTML = data.map(function(card) {
-        const color = card.board_color || '#4361EE';
-        const date  = card.archived_at ? card.archived_at.slice(0, 10) : '';
-        return `<div class="ap-item" id="ap-card-${card.id}">
+    list.innerHTML = data.map(function(item) {
+        const color    = item.board_color || '#4361EE';
+        const date     = item.archived_at ? item.archived_at.slice(0, 10) : '';
+        const isColumn = item.type === 'column';
+        const meta     = isColumn
+            ? `${escHtml(item.board_name)} · список${date ? ' · ' + date : ''}`
+            : `${escHtml(item.board_name)} · ${escHtml(item.column_name)}${date ? ' · ' + date : ''}`;
+        const restoreCall = isColumn ? `restoreColumn(${item.id})` : `restoreCard(${item.id})`;
+        return `<div class="ap-item" id="ap-${item.type}-${item.id}">
             <div class="ap-item-info">
                 <span class="ap-dot" style="background:${color}"></span>
                 <div class="ap-item-text">
-                    <span class="ap-item-title">${escHtml(card.title)}</span>
-                    <span class="ap-item-meta">${escHtml(card.board_name)} · ${escHtml(card.column_name)}${date ? ' · ' + date : ''}</span>
+                    <span class="ap-item-title">${isColumn ? '📋 ' : ''}${escHtml(item.title)}</span>
+                    <span class="ap-item-meta">${meta}</span>
                 </div>
             </div>
-            <button class="ap-restore-btn" onclick="restoreCard(${card.id})">Восстановить</button>
+            <button class="ap-restore-btn" onclick="${restoreCall}">Восстановить</button>
         </div>`;
     }).join('');
 };
@@ -2173,6 +2178,18 @@ window.restoreCard = async function(cardId) {
         list.innerHTML = '<p class="ap-empty">Архив пуст</p>';
     }
     showToast('Карточка восстановлена', 'success');
+};
+
+window.restoreColumn = async function(colId) {
+    const res = await fetch('/api/columns/' + colId + '/restore', { method: 'POST' });
+    if (!res.ok) return;
+    const el = document.getElementById('ap-column-' + colId);
+    if (el) el.remove();
+    const list = document.getElementById('archiveList');
+    if (list && !list.querySelector('.ap-item')) {
+        list.innerHTML = '<p class="ap-empty">Архив пуст</p>';
+    }
+    showToast('Список восстановлен', 'success');
 };
 
 function escHtml(s) {

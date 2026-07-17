@@ -180,7 +180,10 @@ def board(board_id):
             return redirect(url_for('boards'))
         board_data = dict(b)
         board_data['columns'] = []
-        for col in conn.execute('SELECT * FROM columns WHERE board_id=? ORDER BY position', (board_id,)):
+        for col in conn.execute(
+            'SELECT * FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
+            (board_id,)
+        ):
             col_dict = dict(col)
             col_dict['cards'] = [
                 dict(c) for c in conn.execute(
@@ -562,8 +565,10 @@ def api_restore_card(card_id):
 def api_archive():
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     board_ids = _get_board_ids()
+    if board_ids is not None and len(board_ids) == 0:
+        return jsonify([])
     with get_db() as conn:
-        sql = '''
+        cards_sql = '''
             SELECT c.id, c.title, c.archived_at,
                    col.name AS column_name,
                    b.id AS board_id, b.name AS board_name, b.color AS board_color
@@ -572,15 +577,26 @@ def api_archive():
             JOIN boards b ON b.id = col.board_id
             WHERE c.archived=1
         '''
+        columns_sql = '''
+            SELECT col.id, col.name AS title, col.archived_at,
+                   NULL AS column_name,
+                   b.id AS board_id, b.name AS board_name, b.color AS board_color
+            FROM columns col
+            JOIN boards b ON b.id = col.board_id
+            WHERE col.archived=1
+        '''
         params = []
         if board_ids is not None:
-            if len(board_ids) == 0: return jsonify([])
             ph = ','.join('?' * len(board_ids))
-            sql += f' AND b.id IN ({ph})'
+            cards_sql   += f' AND b.id IN ({ph})'
+            columns_sql += f' AND b.id IN ({ph})'
             params = board_ids
-        sql += ' ORDER BY c.archived_at DESC LIMIT 200'
-        rows = conn.execute(sql, params).fetchall()
-    return jsonify([dict(r) for r in rows])
+
+        cards   = [{**dict(r), 'type': 'card'}   for r in conn.execute(cards_sql, params).fetchall()]
+        columns = [{**dict(r), 'type': 'column'} for r in conn.execute(columns_sql, params).fetchall()]
+
+    items = sorted(cards + columns, key=lambda r: r['archived_at'] or '', reverse=True)[:200]
+    return jsonify(items)
 
 @app.route('/api/cards/reorder', methods=['POST'])
 def api_reorder_cards():
@@ -811,14 +827,17 @@ def api_update_column(col_id):
 def api_delete_column(col_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        card_ids = [r[0] for r in conn.execute('SELECT id FROM cards WHERE column_id=?', (col_id,)).fetchall()]
-        if card_ids:
-            ph = ','.join('?' * len(card_ids))
-            conn.execute(f'DELETE FROM checklist_items WHERE card_id IN ({ph})', card_ids)
-            conn.execute(f'DELETE FROM comments WHERE card_id IN ({ph})', card_ids)
-            conn.execute(f'DELETE FROM attachments WHERE card_id IN ({ph})', card_ids)
-            conn.execute(f'DELETE FROM cards WHERE id IN ({ph})', card_ids)
-        conn.execute('DELETE FROM columns WHERE id=?', (col_id,))
+        conn.execute(
+            "UPDATE columns SET archived=1, archived_at=datetime('now','localtime') WHERE id=?",
+            (col_id,)
+        )
+    return jsonify({'ok': True})
+
+@app.route('/api/columns/<int:col_id>/restore', methods=['POST'])
+def api_restore_column(col_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute('UPDATE columns SET archived=0, archived_at=NULL WHERE id=?', (col_id,))
     return jsonify({'ok': True})
 
 
@@ -1026,6 +1045,8 @@ def migrate_db():
             'ALTER TABLE cards ADD COLUMN linked_board_id  INTEGER REFERENCES boards(id) ON DELETE SET NULL',
             'ALTER TABLE cards ADD COLUMN archived         INTEGER DEFAULT 0',
             'ALTER TABLE cards ADD COLUMN archived_at      TEXT',
+            'ALTER TABLE columns ADD COLUMN archived       INTEGER DEFAULT 0',
+            'ALTER TABLE columns ADD COLUMN archived_at    TEXT',
             '''CREATE TABLE IF NOT EXISTS card_members (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
