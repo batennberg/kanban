@@ -802,7 +802,10 @@ window.openMovePopover = function() {
                 </div>`;
     }).join('');
 
-    openPopover('Переместить', `<div>${items}</div>`);
+    const otherBoardBtn = `
+        <div class="move-col-item" onclick="openMoveBoardPicker()">→ На другую доску</div>`;
+
+    openPopover('Переместить', `<div>${items}${otherBoardBtn}</div>`);
 };
 
 window.moveCardToColumn = async function(targetColId) {
@@ -814,6 +817,67 @@ window.moveCardToColumn = async function(targetColId) {
     const cardEl     = document.getElementById(currentCardId);
     const targetList = document.getElementById('cards-' + targetColId);
     if (cardEl && targetList) { targetList.appendChild(cardEl); updateColumnCounts(); }
+    closePopover();
+    closeCardModal();
+};
+
+window.openMoveBoardPicker = async function() {
+    const currentBoardId = parseInt(document.getElementById('boardColumns').dataset.boardId);
+
+    if (!_blBoards) {
+        try {
+            const res = await fetch('/api/boards');
+            _blBoards = await res.json();
+        } catch {
+            openPopover('Другая доска', '<div class="mp-note">Ошибка загрузки</div>');
+            return;
+        }
+    }
+
+    const items = _blBoards
+        .filter(b => b.id !== currentBoardId)
+        .map(b => `
+            <div class="move-col-item" data-move-board-id="${b.id}" data-move-board-name="${escHtml(b.name)}"
+                 onclick="openMoveColumnPicker(this)">
+                <span class="bl-dot" style="background:${escHtml(b.color)}"></span>
+                ${escHtml(b.name)}
+            </div>`).join('');
+
+    const back = `<div class="move-col-item" onclick="openMovePopover()">← Назад</div>`;
+
+    openPopover('Другая доска', `<div>${back}${items || '<p class="bl-empty">Нет других досок</p>'}</div>`);
+};
+
+window.openMoveColumnPicker = async function(el) {
+    const boardId   = parseInt(el.dataset.moveBoardId);
+    const boardName = el.dataset.moveBoardName;
+    openPopover(boardName, '<div class="mp-loading">Загрузка...</div>');
+
+    let cols = [];
+    try {
+        const res = await fetch(`/api/boards/${boardId}/columns`);
+        cols = await res.json();
+    } catch {
+        openPopover(boardName, '<div class="mp-note">Ошибка загрузки</div>');
+        return;
+    }
+
+    const items = cols.map(c =>
+        `<div class="move-col-item" onclick="moveCardToBoard(${boardId}, ${c.id})">${escHtml(c.name)}</div>`
+    ).join('');
+    const back = `<div class="move-col-item" onclick="openMoveBoardPicker()">← Назад к доскам</div>`;
+
+    openPopover(boardName, `<div>${back}${items || '<p class="bl-empty">Нет колонок</p>'}</div>`);
+};
+
+window.moveCardToBoard = async function(targetBoardId, targetColId) {
+    if (!currentCardDbId) return;
+    await fetch(`/api/cards/${currentCardDbId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ column_id: targetColId, position: 9999 })
+    });
+    document.getElementById(currentCardId)?.remove();
+    updateColumnCounts();
     closePopover();
     closeCardModal();
 };

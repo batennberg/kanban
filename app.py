@@ -565,6 +565,20 @@ def api_create_column():
     return jsonify({'id': cid, 'name': name})
 
 
+@app.route('/api/boards/<int:board_id>/columns', methods=['GET'])
+def api_get_board_columns(board_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT id, name FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
+            (board_id,)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
 @app.route('/api/columns/<int:col_id>/duplicate', methods=['POST'])
 def api_duplicate_column(col_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
