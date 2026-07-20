@@ -46,12 +46,24 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
          src['label'], src['label_color'], src['due_date'], position, src['cover_color'])
     )
     new_card_id = cur.lastrowid
+
+    checklist_id_map = {}
+    for cl in conn.execute('SELECT * FROM checklists WHERE card_id=? ORDER BY position', (src_card_id,)):
+        new_cl = conn.execute(
+            'INSERT INTO checklists (card_id, title, position) VALUES (?,?,?)',
+            (new_card_id, cl['title'], cl['position'])
+        )
+        checklist_id_map[cl['id']] = new_cl.lastrowid
+
     for item in conn.execute(
         'SELECT * FROM checklist_items WHERE card_id=? ORDER BY position', (src_card_id,)
     ):
         conn.execute(
-            'INSERT INTO checklist_items (card_id, text, checked, position) VALUES (?,?,?,?)',
-            (new_card_id, item['text'], item['checked'], item['position'])
+            '''INSERT INTO checklist_items
+               (card_id, checklist_id, text, checked, position, due_date, assignee_email, assignee_name)
+               VALUES (?,?,?,?,?,?,?,?)''',
+            (new_card_id, checklist_id_map.get(item['checklist_id']), item['text'], item['checked'],
+             item['position'], item['due_date'], item['assignee_email'], item['assignee_name'])
         )
     for m in conn.execute('SELECT * FROM card_members WHERE card_id=?', (src_card_id,)):
         conn.execute(
@@ -410,6 +422,7 @@ def api_delete_board(board_id):
         if card_ids:
             ph = ','.join('?' * len(card_ids))
             conn.execute(f'DELETE FROM checklist_items WHERE card_id IN ({ph})', card_ids)
+            conn.execute(f'DELETE FROM checklists WHERE card_id IN ({ph})', card_ids)
             conn.execute(f'DELETE FROM comments WHERE card_id IN ({ph})', card_ids)
             conn.execute(f'DELETE FROM attachments WHERE card_id IN ({ph})', card_ids)
             conn.execute(f'DELETE FROM card_members WHERE card_id IN ({ph})', card_ids)
@@ -586,6 +599,35 @@ def api_get_board_columns(board_id):
     return jsonify([dict(r) for r in rows])
 
 
+@app.route('/api/boards/<int:board_id>/members', methods=['GET'])
+def api_get_board_members(board_id):
+    """Список людей с доступом к доске (для назначения исполнителя пункта чек-листа) — доступен любому пользователю с доступом к доске, не только admin."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return jsonify({'error': 'forbidden'}), 403
+
+    from sheets import is_configured, get_all_users, get_board_ids as sheets_get_board_ids
+    if is_configured():
+        result = []
+        for u in get_all_users():
+            ids = sheets_get_board_ids(u)
+            if ids is None or board_id in ids:
+                email = str(u.get('Email', '')).strip().lower()
+                result.append({'email': email, 'name': str(u.get('Имя', email))})
+        return jsonify(result)
+
+    with get_db() as conn:
+        rows = conn.execute('''
+            SELECT DISTINCT u.email, u.name
+            FROM users u
+            LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = ?
+            WHERE u.role = 'admin' OR ba.user_id IS NOT NULL
+            ORDER BY u.name
+        ''', (board_id,)).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
 @app.route('/api/columns/<int:col_id>/duplicate', methods=['POST'])
 def api_duplicate_column(col_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
@@ -634,9 +676,16 @@ def api_get_card(card_id):
         attachments = [dict(a) for a in conn.execute(
             'SELECT * FROM attachments WHERE card_id=? ORDER BY uploaded_at', (card_id,)
         )]
-        checklist = [dict(c) for c in conn.execute(
+        checklist_rows = conn.execute(
+            'SELECT * FROM checklists WHERE card_id=? ORDER BY position', (card_id,)
+        ).fetchall()
+        item_rows = conn.execute(
             'SELECT * FROM checklist_items WHERE card_id=? ORDER BY position', (card_id,)
-        )]
+        ).fetchall()
+        items_by_checklist = {}
+        for it in item_rows:
+            items_by_checklist.setdefault(it['checklist_id'], []).append(dict(it))
+        checklists = [{**dict(cl), 'items': items_by_checklist.get(cl['id'], [])} for cl in checklist_rows]
         members = [dict(m) for m in conn.execute(
             'SELECT * FROM card_members WHERE card_id=? ORDER BY id', (card_id,)
         )]
@@ -647,7 +696,7 @@ def api_get_card(card_id):
                 card_dict['linked_board_name']  = lb['name']
                 card_dict['linked_board_color'] = lb['color']
     return jsonify({**card_dict, 'comments': comments, 'attachments': attachments,
-                    'checklist': checklist, 'members': members})
+                    'checklists': checklists, 'members': members})
 
 @app.route('/api/cards/<int:card_id>', methods=['PUT'])
 def api_update_card(card_id):
@@ -729,16 +778,57 @@ def api_reorder_cards():
     return jsonify({'ok': True})
 
 
-# ===== API — CHECKLIST =====
+# ===== API — CHECKLISTS =====
 
-@app.route('/api/cards/<int:card_id>/checklist', methods=['POST'])
-def api_add_checklist_item(card_id):
+@app.route('/api/cards/<int:card_id>/checklists', methods=['POST'])
+def api_create_checklist(card_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    title = request.get_json().get('title', '').strip() or 'Чек-лист'
+    with get_db() as conn:
+        pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM checklists WHERE card_id=?', (card_id,)).fetchone()[0]
+        cur = conn.execute('INSERT INTO checklists (card_id, title, position) VALUES (?,?,?)', (card_id, title, pos))
+        cl  = dict(conn.execute('SELECT * FROM checklists WHERE id=?', (cur.lastrowid,)).fetchone())
+    cl['items'] = []
+    return jsonify(cl), 201
+
+@app.route('/api/checklists/<int:checklist_id>', methods=['PUT'])
+def api_update_checklist(checklist_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json()
+    fields, values = [], []
+    for f in ['title', 'position']:
+        if f in d:
+            fields.append(f'{f}=?')
+            values.append(d[f])
+    if fields:
+        values.append(checklist_id)
+        with get_db() as conn:
+            conn.execute(f'UPDATE checklists SET {",".join(fields)} WHERE id=?', values)
+    return jsonify({'ok': True})
+
+@app.route('/api/checklists/<int:checklist_id>', methods=['DELETE'])
+def api_delete_checklist(checklist_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute('DELETE FROM checklist_items WHERE checklist_id=?', (checklist_id,))
+        conn.execute('DELETE FROM checklists WHERE id=?', (checklist_id,))
+    return jsonify({'ok': True})
+
+@app.route('/api/checklists/<int:checklist_id>/items', methods=['POST'])
+def api_add_checklist_item(checklist_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     text = request.get_json().get('text', '').strip()
     if not text: return jsonify({'error': 'empty'}), 400
     with get_db() as conn:
-        pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM checklist_items WHERE card_id=?', (card_id,)).fetchone()[0]
-        cur = conn.execute('INSERT INTO checklist_items (card_id,text,position) VALUES(?,?,?)', (card_id, text, pos))
+        cl = conn.execute('SELECT card_id FROM checklists WHERE id=?', (checklist_id,)).fetchone()
+        if not cl: return jsonify({'error': 'not found'}), 404
+        pos = conn.execute(
+            'SELECT COALESCE(MAX(position),-1)+1 FROM checklist_items WHERE checklist_id=?', (checklist_id,)
+        ).fetchone()[0]
+        cur = conn.execute(
+            'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (?,?,?,?)',
+            (cl['card_id'], checklist_id, text, pos)
+        )
         row = dict(conn.execute('SELECT * FROM checklist_items WHERE id=?', (cur.lastrowid,)).fetchone())
     return jsonify(row), 201
 
@@ -747,7 +837,7 @@ def api_update_checklist_item(item_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     d = request.get_json()
     fields, values = [], []
-    for f in ['text', 'checked']:
+    for f in ['text', 'checked', 'due_date', 'assignee_email', 'assignee_name', 'position', 'checklist_id']:
         if f in d:
             fields.append(f'{f}=?')
             values.append(d[f])
@@ -795,9 +885,18 @@ def api_duplicate_card(card_id):
         pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=?', (src['column_id'],)).fetchone()[0]
         new_card_id = _duplicate_card(conn, card_id, src['column_id'], pos, title_suffix=' (копия)')
         new_card = dict(conn.execute('SELECT * FROM cards WHERE id=?', (new_card_id,)).fetchone())
-        new_card['checklist'] = [dict(c) for c in conn.execute(
+        checklist_rows = conn.execute(
+            'SELECT * FROM checklists WHERE card_id=? ORDER BY position', (new_card_id,)
+        ).fetchall()
+        item_rows = conn.execute(
             'SELECT * FROM checklist_items WHERE card_id=? ORDER BY position', (new_card_id,)
-        )]
+        ).fetchall()
+        items_by_checklist = {}
+        for it in item_rows:
+            items_by_checklist.setdefault(it['checklist_id'], []).append(dict(it))
+        new_card['checklists'] = [
+            {**dict(cl), 'items': items_by_checklist.get(cl['id'], [])} for cl in checklist_rows
+        ]
     return jsonify(new_card)
 
 
@@ -1228,6 +1327,43 @@ def migrate_db():
             )
             WHERE workspace_id IS NULL AND company != '' AND company IS NOT NULL
         ''')
+
+        # ── Множественные именованные чек-листы + срок/исполнитель на пункт ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS checklists (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                title      TEXT NOT NULL DEFAULT 'Чек-лист',
+                position   INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+        for col_stmt in [
+            "ALTER TABLE checklist_items ADD COLUMN checklist_id   INTEGER REFERENCES checklists(id) ON DELETE CASCADE",
+            "ALTER TABLE checklist_items ADD COLUMN due_date       TEXT DEFAULT ''",
+            "ALTER TABLE checklist_items ADD COLUMN assignee_email TEXT DEFAULT ''",
+            "ALTER TABLE checklist_items ADD COLUMN assignee_name  TEXT DEFAULT ''",
+        ]:
+            try:
+                conn.execute(col_stmt)
+            except sqlite3.OperationalError:
+                pass
+
+        # Пункты, добавленные до появления группировки, разбираем по одному
+        # дефолтному чек-листу на карточку (данные не теряются)
+        orphan_cards = conn.execute(
+            'SELECT DISTINCT card_id FROM checklist_items WHERE checklist_id IS NULL'
+        ).fetchall()
+        for row in orphan_cards:
+            cid = row['card_id']
+            cur = conn.execute(
+                "INSERT INTO checklists (card_id, title, position) VALUES (?,?,0)",
+                (cid, 'Чек-лист')
+            )
+            conn.execute(
+                'UPDATE checklist_items SET checklist_id=? WHERE card_id=? AND checklist_id IS NULL',
+                (cur.lastrowid, cid)
+            )
 
 
 @app.route('/api/search')

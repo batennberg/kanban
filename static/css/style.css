@@ -2399,6 +2399,85 @@ kbd {
 }
 .cm-checklist-input:focus { border-color: #4361EE; }
 
+/* Группа именованного чек-листа (карточка может содержать несколько) */
+.cm-checklist-group { margin-bottom: 18px; }
+.cm-checklist-group:last-child { margin-bottom: 0; }
+
+.cm-checklist-group-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.cm-checklist-group-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1a2535;
+    cursor: pointer;
+    border-radius: 3px;
+    padding: 1px 4px;
+}
+.cm-checklist-group-title[contenteditable="true"] {
+    outline: 2px solid #4361EE;
+    background: #fff;
+    cursor: text;
+}
+
+.cm-checklist-group-del {
+    opacity: 0;
+    color: #8993a4;
+    font-size: 13px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: opacity 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+.cm-checklist-group-head:hover .cm-checklist-group-del { opacity: 1; }
+.cm-checklist-group-del:hover { color: #de350b; }
+
+/* Срок и исполнитель на пункте чек-листа */
+.cm-cl-due, .cm-cl-assignee {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: opacity 0.15s, background 0.15s;
+}
+
+.cm-cl-due {
+    font-size: 11px;
+    padding: 2px 6px;
+    color: #6b778c;
+    background: #ebecf0;
+}
+.cm-cl-due.due--overdue { background: #ffebe6; color: #de350b; }
+.cm-cl-due.due--soon    { background: #fffae6; color: #ff8b00; }
+.cm-cl-due.is-empty     { opacity: 0; background: transparent; }
+.cm-checklist-item:hover .cm-cl-due.is-empty { opacity: 1; }
+.cm-cl-due:hover { background: #dfe1e6; }
+
+.cm-cl-assignee {
+    width: 20px;
+    height: 20px;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    background: #4361EE;
+}
+.cm-cl-assignee.is-empty {
+    opacity: 0;
+    background: #ebecf0;
+    color: #6b778c;
+    font-weight: 400;
+}
+.cm-checklist-item:hover .cm-cl-assignee.is-empty { opacity: 1; }
+
+.mp-user--pick { cursor: pointer; }
+
 /* Прогресс-бар на превью карточки */
 .card-checklist-bar {
     height: 4px;

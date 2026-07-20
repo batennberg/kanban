@@ -289,9 +289,8 @@ window.openCardModal = function(e, cardEl) {
 
     renderAttachments([]);
     renderComments([]);
-    renderChecklist([]);
+    renderChecklists([]);
     updateCardMembersMeta([]);
-    document.getElementById('cmChecklistSection').style.display = 'none';
     document.getElementById('cmCommentsEmpty').style.display = 'block';
 
     closePopover();
@@ -312,7 +311,7 @@ async function loadCardData(dbId) {
         renderDescriptionView(data.description || '');
         renderComments(data.comments || []);
         renderAttachments(data.attachments || []);
-        renderChecklist(data.checklist || []);
+        renderChecklists(data.checklists || []);
         // Показываем cover в modal-header если есть
         const coverColor = data.cover_color || '';
         const modalEl    = document.querySelector('.card-modal');
@@ -691,7 +690,7 @@ function updateCardLabel(cardDomId, text, color) {
 }
 
 // --- Срок — мини-календарь ---
-const _cal = { year: 0, month: 0, selected: '' };
+const _cal = { year: 0, month: 0, selected: '', onSelect: null, onClear: null };
 const _RU_MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь',
                     'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 const _CAL_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
@@ -742,9 +741,7 @@ function _calRefresh() {
     if (body) body.innerHTML = _calBuild();
 }
 
-window.openDueDatePopover = function() {
-    const dueEl = document.getElementById('cmMeta')?.querySelector('.cm-due-badge');
-    const currentDue = dueEl ? (dueEl.dataset.due || '') : '';
+function _calOpenForDate(currentDue) {
     const now = new Date();
     let iy = now.getFullYear(), im = now.getMonth();
     if (currentDue) {
@@ -753,6 +750,30 @@ window.openDueDatePopover = function() {
     }
     _cal.year = iy; _cal.month = im; _cal.selected = currentDue;
     openPopover('Срок', _calBuild());
+}
+
+window.openDueDatePopover = function() {
+    const dueEl = document.getElementById('cmMeta')?.querySelector('.cm-due-badge');
+    const currentDue = dueEl ? (dueEl.dataset.due || '') : '';
+    _cal.onSelect = async (due) => {
+        if (!currentCardDbId) return;
+        await fetch(`/api/cards/${currentCardDbId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ due_date: due })
+        });
+        updateModalDue(due);
+        updateCardDue(currentCardId, due);
+    };
+    _cal.onClear = async () => {
+        if (!currentCardDbId) return;
+        await fetch(`/api/cards/${currentCardDbId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ due_date: '' })
+        });
+        updateModalDue('');
+        updateCardDue(currentCardId, '');
+    };
+    _calOpenForDate(currentDue);
 };
 
 window.calPrevMonth = function() {
@@ -769,24 +790,12 @@ window.calSelectDay = async function(d, m, y) {
     const due = String(d).padStart(2,'0') + '.' + String(m).padStart(2,'0') + '.' + y;
     _cal.selected = due;
     _calRefresh();
-    if (!currentCardDbId) return;
-    await fetch(`/api/cards/${currentCardDbId}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ due_date: due })
-    });
-    updateModalDue(due);
-    updateCardDue(currentCardId, due);
+    if (_cal.onSelect) await _cal.onSelect(due);
     setTimeout(closePopover, 260);
 };
 
 window.clearDueDate = async function() {
-    if (!currentCardDbId) return;
-    await fetch(`/api/cards/${currentCardDbId}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ due_date: '' })
-    });
-    updateModalDue('');
-    updateCardDue(currentCardId, '');
+    if (_cal.onClear) await _cal.onClear();
     closePopover();
 };
 
@@ -1195,32 +1204,64 @@ window.startRenameColumn = function(h3El) {
 };
 
 
-// ===== CHECKLIST =====
+// ===== CHECKLISTS (несколько именованных чек-листов на карточку) =====
 
-window.toggleChecklist = function() {
-    const sec = document.getElementById('cmChecklistSection');
-    if (!sec) return;
-    const isHidden = sec.style.display === 'none';
-    sec.style.display = isHidden ? '' : 'none';
-    if (isHidden) document.getElementById('cmChecklistInput')?.focus();
+window.addChecklist = async function() {
+    if (!currentCardDbId) return;
+    const res = await fetch(`/api/cards/${currentCardDbId}/checklists`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Чек-лист' })
+    });
+    if (!res.ok) return;
+    const cl = await res.json();
+    document.getElementById('cmChecklistSection').style.display = '';
+    const group = renderChecklistGroup(cl);
+    const titleEl = group.querySelector('.cm-checklist-group-title');
+    if (titleEl) startRenameChecklist(titleEl);
 };
 
-function renderChecklist(items) {
-    const container = document.getElementById('cmChecklistItems');
-    const section   = document.getElementById('cmChecklistSection');
+function renderChecklists(checklists) {
+    const container = document.getElementById('cmChecklistsContainer');
+    const section    = document.getElementById('cmChecklistSection');
     if (!container) return;
-
     container.innerHTML = '';
-    if (items && items.length > 0) {
-        section.style.display = '';
-    }
-
-    (items || []).forEach(item => appendChecklistItemToDOM(item));
+    section.style.display = (checklists && checklists.length) ? '' : 'none';
+    (checklists || []).forEach(cl => renderChecklistGroup(cl));
     updateChecklistProgress();
 }
 
-function appendChecklistItemToDOM(item) {
-    const container = document.getElementById('cmChecklistItems');
+function renderChecklistGroup(cl) {
+    const container = document.getElementById('cmChecklistsContainer');
+    const group = document.createElement('div');
+    group.className = 'cm-checklist-group';
+    group.dataset.checklistId = cl.id;
+    group.innerHTML = `
+        <div class="cm-checklist-group-head">
+            <span class="cm-checklist-group-title" onclick="startRenameChecklist(this)"
+                  title="Нажмите для переименования">${escHtml(cl.title)}</span>
+            <span class="cm-checklist-progress-text"></span>
+            <button class="cm-checklist-group-del" onclick="deleteChecklistGroup(${cl.id})" title="Удалить чек-лист">✕</button>
+        </div>
+        <div class="cm-checklist-bar-wrap"><div class="cm-checklist-bar"></div></div>
+        <div class="cm-checklist-items"></div>
+        <div class="cm-checklist-add">
+            <input class="cm-checklist-input" type="text" placeholder="Добавить пункт..."
+                   onkeydown="if(event.key==='Enter'){event.preventDefault(); submitChecklistItem(${cl.id}, this);}">
+            <button class="btn-primary btn-sm" onclick="submitChecklistItem(${cl.id}, this)">Добавить</button>
+        </div>
+    `;
+    container.appendChild(group);
+    (cl.items || []).forEach(item => appendChecklistItemToDOM(cl.id, item));
+    updateChecklistGroupProgress(cl.id);
+    return group;
+}
+
+function appendChecklistItemToDOM(checklistId, item) {
+    const group     = document.querySelector(`.cm-checklist-group[data-checklist-id="${checklistId}"]`);
+    const container = group?.querySelector('.cm-checklist-items');
+    if (!container) return;
+
     const div = document.createElement('div');
     div.className = 'cm-checklist-item' + (item.checked ? ' cl-done' : '');
     div.dataset.clId = item.id;
@@ -1231,48 +1272,94 @@ function appendChecklistItemToDOM(item) {
         <span class="cm-cl-text"
               onclick="startEditChecklistItem(this)"
               title="Нажмите для редактирования">${escHtml(item.text)}</span>
+        <span class="cm-cl-due" onclick="openItemDuePopover(event, ${item.id})" title="Срок"></span>
+        <span class="cm-cl-assignee" onclick="openItemAssigneePopover(event, ${item.id})" title="Исполнитель"></span>
         <button class="cm-cl-del" onclick="deleteChecklistItem(${item.id})" title="Удалить">✕</button>
     `;
     container.appendChild(div);
-    updateChecklistProgress();
+    renderItemDueBadge(div, item.due_date || '');
+    renderItemAssigneeBadge(div, item.assignee_name || '');
 }
 
-function updateChecklistProgress() {
-    const items   = document.querySelectorAll('.cm-checklist-item');
-    const done    = document.querySelectorAll('.cm-checklist-item.cl-done');
+function renderItemDueBadge(itemEl, due) {
+    const badge = itemEl.querySelector('.cm-cl-due');
+    if (!badge) return;
+    itemEl.dataset.due = due || '';
+    badge.classList.remove('due--overdue', 'due--soon', 'is-empty');
+    if (due) {
+        badge.innerHTML = `${_CAL_SVG} ${escHtml(due)}`;
+        const cls = dueDateClass(due);
+        if (cls) badge.classList.add(cls);
+    } else {
+        badge.textContent = '+ срок';
+        badge.classList.add('is-empty');
+    }
+}
+
+function renderItemAssigneeBadge(itemEl, name) {
+    const badge = itemEl.querySelector('.cm-cl-assignee');
+    if (!badge) return;
+    itemEl.dataset.assigneeName = name || '';
+    if (name) {
+        badge.textContent = name[0].toUpperCase();
+        badge.title = name;
+        badge.classList.remove('is-empty');
+    } else {
+        badge.textContent = '+';
+        badge.title = 'Назначить исполнителя';
+        badge.classList.add('is-empty');
+    }
+}
+
+function updateChecklistGroupProgress(checklistId) {
+    const group = document.querySelector(`.cm-checklist-group[data-checklist-id="${checklistId}"]`);
+    if (!group) return;
+    const items   = group.querySelectorAll('.cm-checklist-item');
+    const done    = group.querySelectorAll('.cm-checklist-item.cl-done');
     const total   = items.length;
     const checked = done.length;
     const pct     = total ? Math.round((checked / total) * 100) : 0;
 
-    const bar  = document.getElementById('cmChecklistBar');
-    const text = document.getElementById('cmChecklistProgressText');
+    const bar  = group.querySelector('.cm-checklist-bar');
+    const text = group.querySelector('.cm-checklist-progress-text');
     if (bar)  bar.style.width = pct + '%';
     if (text) text.textContent = total ? `${checked}/${total}` : '';
 
-    // Обновляем прогресс-бар на превью карточки
+    updateChecklistProgress();
+}
+
+function updateChecklistProgress() {
+    const items   = document.querySelectorAll('#cmChecklistsContainer .cm-checklist-item');
+    const done    = document.querySelectorAll('#cmChecklistsContainer .cm-checklist-item.cl-done');
+    const total   = items.length;
+    const checked = done.length;
+
+    // Обновляем прогресс-бар на превью карточки (суммарно по всем чек-листам)
     if (currentCardId) updateCardChecklistBar(currentCardId, checked, total);
 }
 
-window.submitChecklistItem = async function() {
-    const input = document.getElementById('cmChecklistInput');
-    const text  = input?.value.trim();
-    if (!text || !currentCardDbId) return;
+window.submitChecklistItem = async function(checklistId, triggerEl) {
+    const wrap  = triggerEl.closest('.cm-checklist-add');
+    const input = wrap.querySelector('.cm-checklist-input');
+    const text  = input.value.trim();
+    if (!text) return;
 
-    const res  = await fetch(`/api/cards/${currentCardDbId}/checklist`, {
+    const res = await fetch(`/api/checklists/${checklistId}/items`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
     });
     if (res.ok) {
-        appendChecklistItemToDOM(await res.json());
+        appendChecklistItemToDOM(checklistId, await res.json());
+        updateChecklistGroupProgress(checklistId);
         input.value = '';
         input.focus();
-        document.getElementById('cmChecklistSection').style.display = '';
     }
 };
 
 window.toggleChecklistItem = async function(itemId, checkbox) {
-    const item = checkbox.closest('.cm-checklist-item');
+    const item  = checkbox.closest('.cm-checklist-item');
+    const group = checkbox.closest('.cm-checklist-group');
     const checked = checkbox.checked ? 1 : 0;
     item.classList.toggle('cl-done', !!checked);
 
@@ -1281,15 +1368,15 @@ window.toggleChecklistItem = async function(itemId, checkbox) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ checked })
     });
-    updateChecklistProgress();
+    if (group) updateChecklistGroupProgress(parseInt(group.dataset.checklistId));
 };
 
 window.deleteChecklistItem = async function(itemId) {
-    const item = document.querySelector(`[data-cl-id="${itemId}"]`);
-    if (!item) return;
-    item.remove();
+    const item  = document.querySelector(`.cm-checklist-item[data-cl-id="${itemId}"]`);
+    const group = item?.closest('.cm-checklist-group');
+    item?.remove();
     await fetch(`/api/checklist/${itemId}`, { method: 'DELETE' });
-    updateChecklistProgress();
+    if (group) updateChecklistGroupProgress(parseInt(group.dataset.checklistId));
 };
 
 window.startEditChecklistItem = function(span) {
@@ -1325,9 +1412,132 @@ window.startEditChecklistItem = function(span) {
     }, { once: true });
 };
 
-document.getElementById('cmChecklistInput')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') submitChecklistItem();
-});
+window.startRenameChecklist = function(el) {
+    if (el.getAttribute('contenteditable') === 'true') return;
+    const group       = el.closest('.cm-checklist-group');
+    const checklistId = parseInt(group.dataset.checklistId);
+    const orig        = el.textContent;
+
+    el.setAttribute('contenteditable', 'true');
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+
+    const save = async () => {
+        el.removeAttribute('contenteditable');
+        const newTitle = el.textContent.trim() || orig;
+        el.textContent = newTitle;
+        if (newTitle !== orig) {
+            await fetch(`/api/checklists/${checklistId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: newTitle })
+            });
+        }
+    };
+
+    el.addEventListener('blur', save, { once: true });
+    el.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+        if (e.key === 'Escape') { el.textContent = orig; el.blur(); }
+    }, { once: true });
+};
+
+window.deleteChecklistGroup = async function(checklistId) {
+    if (!confirm('Удалить чек-лист со всеми пунктами?')) return;
+    const group = document.querySelector(`.cm-checklist-group[data-checklist-id="${checklistId}"]`);
+    group?.remove();
+    await fetch(`/api/checklists/${checklistId}`, { method: 'DELETE' });
+    updateChecklistProgress();
+    if (!document.querySelector('.cm-checklist-group')) {
+        document.getElementById('cmChecklistSection').style.display = 'none';
+    }
+};
+
+// --- Срок на пункт чек-листа (переиспользует календарь карточки, см. _cal) ---
+window.openItemDuePopover = function(event, itemId) {
+    event.stopPropagation();
+    const itemEl = document.querySelector(`.cm-checklist-item[data-cl-id="${itemId}"]`);
+    const currentDue = itemEl?.dataset.due || '';
+    _cal.onSelect = async (due) => {
+        await fetch(`/api/checklist/${itemId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ due_date: due })
+        });
+        if (itemEl) renderItemDueBadge(itemEl, due);
+    };
+    _cal.onClear = async () => {
+        await fetch(`/api/checklist/${itemId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ due_date: '' })
+        });
+        if (itemEl) renderItemDueBadge(itemEl, '');
+    };
+    _calOpenForDate(currentDue);
+};
+
+// --- Исполнитель на пункт чек-листа (из пользователей с доступом к доске) ---
+window.openItemAssigneePopover = async function(event, itemId) {
+    event.stopPropagation();
+    const boardId = parseInt(document.getElementById('boardColumns').dataset.boardId);
+    openPopover('Исполнитель', '<div class="mp-loading">Загрузка...</div>');
+
+    let users = [];
+    try {
+        const res = await fetch(`/api/boards/${boardId}/members`);
+        users = await res.json();
+    } catch {
+        openPopover('Исполнитель', '<div class="mp-note">Ошибка загрузки</div>');
+        return;
+    }
+
+    const itemEl = document.querySelector(`.cm-checklist-item[data-cl-id="${itemId}"]`);
+    const currentEmail = itemEl?.dataset.assigneeEmail || '';
+
+    const rows = users.map(u => `
+        <div class="mp-user mp-user--pick" data-email="${escHtml(u.email)}" data-name="${escHtml(u.name || u.email)}"
+             onclick="pickItemAssignee(${itemId}, this)">
+            <div class="mp-avatar">${escHtml((u.name || u.email || '?')[0].toUpperCase())}</div>
+            <div class="mp-info"><span class="mp-name">${escHtml(u.name || u.email)}</span></div>
+            ${u.email === currentEmail ? '<span class="mp-check">✓</span>' : ''}
+        </div>`).join('');
+
+    const clearBtn = currentEmail
+        ? `<button class="csp-btn csp-btn--secondary" style="margin-top:8px" onclick="clearItemAssignee(${itemId})">Убрать исполнителя</button>`
+        : '';
+
+    openPopover('Исполнитель', `<div>${rows || '<p class="bl-empty">Нет пользователей</p>'}</div>${clearBtn}`);
+};
+
+window.pickItemAssignee = async function(itemId, el) {
+    const email = el.dataset.email;
+    const name  = el.dataset.name;
+    await fetch(`/api/checklist/${itemId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignee_email: email, assignee_name: name })
+    });
+    const itemEl = document.querySelector(`.cm-checklist-item[data-cl-id="${itemId}"]`);
+    if (itemEl) {
+        itemEl.dataset.assigneeEmail = email;
+        renderItemAssigneeBadge(itemEl, name);
+    }
+    closePopover();
+};
+
+window.clearItemAssignee = async function(itemId) {
+    await fetch(`/api/checklist/${itemId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignee_email: '', assignee_name: '' })
+    });
+    const itemEl = document.querySelector(`.cm-checklist-item[data-cl-id="${itemId}"]`);
+    if (itemEl) {
+        itemEl.dataset.assigneeEmail = '';
+        renderItemAssigneeBadge(itemEl, '');
+    }
+    closePopover();
+};
 
 function updateCardChecklistBar(cardDomId, checked, total) {
     const cardEl = document.getElementById(cardDomId);
