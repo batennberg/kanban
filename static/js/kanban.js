@@ -280,6 +280,9 @@ window.openCardModal = function(e, cardEl) {
 
     // Reset
     document.getElementById('cmDescription').value          = '';
+    document.getElementById('cmDescription').style.display  = 'none';
+    document.getElementById('cmDescriptionView').style.display = 'block';
+    renderDescriptionView('');
     document.getElementById('cmCommentInput').value         = '';
     document.getElementById('cmCommentActions').style.display = 'none';
     document.getElementById('cmUserAvatar').textContent     = document.querySelector('.user-avatar')?.textContent || 'R';
@@ -306,6 +309,7 @@ async function loadCardData(dbId) {
         if (currentCardDbId !== dbId) return;
 
         document.getElementById('cmDescription').value = data.description || '';
+        renderDescriptionView(data.description || '');
         renderComments(data.comments || []);
         renderAttachments(data.attachments || []);
         renderChecklist(data.checklist || []);
@@ -331,6 +335,30 @@ async function loadCardData(dbId) {
         console.error('Ошибка загрузки карточки', err);
     }
 }
+
+// --- Описание (Markdown) ---
+function renderDescriptionView(text) {
+    const view = document.getElementById('cmDescriptionView');
+    if (!text || !text.trim()) {
+        view.innerHTML = '<span class="cm-description-empty">Добавьте подробное описание задачи...</span>';
+        return;
+    }
+    view.innerHTML = DOMPurify.sanitize(marked.parse(text));
+}
+
+window.editDescription = function() {
+    document.getElementById('cmDescriptionView').style.display = 'none';
+    const ta = document.getElementById('cmDescription');
+    ta.style.display = 'block';
+    ta.focus();
+};
+
+window.finishDescriptionEdit = function() {
+    const ta = document.getElementById('cmDescription');
+    renderDescriptionView(ta.value);
+    ta.style.display = 'none';
+    document.getElementById('cmDescriptionView').style.display = 'block';
+};
 
 window.closeCardModal = async function() {
     if (!currentCardId || !currentCardDbId) return;
