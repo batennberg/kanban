@@ -145,12 +145,19 @@ def login():
             with get_db() as conn:
                 user = conn.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone()
             if user and check_password_hash(user['password_hash'], password):
+                if user['role'] == 'admin':
+                    board_ids = None
+                else:
+                    with get_db() as conn:
+                        board_ids = [r[0] for r in conn.execute(
+                            'SELECT board_id FROM board_access WHERE user_id=?', (user['id'],)
+                        ).fetchall()]
                 session['user'] = {
                     'id':           user['id'],
                     'name':         user['name'],
                     'email':        user['email'],
                     'role':         user['role'],
-                    'board_ids':    None,
+                    'board_ids':    board_ids,
                     'avatar_color': user['avatar_color'] or '#4361EE',
                     'avatar_photo': user['avatar_photo'],
                 }
