@@ -1885,6 +1885,7 @@ window.colMenuDelete = function() {
     const colId   = colMenuTargetId;
     const col     = document.querySelector(`.column[data-col-id="${colId}"]`);
     const name    = col?.querySelector('.column-title')?.textContent.trim() || 'список';
+    if (!confirm(`Удалить список «${name}» со всеми карточками?`)) return;
     const parent  = col?.parentNode;
     const nextSib = col?.nextSibling;
     if (col) col.remove();
