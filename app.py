@@ -116,6 +116,11 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 МБ
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
 
 
+@app.errorhandler(413)
+def _too_large(e):
+    return jsonify({'error': 'file_too_large', 'message': 'Файл слишком большой. Максимальный размер — 16 МБ.'}), 413
+
+
 # ===== AUTH =====
 
 @app.route('/')

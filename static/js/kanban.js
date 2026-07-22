@@ -425,9 +425,15 @@ window.handleAttach = async function(input) {
                 method: 'POST',
                 body: fd
             });
-            if (res.ok) appendAttachmentToDOM(await res.json());
+            if (res.ok) {
+                appendAttachmentToDOM(await res.json());
+            } else {
+                const data = await res.json().catch(() => null);
+                showToast(data?.message || `Не удалось загрузить файл «${file.name}»`, 'error');
+            }
         } catch (err) {
             console.error('Ошибка загрузки файла', err);
+            showToast(`Не удалось загрузить файл «${file.name}»`, 'error');
         }
     }
     input.value = '';
