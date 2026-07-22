@@ -127,9 +127,10 @@ function appendCardToDOM(card, colId) {
 
     let html = `<button class="card-check-btn" onclick="toggleComplete(event, this)" title="Отметить выполненной">✓</button>`;
     html += `<button class="card-edit-btn" onclick="openQuickEdit(event, this)" title="Быстрое редактирование">✎</button>`;
-    if (card.label) {
-        const c = card.label_color || '#0052cc';
-        html += `<span class="card-label" style="background:${c}20;color:${c};border:1px solid ${c}40">${escHtml(card.label)}</span>`;
+    if (card.labels && card.labels.length) {
+        html += '<div class="card-labels">' + card.labels.map(l =>
+            `<span class="card-label" style="background:${l.color}20;color:${l.color};border:1px solid ${l.color}40">${escHtml(l.name)}</span>`
+        ).join('') + '</div>';
     }
     html += `<p class="card-title">${escHtml(card.title)}</p>`;
     if (card.due_date) {
@@ -253,9 +254,9 @@ window.openCardModal = function(e, cardEl) {
     currentCardDbId = dbId;
 
     // Populate from DOM (instant — без задержки)
-    const titleEl = cardEl.querySelector('.card-title');
-    const labelEl = cardEl.querySelector('.card-label');
-    const dueEl   = cardEl.querySelector('.card-due');
+    const titleEl  = cardEl.querySelector('.card-title');
+    const labelEls = cardEl.querySelectorAll('.card-label');
+    const dueEl    = cardEl.querySelector('.card-due');
 
     document.getElementById('cmTitle').textContent = titleEl ? titleEl.textContent : '';
 
@@ -264,13 +265,13 @@ window.openCardModal = function(e, cardEl) {
 
     const meta = document.getElementById('cmMeta');
     meta.innerHTML = '';
-    if (labelEl) {
+    labelEls.forEach(labelEl => {
         const b = document.createElement('span');
         b.className = 'card-label';
         b.style.cssText = labelEl.style.cssText;
-        b.textContent   = labelEl.textContent;
+        b.textContent   = labelEl.textContent.trim();
         meta.appendChild(b);
-    }
+    });
     if (dueEl) {
         const d = document.createElement('span');
         d.className   = 'cm-due-badge';
@@ -319,6 +320,9 @@ async function loadCardData(dbId) {
 
         // Участники карточки
         updateCardMembersMeta(data.members || []);
+
+        // Метки
+        updateModalLabels(data.labels || []);
 
         // Связанная доска
         updateBoardLinkMeta(
@@ -608,33 +612,46 @@ window.closePopover = function() {
     if (pop) pop.style.display = 'none';
 };
 
-// --- Метка ---
-window.openLabelPopover = function() {
-    const labelEl     = document.getElementById('cmMeta')?.querySelector('.card-label');
-    const currentText = labelEl ? labelEl.textContent.trim() : '';
-    const currentColor = labelEl ? labelEl.style.color : '#0052cc';
-    selectedPopColor  = currentColor || '#0052cc';
+// --- Метки (несколько на карточку) ---
+window.openLabelPopover = async function() {
+    if (!currentCardDbId) return;
+    openPopover('Метки', '<div class="mp-loading">Загрузка...</div>');
+
+    let labels = [];
+    try {
+        const res = await fetch(`/api/cards/${currentCardDbId}/labels`);
+        if (res.ok) labels = await res.json();
+    } catch (err) {
+        console.error('openLabelPopover error:', err);
+    }
 
     const palette = ['#0052cc','#6554c0','#00875a','#de350b','#ff8b00','#00b8d9'];
+    selectedPopColor = palette[0];
+
+    const existingHtml = labels.map(l => `
+        <div class="mp-user" data-label-id="${l.id}">
+            <span class="card-label" style="background:${l.color}20;color:${l.color};border:1px solid ${l.color}40">${escHtml(l.name)}</span>
+            <button class="cm-attach-del" onclick="removeCardLabel(${l.id})" title="Удалить">✕</button>
+        </div>`).join('');
+
     const swatches = palette.map(c =>
         `<div class="pop-color${c === selectedPopColor ? ' active' : ''}"
               style="background:${c}" data-color="${c}"
               onclick="selectPopColor(this)"></div>`
     ).join('');
 
-    openPopover('Метка', `
-        <div class="csp-form-group">
-            <label class="csp-label">Название</label>
-            <input class="csp-input" id="popLabelText" type="text"
-                   value="${escHtml(currentText)}" placeholder="Разработка, Сеть...">
+    document.getElementById('cspBody').innerHTML = `
+        ${existingHtml || '<p class="cm-empty-hint">Нет меток</p>'}
+        <div class="csp-form-group" style="margin-top:10px">
+            <label class="csp-label">Новая метка</label>
+            <input class="csp-input" id="popLabelText" type="text" placeholder="Разработка, Сеть...">
         </div>
         <div class="csp-form-group">
             <label class="csp-label">Цвет</label>
             <div class="pop-colors">${swatches}</div>
         </div>
-        <button class="csp-btn csp-btn--primary"   onclick="applyLabel()">Сохранить</button>
-        <button class="csp-btn csp-btn--secondary"  onclick="clearLabel()">Убрать метку</button>
-    `);
+        <button class="csp-btn csp-btn--primary" onclick="addCardLabel()">Добавить метку</button>
+    `;
     setTimeout(() => document.getElementById('popLabelText')?.focus(), 50);
 };
 
@@ -644,54 +661,67 @@ window.selectPopColor = el => {
     selectedPopColor = el.dataset.color;
 };
 
-window.applyLabel = async function() {
-    const text  = document.getElementById('popLabelText').value.trim();
+window.addCardLabel = async function() {
+    const input = document.getElementById('popLabelText');
+    const name  = input?.value.trim();
     const color = selectedPopColor;
-    if (!currentCardDbId) return;
-    await fetch(`/api/cards/${currentCardDbId}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: text, label_color: color })
+    if (!name || !currentCardDbId) return;
+    await fetch(`/api/cards/${currentCardDbId}/labels`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, color })
     });
-    updateModalLabel(text, color);
-    updateCardLabel(currentCardId, text, color);
-    closePopover();
+    renderCardLabelsInMeta(currentCardDbId);
+    openLabelPopover();
 };
 
-window.clearLabel = async function() {
+window.removeCardLabel = async function(labelId) {
     if (!currentCardDbId) return;
-    await fetch(`/api/cards/${currentCardDbId}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: '', label_color: '' })
-    });
-    updateModalLabel('', '');
-    updateCardLabel(currentCardId, '', '');
-    closePopover();
+    await fetch(`/api/cards/${currentCardDbId}/labels/${labelId}`, { method: 'DELETE' });
+    renderCardLabelsInMeta(currentCardDbId);
+    openLabelPopover();
 };
 
-function updateModalLabel(text, color) {
-    const meta = document.getElementById('cmMeta');
-    meta.querySelector('.card-label')?.remove();
-    if (text) {
-        const badge = document.createElement('span');
-        badge.className = 'card-label';
-        badge.style.cssText = `background:${color}20;color:${color};border:1px solid ${color}40`;
-        badge.textContent = text;
-        const due = meta.querySelector('.cm-due-badge');
-        meta.insertBefore(badge, due || null);
-    }
+async function renderCardLabelsInMeta(cardId) {
+    try {
+        const res = await fetch(`/api/cards/${cardId}/labels`);
+        if (!res.ok) return;
+        const labels = await res.json();
+        updateModalLabels(labels);
+        updateCardLabelsOnBoard(currentCardId, labels);
+    } catch {}
 }
 
-function updateCardLabel(cardDomId, text, color) {
-    const cardEl = document.getElementById(cardDomId);
-    if (!cardEl) return;
-    cardEl.querySelector('.card-label')?.remove();
-    if (text) {
+function updateModalLabels(labels) {
+    const meta = document.getElementById('cmMeta');
+    if (!meta) return;
+    meta.querySelectorAll('.card-label').forEach(el => el.remove());
+    const due = meta.querySelector('.cm-due-badge');
+    (labels || []).forEach(l => {
         const span = document.createElement('span');
         span.className = 'card-label';
-        span.style.cssText = `background:${color}20;color:${color};border:1px solid ${color}40`;
-        span.textContent = text;
+        span.dataset.labelId = l.id;
+        span.style.cssText = `background:${l.color}20;color:${l.color};border:1px solid ${l.color}40`;
+        span.textContent = l.name;
+        meta.insertBefore(span, due || null);
+    });
+}
+
+function updateCardLabelsOnBoard(cardDomId, labels) {
+    const cardEl = document.getElementById(cardDomId);
+    if (!cardEl) return;
+    cardEl.querySelector('.card-labels')?.remove();
+    if (labels && labels.length) {
+        const wrap = document.createElement('div');
+        wrap.className = 'card-labels';
+        labels.forEach(l => {
+            const span = document.createElement('span');
+            span.className = 'card-label';
+            span.style.cssText = `background:${l.color}20;color:${l.color};border:1px solid ${l.color}40`;
+            span.textContent = l.name;
+            wrap.appendChild(span);
+        });
         const checkBtn = cardEl.querySelector('.card-check-btn');
-        checkBtn ? checkBtn.after(span) : cardEl.prepend(span);
+        checkBtn ? checkBtn.after(wrap) : cardEl.prepend(wrap);
     }
 }
 
@@ -1661,7 +1691,7 @@ function buildLabelChips() {
     document.querySelectorAll('.card-label').forEach(el => {
         const text  = el.textContent.trim();
         const color = el.style.color;
-        if (text && color) labels.set(color, text);
+        if (text && color) labels.set(text, color);
     });
 
     const container = document.getElementById('fbLabelChips');
@@ -1672,19 +1702,19 @@ function buildLabelChips() {
         container.innerHTML = '<span class="fb-no-labels">Нет меток</span>';
         return;
     }
-    labels.forEach((text, color) => {
+    labels.forEach((color, text) => {
         const btn = document.createElement('button');
         btn.className = 'fb-chip fb-chip--label';
-        btn.dataset.filterLabel = color;
+        btn.dataset.filterLabel = text;
         btn.style.setProperty('--lc', color);
         btn.textContent = text;
-        if (activeFilters.labels.has(color)) btn.classList.add('fb-chip--active');
+        if (activeFilters.labels.has(text)) btn.classList.add('fb-chip--active');
         btn.onclick = () => {
-            if (activeFilters.labels.has(color)) {
-                activeFilters.labels.delete(color);
+            if (activeFilters.labels.has(text)) {
+                activeFilters.labels.delete(text);
                 btn.classList.remove('fb-chip--active');
             } else {
-                activeFilters.labels.add(color);
+                activeFilters.labels.add(text);
                 btn.classList.add('fb-chip--active');
             }
             applyFilters();
@@ -1727,9 +1757,8 @@ function applyFilters() {
         let show = true;
 
         if (labels.size > 0) {
-            const lbl   = card.querySelector('.card-label');
-            const color = lbl ? lbl.style.color : '';
-            show = show && labels.has(color);
+            const cardLabelTexts = [...card.querySelectorAll('.card-label')].map(el => el.textContent.trim());
+            show = show && cardLabelTexts.some(text => labels.has(text));
         }
 
         if (due) {

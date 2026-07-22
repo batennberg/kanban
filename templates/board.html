@@ -236,11 +236,16 @@
                         <button class="card-edit-btn"
                                 onclick="openQuickEdit(event, this)"
                                 title="Быстрое редактирование">✎</button>
-                        {% if card.label %}
-                        <span class="card-label"
-                              style="background:{{ card.label_color }}20;color:{{ card.label_color }};border:1px solid {{ card.label_color }}40">
-                            {{ card.label }}
-                        </span>
+                        {% if card.labels %}
+                        <div class="card-labels">
+                            {% for lbl in card.labels %}
+                            <span class="card-label"
+                                  data-label-id="{{ lbl.id }}"
+                                  style="background:{{ lbl.color }}20;color:{{ lbl.color }};border:1px solid {{ lbl.color }}40">
+                                {{ lbl.name }}
+                            </span>
+                            {% endfor %}
+                        </div>
                         {% endif %}
                         <p class="card-title">{{ card.title }}</p>
                         {% if card.due_date %}

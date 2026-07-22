@@ -70,6 +70,11 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
             'INSERT OR IGNORE INTO card_members (card_id, user_email, user_name) VALUES (?,?,?)',
             (new_card_id, m['user_email'], m['user_name'])
         )
+    for lbl in conn.execute('SELECT * FROM card_labels WHERE card_id=? ORDER BY position', (src_card_id,)):
+        conn.execute(
+            'INSERT OR IGNORE INTO card_labels (card_id, name, color, position) VALUES (?,?,?,?)',
+            (new_card_id, lbl['name'], lbl['color'], lbl['position'])
+        )
     return new_card_id
 
 def _duplicate_column(conn, src_col_id, target_board_id, position, name_suffix=''):
@@ -269,16 +274,26 @@ def board(board_id):
             return redirect(url_for('boards'))
         board_data = dict(b)
         board_data['columns'] = []
+        labels_by_card = {}
+        for l in conn.execute('''
+            SELECT cl.card_id, cl.name, cl.color FROM card_labels cl
+            JOIN cards ca ON ca.id = cl.card_id
+            JOIN columns co ON co.id = ca.column_id
+            WHERE co.board_id=? ORDER BY cl.position, cl.id
+        ''', (board_id,)):
+            labels_by_card.setdefault(l['card_id'], []).append(dict(l))
         for col in conn.execute(
             'SELECT * FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
             (board_id,)
         ):
             col_dict = dict(col)
-            col_dict['cards'] = [
-                dict(c) for c in conn.execute(
-                    'SELECT * FROM cards WHERE column_id=? AND (archived=0 OR archived IS NULL) ORDER BY position', (col['id'],)
-                )
-            ]
+            col_dict['cards'] = []
+            for c in conn.execute(
+                'SELECT * FROM cards WHERE column_id=? AND (archived=0 OR archived IS NULL) ORDER BY position', (col['id'],)
+            ):
+                card_dict = dict(c)
+                card_dict['labels'] = labels_by_card.get(c['id'], [])
+                col_dict['cards'].append(card_dict)
             board_data['columns'].append(col_dict)
     return render_template('board.html', board=board_data, board_id=board_id, user=session['user'])
 
@@ -694,6 +709,9 @@ def api_get_card(card_id):
         members = [dict(m) for m in conn.execute(
             'SELECT * FROM card_members WHERE card_id=? ORDER BY id', (card_id,)
         )]
+        labels = [dict(l) for l in conn.execute(
+            'SELECT * FROM card_labels WHERE card_id=? ORDER BY position, id', (card_id,)
+        )]
         if card_dict.get('linked_board_id'):
             lb = conn.execute('SELECT id, name, color FROM boards WHERE id=?',
                               (card_dict['linked_board_id'],)).fetchone()
@@ -701,7 +719,7 @@ def api_get_card(card_id):
                 card_dict['linked_board_name']  = lb['name']
                 card_dict['linked_board_color'] = lb['color']
     return jsonify({**card_dict, 'comments': comments, 'attachments': attachments,
-                    'checklists': checklists, 'members': members})
+                    'checklists': checklists, 'members': members, 'labels': labels})
 
 @app.route('/api/cards/<int:card_id>', methods=['PUT'])
 def api_update_card(card_id):
@@ -909,6 +927,9 @@ def api_duplicate_card(card_id):
         new_card['checklists'] = [
             {**dict(cl), 'items': items_by_checklist.get(cl['id'], [])} for cl in checklist_rows
         ]
+        new_card['labels'] = [dict(l) for l in conn.execute(
+            'SELECT * FROM card_labels WHERE card_id=? ORDER BY position, id', (new_card_id,)
+        )]
     return jsonify(new_card)
 
 
@@ -993,6 +1014,46 @@ def api_remove_card_member(card_id, email):
         conn.execute(
             'DELETE FROM card_members WHERE card_id=? AND user_email=?', (card_id, email)
         )
+    return jsonify({'ok': True})
+
+
+# ===== API — CARD LABELS =====
+
+@app.route('/api/cards/<int:card_id>/labels', methods=['GET'])
+def api_get_card_labels(card_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT * FROM card_labels WHERE card_id=? ORDER BY position, id', (card_id,)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/cards/<int:card_id>/labels', methods=['POST'])
+def api_add_card_label(card_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d     = request.get_json()
+    name  = d.get('name', '').strip()
+    color = d.get('color', '').strip()
+    if not name: return jsonify({'error': 'name required'}), 400
+    with get_db() as conn:
+        pos = conn.execute(
+            'SELECT COALESCE(MAX(position),-1)+1 FROM card_labels WHERE card_id=?', (card_id,)
+        ).fetchone()[0]
+        conn.execute(
+            '''INSERT INTO card_labels (card_id, name, color, position) VALUES (?,?,?,?)
+               ON CONFLICT(card_id, name) DO UPDATE SET color=excluded.color''',
+            (card_id, name, color, pos)
+        )
+        row = dict(conn.execute(
+            'SELECT * FROM card_labels WHERE card_id=? AND name=?', (card_id, name)
+        ).fetchone())
+    return jsonify(row), 201
+
+@app.route('/api/cards/<int:card_id>/labels/<int:label_id>', methods=['DELETE'])
+def api_remove_card_label(card_id, label_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute('DELETE FROM card_labels WHERE id=? AND card_id=?', (label_id, card_id))
     return jsonify({'ok': True})
 
 
@@ -1182,7 +1243,7 @@ def export_board(board_id):
             return jsonify({'error': 'Not found'}), 404
         rows = conn.execute('''
             SELECT ca.id, co.name AS col_name, ca.title, ca.description,
-                   ca.label, ca.due_date,
+                   ca.due_date,
                    CASE WHEN ca.completed=1 THEN 'Выполнена' ELSE 'Активна' END AS status
             FROM cards ca
             JOIN columns co ON co.id = ca.column_id
@@ -1196,17 +1257,28 @@ def export_board(board_id):
             JOIN columns co ON co.id = ca.column_id
             WHERE co.board_id = ?
         ''', (board_id,)).fetchall()
+        labels_rows = conn.execute('''
+            SELECT cl.card_id, cl.name
+            FROM card_labels cl
+            JOIN cards ca ON ca.id = cl.card_id
+            JOIN columns co ON co.id = ca.column_id
+            WHERE co.board_id = ?
+            ORDER BY cl.position, cl.id
+        ''', (board_id,)).fetchall()
 
     cm_map = {}
     for m in members_rows:
         cm_map.setdefault(m['card_id'], []).append(m['member'])
+    lbl_map = {}
+    for l in labels_rows:
+        lbl_map.setdefault(l['card_id'], []).append(l['name'])
 
     output = io.StringIO()
     w = csv.writer(output)
-    w.writerow(['Колонка', 'Карточка', 'Описание', 'Метка', 'Срок', 'Статус', 'Участники'])
+    w.writerow(['Колонка', 'Карточка', 'Описание', 'Метки', 'Срок', 'Статус', 'Участники'])
     for r in rows:
         w.writerow([r['col_name'], r['title'], r['description'],
-                    r['label'], r['due_date'], r['status'],
+                    ', '.join(lbl_map.get(r['id'], [])), r['due_date'], r['status'],
                     ', '.join(cm_map.get(r['id'], []))])
 
     content = '﻿' + output.getvalue()
@@ -1228,7 +1300,7 @@ def export_workspace(ws_id):
             return jsonify({'error': 'Not found'}), 404
         rows = conn.execute('''
             SELECT ca.id, b.name AS board_name, co.name AS col_name,
-                   ca.title, ca.description, ca.label, ca.due_date,
+                   ca.title, ca.description, ca.due_date,
                    CASE WHEN ca.completed=1 THEN 'Выполнена' ELSE 'Активна' END AS status
             FROM cards ca
             JOIN columns co ON co.id = ca.column_id
@@ -1244,17 +1316,29 @@ def export_workspace(ws_id):
             JOIN boards b ON b.id = co.board_id
             WHERE b.workspace_id = ?
         ''', (ws_id,)).fetchall()
+        labels_rows = conn.execute('''
+            SELECT cl.card_id, cl.name
+            FROM card_labels cl
+            JOIN cards ca ON ca.id = cl.card_id
+            JOIN columns co ON co.id = ca.column_id
+            JOIN boards b ON b.id = co.board_id
+            WHERE b.workspace_id = ?
+            ORDER BY cl.position, cl.id
+        ''', (ws_id,)).fetchall()
 
     cm_map = {}
     for m in members_rows:
         cm_map.setdefault(m['card_id'], []).append(m['member'])
+    lbl_map = {}
+    for l in labels_rows:
+        lbl_map.setdefault(l['card_id'], []).append(l['name'])
 
     output = io.StringIO()
     w = csv.writer(output)
-    w.writerow(['Доска', 'Колонка', 'Карточка', 'Описание', 'Метка', 'Срок', 'Статус', 'Участники'])
+    w.writerow(['Доска', 'Колонка', 'Карточка', 'Описание', 'Метки', 'Срок', 'Статус', 'Участники'])
     for r in rows:
         w.writerow([r['board_name'], r['col_name'], r['title'],
-                    r['description'], r['label'], r['due_date'],
+                    r['description'], ', '.join(lbl_map.get(r['id'], [])), r['due_date'],
                     r['status'], ', '.join(cm_map.get(r['id'], []))])
 
     content = '﻿' + output.getvalue()
@@ -1376,6 +1460,26 @@ def migrate_db():
                 'UPDATE checklist_items SET checklist_id=? WHERE card_id=? AND checklist_id IS NULL',
                 (cur.lastrowid, cid)
             )
+
+        # ── Множественные метки на карточке ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_labels (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id  INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                name     TEXT NOT NULL DEFAULT '',
+                color    TEXT NOT NULL DEFAULT '',
+                position INTEGER DEFAULT 0,
+                UNIQUE(card_id, name)
+            )
+        ''')
+        # Разовый перенос старой одиночной метки (cards.label/label_color) в card_labels.
+        # Колонки cards.label/label_color оставлены как есть — ими больше никто не пишет,
+        # но существующие значения не теряем.
+        conn.execute('''
+            INSERT OR IGNORE INTO card_labels (card_id, name, color, position)
+            SELECT id, label, label_color, 0 FROM cards
+            WHERE TRIM(COALESCE(label, '')) != ''
+        ''')
 
 
 @app.route('/api/search')

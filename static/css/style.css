@@ -1199,6 +1199,12 @@ input { font-family: inherit; }
     transform: rotate(2deg);
 }
 
+.card-labels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
 .card-label {
     display: inline-block;
     font-size: 10px;
