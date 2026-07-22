@@ -17,9 +17,13 @@ import sqlite3
 import argparse
 import os
 import sys
-from datetime import datetime, timezone
+import uuid
+import shutil
+from datetime import datetime
+from urllib.parse import unquote
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'kanban.db')
+DB_PATH        = os.path.join(os.path.dirname(__file__), 'kanban.db')
+UPLOAD_FOLDER  = os.path.join(os.path.dirname(__file__), 'uploads')
 
 # Соответствие цветов Trello → наши hex
 TRELLO_COLORS = {
@@ -36,13 +40,30 @@ TRELLO_COLORS = {
 }
 
 
+def _fmt_size(n):
+    for unit in ('Б', 'КБ', 'МБ', 'ГБ'):
+        if n < 1024:
+            return f'{n:.0f} {unit}'
+        n /= 1024
+    return f'{n:.0f} ГБ'
+
+
+def _file_type(filename):
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    images = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'}
+    docs   = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv'}
+    if ext in images: return 'image'
+    if ext in docs:   return 'document'
+    return 'file'
+
+
 def parse_due(due_str):
-    """ISO 8601 → YYYY-MM-DD, или пустая строка."""
+    """ISO 8601 → ДД.ММ.ГГГГ (формат, который использует фронт для срока), или пустая строка."""
     if not due_str:
         return ''
     try:
         dt = datetime.fromisoformat(due_str.replace('Z', '+00:00'))
-        return dt.astimezone(timezone.utc).strftime('%Y-%m-%d')
+        return dt.astimezone().strftime('%d.%m.%Y')
     except Exception:
         return ''
 
@@ -80,19 +101,32 @@ def get_comment_author(action, member_map):
     return 'Пользователь'
 
 
-def get_label(labels):
-    """Берём первую непустую метку из списка."""
-    for lbl in labels:
-        name  = (lbl.get('name') or '').strip()
-        color = TRELLO_COLORS.get(lbl.get('color', ''), '')
-        if name or color:
-            return name, color
-    return '', ''
+def match_existing_users(conn, member_map):
+    """Сопоставляет участников Trello (id→имя) с уже существующими пользователями
+    приложения по точному имени (без учёта регистра). Trello не отдаёт email в
+    экспорте, поэтому это единственный доступный способ связки.
+    Возвращает {trello_member_id: (email, имя_у_нас)} — только для совпавших."""
+    rows = conn.execute('SELECT email, name FROM users').fetchall()
+    by_name = {r['name'].strip().lower(): (r['email'], r['name']) for r in rows if r['name']}
+    matched = {}
+    for trello_id, name in member_map.items():
+        hit = by_name.get(name.strip().lower())
+        if hit:
+            matched[trello_id] = hit
+    return matched
 
 
-def import_board_data(conn, board_id, data, skip_archived):
-    """Импортирует списки/карточки/чеклисты/комментарии Trello-доски (data)
-    в существующую доску board_id. Возвращает словарь со статистикой."""
+def import_board_data(conn, board_id, data, skip_archived, source_dir=None):
+    """Импортирует списки/карточки/метки/участников/чеклисты/вложения/комментарии
+    Trello-доски (data) в существующую доску board_id. source_dir — папка с исходным
+    JSON доски (в ней же лежит подпапка attachments/ с физическими файлами; без неё
+    вложения не переносятся). Возвращает словарь со статистикой."""
+
+    # ── Участники: сопоставляем Trello-участников доски с уже существующими
+    #    пользователями приложения по имени (Trello не отдаёт email в экспорте) ──
+    member_map      = build_member_map(data.get('members', []))   # trello_id → имя
+    matched_users   = match_existing_users(conn, member_map)       # trello_id → (email, имя)
+    unmatched_names = set()
 
     # ── Списки (→ колонки) ──────────────────────────────────────────────────
     lists_raw = data.get('lists', [])
@@ -123,16 +157,11 @@ def import_board_data(conn, board_id, data, skip_archived):
     if skip_archived:
         cards_raw = [c for c in cards_raw if not c.get('closed')]
 
-    # Строим индекс чеклистов по idCard
-    checklists_by_card = {}
-    for cl in data.get('checklists', []):
-        card_id_trello = cl.get('idCard')
-        checklists_by_card.setdefault(card_id_trello, []).append(cl)
-
     # Позиция внутри каждой колонки
     col_positions = {}
 
-    card_map = {}   # trello card id → наш card id
+    card_map          = {}   # trello card id → наш card id
+    card_by_trello_id = {}   # trello card id → исходный объект карточки Trello
     card_count = 0
     skipped = 0
 
@@ -148,22 +177,17 @@ def import_board_data(conn, board_id, data, skip_archived):
         pos = col_positions.get(col_id, 0)
         col_positions[col_id] = pos + 1
 
-        label_name, label_color = get_label(card.get('labels', []))
-        due     = parse_due(card.get('due'))
-        done    = 1 if card.get('dueComplete') else 0
+        due      = parse_due(card.get('due'))
+        done     = 1 if card.get('dueComplete') else 0
         archived = 1 if card.get('closed') else 0
 
         cur = conn.execute(
-            '''INSERT INTO cards
-               (column_id, title, description, label, label_color,
-                due_date, position, completed, archived)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            '''INSERT INTO cards (column_id, title, description, due_date, position, completed, archived)
+               VALUES (?, ?, ?, ?, ?, ?, ?)''',
             (
                 col_id,
                 card.get('name', '').strip() or '(без названия)',
                 card.get('desc', ''),
-                label_name,
-                label_color,
                 due,
                 pos,
                 done,
@@ -172,33 +196,140 @@ def import_board_data(conn, board_id, data, skip_archived):
         )
         our_card_id = cur.lastrowid
         card_map[card['id']] = our_card_id
+        card_by_trello_id[card['id']] = card
         card_count += 1
 
     print(f'  Карточек импортировано: {card_count}')
     if skipped:
         print(f'  Пропущено (архив): {skipped}')
 
-    # ── Чеклисты ────────────────────────────────────────────────────────────
+    # ── Метки (все метки карточки, не только первая — через card_labels) ────
+    label_count = 0
+    for trello_card_id, our_card_id in card_map.items():
+        card = card_by_trello_id[trello_card_id]
+        for lbl_pos, lbl in enumerate(card.get('labels', [])):
+            name  = (lbl.get('name') or '').strip()
+            color = TRELLO_COLORS.get(lbl.get('color', ''), '#6b778c')
+            conn.execute(
+                'INSERT OR IGNORE INTO card_labels (card_id, name, color, position) VALUES (?,?,?,?)',
+                (our_card_id, name, color, lbl_pos)
+            )
+            label_count += 1
+
+    print(f'  Меток перенесено: {label_count}')
+
+    # ── Участники карточки (только совпавшие с существующими пользователями) ─
+    member_count = 0
+    for trello_card_id, our_card_id in card_map.items():
+        card = card_by_trello_id[trello_card_id]
+        for trello_member_id in card.get('idMembers', []):
+            hit = matched_users.get(trello_member_id)
+            if hit:
+                email, name = hit
+                conn.execute(
+                    'INSERT OR IGNORE INTO card_members (card_id, user_email, user_name) VALUES (?,?,?)',
+                    (our_card_id, email, name)
+                )
+                member_count += 1
+            else:
+                name = member_map.get(trello_member_id, '')
+                if name:
+                    unmatched_names.add(name)
+
+    print(f'  Участников карточек перенесено: {member_count}')
+
+    # ── Чеклисты (именованные, со сроком/исполнителем на пункт) ─────────────
+    # В экспорте Trello чек-листы карточки лежат внутри неё самой (card['checklists']),
+    # отдельного top-level массива checklists в этом формате экспорта нет.
+    checklist_count = 0
     item_count = 0
     for trello_card_id, our_card_id in card_map.items():
-        checklists = checklists_by_card.get(trello_card_id, [])
-        pos = 0
-        for cl in checklists:
+        card = card_by_trello_id[trello_card_id]
+        checklists = sorted(card.get('checklists', []), key=lambda c: c.get('pos', 0))
+        for cl_pos, cl in enumerate(checklists):
+            title = (cl.get('name') or '').strip() or 'Чек-лист'
+            cur = conn.execute(
+                'INSERT INTO checklists (card_id, title, position) VALUES (?, ?, ?)',
+                (our_card_id, title, cl_pos)
+            )
+            our_checklist_id = cur.lastrowid
+            checklist_count += 1
+
             items = sorted(cl.get('checkItems', []), key=lambda x: x.get('pos', 0))
-            for item in items:
+            for item_pos, item in enumerate(items):
                 text    = item.get('name', '').strip()
                 checked = 1 if item.get('state') == 'complete' else 0
+                due     = parse_due(item.get('due'))
+
+                assignee_email, assignee_name = '', ''
+                trello_member_id = item.get('idMember')
+                if trello_member_id:
+                    hit = matched_users.get(trello_member_id)
+                    if hit:
+                        assignee_email, assignee_name = hit
+                    else:
+                        assignee_name = member_map.get(trello_member_id, '')
+                        if assignee_name:
+                            unmatched_names.add(assignee_name)
+
                 conn.execute(
-                    'INSERT INTO checklist_items (card_id, text, checked, position) VALUES (?, ?, ?, ?)',
-                    (our_card_id, text, checked, pos)
+                    '''INSERT INTO checklist_items
+                       (card_id, checklist_id, text, checked, position, due_date, assignee_email, assignee_name)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                    (our_card_id, our_checklist_id, text, checked, item_pos, due, assignee_email, assignee_name)
                 )
-                pos += 1
                 item_count += 1
 
-    print(f'  Пунктов чеклистов: {item_count}')
+    print(f'  Чек-листов создано: {checklist_count}, пунктов: {item_count}')
+
+    # ── Вложения (физические файлы из attachments/) ──────────────────────────
+    attachment_count   = 0
+    attachment_skipped = 0
+    attachments_dir = os.path.join(source_dir, 'attachments') if source_dir else None
+    for trello_card_id, our_card_id in card_map.items():
+        card = card_by_trello_id[trello_card_id]
+        for att in card.get('attachments', []):
+            stored_name = att.get('fileName') or ''
+            src_path = os.path.join(attachments_dir, stored_name) if (attachments_dir and stored_name) else ''
+            if not src_path or not os.path.exists(src_path):
+                attachment_skipped += 1
+                continue
+
+            original_name = unquote(att.get('originalFileName') or stored_name)
+            ext       = ('.' + original_name.rsplit('.', 1)[-1]) if '.' in original_name else ''
+            dest_name = uuid.uuid4().hex + ext
+            card_dir  = os.path.join(UPLOAD_FOLDER, str(our_card_id))
+            os.makedirs(card_dir, exist_ok=True)
+            dest_path = os.path.join(card_dir, dest_name)
+            shutil.copyfile(src_path, dest_path)
+
+            size_str    = _fmt_size(os.path.getsize(dest_path))
+            ftype       = _file_type(original_name)
+            uploaded_at = parse_datetime(att.get('date'))
+
+            if uploaded_at:
+                conn.execute(
+                    '''INSERT INTO attachments (card_id, filename, filesize, filetype, filepath, uploaded_at)
+                       VALUES (?,?,?,?,?,?)''',
+                    (our_card_id, original_name, size_str, ftype, dest_path, uploaded_at)
+                )
+            else:
+                conn.execute(
+                    'INSERT INTO attachments (card_id, filename, filesize, filetype, filepath) VALUES (?,?,?,?,?)',
+                    (our_card_id, original_name, size_str, ftype, dest_path)
+                )
+            attachment_count += 1
+
+    if attachments_dir:
+        print(f'  Вложений перенесено: {attachment_count}')
+        if attachment_skipped:
+            print(f'  Вложений пропущено (файл не найден): {attachment_skipped}')
+    else:
+        attachment_skipped = sum(len(c.get('attachments', [])) for c in card_by_trello_id.values())
+        if attachment_skipped:
+            print(f'  Вложения не перенесены — не передана папка с исходным JSON ({attachment_skipped} шт.)')
 
     # ── Комментарии (actions → commentCard) ─────────────────────────────────
-    member_map = build_member_map(data.get('members', []))
     comment_count = 0
     skipped_comments = 0
 
@@ -240,13 +371,22 @@ def import_board_data(conn, board_id, data, skip_archived):
     if skipped_comments:
         print(f'  Комментариев пропущено (карточка не импортирована): {skipped_comments}')
 
+    if unmatched_names:
+        print(f'  Несопоставленные участники ({len(unmatched_names)}): {", ".join(sorted(unmatched_names))}')
+
     return {
         'columns': col_count,
         'cards': card_count,
         'cards_skipped': skipped,
+        'labels': label_count,
+        'card_members': member_count,
+        'checklists': checklist_count,
         'checklist_items': item_count,
+        'attachments': attachment_count,
+        'attachments_skipped': attachment_skipped,
         'comments': comment_count,
         'comments_skipped': skipped_comments,
+        'unmatched_names': unmatched_names,
     }
 
 
@@ -274,7 +414,8 @@ def run(json_path, board_id, skip_archived):
     print(f'\nИмпорт из Trello: «{board_name}»')
     print(f'Целевая доска: [{board_id}] {board["name"]}\n')
 
-    import_board_data(conn, board_id, data, skip_archived)
+    source_dir = os.path.dirname(os.path.abspath(json_path))
+    import_board_data(conn, board_id, data, skip_archived, source_dir=source_dir)
 
     conn.commit()
     conn.close()
