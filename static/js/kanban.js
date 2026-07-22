@@ -2488,11 +2488,12 @@ window.uploadBoardBackground = async function(input) {
 
 window.openArchivePanel = async function() {
     const panel = document.getElementById('archivePanel');
-    panel.style.display = 'block';
+    panel.style.display = 'flex';
     const list = document.getElementById('archiveList');
     list.innerHTML = '<div class="ap-loading">Загрузка...</div>';
 
-    const res  = await fetch('/api/archive');
+    const boardId = _getBoardId();
+    const res  = await fetch(`/api/archive?board_id=${boardId}`);
     const data = await res.json();
 
     if (!data.length) {

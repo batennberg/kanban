@@ -737,6 +737,13 @@ def api_archive():
     board_ids = _get_board_ids()
     if board_ids is not None and len(board_ids) == 0:
         return jsonify([])
+
+    filter_board_id = request.args.get('board_id', type=int)
+    if filter_board_id:
+        if board_ids is not None and filter_board_id not in board_ids:
+            return jsonify([])
+        board_ids = [filter_board_id]
+
     with get_db() as conn:
         cards_sql = '''
             SELECT c.id, c.title, c.archived_at,
