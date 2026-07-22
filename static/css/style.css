@@ -1882,6 +1882,7 @@ kbd {
 .cm-main {
     padding: 20px 20px 24px 20px;
     border-right: 1px solid #ebecf0;
+    min-width: 0;
 }
 
 .cm-comments-col {
