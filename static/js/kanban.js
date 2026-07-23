@@ -253,6 +253,9 @@ window.openCardModal = function(e, cardEl) {
     currentCardId   = cardEl.id;
     currentCardDbId = dbId;
 
+    const boardId = document.getElementById('boardColumns')?.dataset.boardId;
+    if (boardId) history.replaceState(null, '', `/board/${boardId}?card=${dbId}`);
+
     // Populate from DOM (instant — без задержки)
     const titleEl  = cardEl.querySelector('.card-title');
     const labelEls = cardEl.querySelectorAll('.card-label');
@@ -392,6 +395,21 @@ window.closeCardModal = async function() {
     document.body.style.overflow = '';
     currentCardId   = null;
     currentCardDbId = null;
+
+    const boardId = document.getElementById('boardColumns')?.dataset.boardId;
+    if (boardId) history.replaceState(null, '', `/board/${boardId}`);
+};
+
+window.copyCardLink = async function() {
+    if (!currentCardDbId) return;
+    const link = `${location.origin}/card/${currentCardDbId}`;
+    try {
+        await navigator.clipboard.writeText(link);
+        showToast('Ссылка на карточку скопирована');
+    } catch (err) {
+        console.error('copyCardLink error:', err);
+        showToast('Не удалось скопировать ссылку', 'error');
+    }
 };
 
 window.handleModalOverlayClick = e => {
@@ -1774,6 +1792,22 @@ function applyDueDateClasses() {
 }
 
 document.addEventListener('DOMContentLoaded', applyDueDateClasses);
+
+
+// ===== ПРЯМАЯ ССЫЛКА НА КАРТОЧКУ (?card=) =====
+
+document.addEventListener('DOMContentLoaded', function() {
+    const cardId = new URLSearchParams(location.search).get('card');
+    if (!cardId) return;
+    const cardEl = document.querySelector(`.card[data-card-id="${cardId}"]`);
+    if (cardEl) {
+        cardEl.scrollIntoView({ block: 'center' });
+        openCardModal(null, cardEl);
+    } else {
+        showToast('Карточка не найдена (возможно, в архиве или на другой доске)', 'error');
+        history.replaceState(null, '', location.pathname);
+    }
+});
 
 
 // ===== FILTER BAR =====

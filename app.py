@@ -303,6 +303,24 @@ def board(board_id):
     return render_template('board.html', board=board_data, board_id=board_id, user=session['user'])
 
 
+@app.route('/card/<int:card_id>')
+def card_deep_link(card_id):
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT co.board_id FROM cards ca JOIN columns co ON co.id = ca.column_id WHERE ca.id=?',
+            (card_id,)
+        ).fetchone()
+    if not row:
+        return redirect(url_for('boards'))
+    board_id  = row['board_id']
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return redirect(url_for('boards'))
+    return redirect(url_for('board', board_id=board_id, card=card_id))
+
+
 # ===== API — BOARDS =====
 
 @app.route('/api/boards', methods=['GET'])
