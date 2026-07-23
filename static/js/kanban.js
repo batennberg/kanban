@@ -289,6 +289,7 @@ window.openCardModal = function(e, cardEl) {
     document.getElementById('cmUserAvatar').textContent     = document.querySelector('.user-avatar')?.textContent || 'R';
 
     renderAttachments([]);
+    renderLinks([]);
     renderComments([]);
     renderChecklists([]);
     updateCardMembersMeta([]);
@@ -312,6 +313,7 @@ async function loadCardData(dbId) {
         renderDescriptionView(data.description || '');
         renderComments(data.comments || []);
         renderAttachments(data.attachments || []);
+        renderLinks(data.links || []);
         renderChecklists(data.checklists || []);
         // Показываем cover в modal-header если есть
         const coverColor = data.cover_color || '';
@@ -492,6 +494,74 @@ window.deleteAttachment = async function(id) {
         document.querySelector(`[data-attach-id="${id}"]`)?.remove();
         if (!document.querySelector('.cm-attach-item')) {
             document.getElementById('cmAttachEmpty').style.display = 'block';
+        }
+    }
+};
+
+
+// ===== CARD LINKS =====
+
+function renderLinks(list) {
+    const container = document.getElementById('cmLinks');
+    const empty      = document.getElementById('cmLinksEmpty');
+    container.querySelectorAll('.cm-link-item').forEach(el => el.remove());
+    if (!list || !list.length) { empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    list.forEach(appendLinkToDOM);
+}
+
+function appendLinkToDOM(link) {
+    const container = document.getElementById('cmLinks');
+    document.getElementById('cmLinksEmpty').style.display = 'none';
+
+    const item = document.createElement('div');
+    item.className      = 'cm-link-item';
+    item.dataset.linkId = link.id;
+    item.innerHTML = `
+        <span class="cm-link-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
+        <div class="cm-link-info">
+            <a href="${escHtml(link.url)}" target="_blank" rel="noopener" class="cm-link-anchor">${escHtml(link.title || link.url)}</a>
+            ${link.title ? `<p class="cm-link-meta">${escHtml(link.url)}</p>` : ''}
+        </div>
+        <button class="cm-attach-del" onclick="deleteCardLink(${link.id})" title="Удалить">✕</button>
+    `;
+    container.appendChild(item);
+}
+
+window.showAddLinkForm = function() {
+    document.getElementById('cmLinkForm').style.display = 'block';
+    document.getElementById('cmLinkUrlInput')?.focus();
+};
+
+window.hideAddLinkForm = function() {
+    document.getElementById('cmLinkForm').style.display = 'none';
+    document.getElementById('cmLinkUrlInput').value   = '';
+    document.getElementById('cmLinkTitleInput').value = '';
+};
+
+window.addCardLink = async function() {
+    const urlInput   = document.getElementById('cmLinkUrlInput');
+    const titleInput = document.getElementById('cmLinkTitleInput');
+    const url   = urlInput?.value.trim();
+    const title = titleInput?.value.trim();
+    if (!url || !currentCardDbId) return;
+    const res = await fetch(`/api/cards/${currentCardDbId}/links`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, title })
+    });
+    if (res.ok) {
+        appendLinkToDOM(await res.json());
+        hideAddLinkForm();
+    }
+};
+
+window.deleteCardLink = async function(id) {
+    if (!confirm('Удалить ссылку?')) return;
+    const res = await fetch(`/api/cards/${currentCardDbId}/links/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+        document.querySelector(`[data-link-id="${id}"]`)?.remove();
+        if (!document.querySelector('.cm-link-item')) {
+            document.getElementById('cmLinksEmpty').style.display = 'block';
         }
     }
 };

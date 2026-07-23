@@ -5,7 +5,7 @@ from flask import Flask, render_template, redirect, url_for, session, request, j
 from models import get_db, init_db
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash
-import sqlite3, os, uuid, csv, io, shutil
+import sqlite3, os, uuid, csv, io, shutil, re
 from datetime import timedelta
 from urllib.parse import quote as url_quote
 
@@ -74,6 +74,11 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
         conn.execute(
             'INSERT OR IGNORE INTO card_labels (card_id, name, color, position) VALUES (?,?,?,?)',
             (new_card_id, lbl['name'], lbl['color'], lbl['position'])
+        )
+    for lnk in conn.execute('SELECT * FROM card_links WHERE card_id=? ORDER BY position', (src_card_id,)):
+        conn.execute(
+            'INSERT INTO card_links (card_id, url, title, position) VALUES (?,?,?,?)',
+            (new_card_id, lnk['url'], lnk['title'], lnk['position'])
         )
     return new_card_id
 
@@ -712,6 +717,9 @@ def api_get_card(card_id):
         labels = [dict(l) for l in conn.execute(
             'SELECT * FROM card_labels WHERE card_id=? ORDER BY position, id', (card_id,)
         )]
+        links = [dict(l) for l in conn.execute(
+            'SELECT * FROM card_links WHERE card_id=? ORDER BY position, id', (card_id,)
+        )]
         if card_dict.get('linked_board_id'):
             lb = conn.execute('SELECT id, name, color FROM boards WHERE id=?',
                               (card_dict['linked_board_id'],)).fetchone()
@@ -719,7 +727,7 @@ def api_get_card(card_id):
                 card_dict['linked_board_name']  = lb['name']
                 card_dict['linked_board_color'] = lb['color']
     return jsonify({**card_dict, 'comments': comments, 'attachments': attachments,
-                    'checklists': checklists, 'members': members, 'labels': labels})
+                    'checklists': checklists, 'members': members, 'labels': labels, 'links': links})
 
 @app.route('/api/cards/<int:card_id>', methods=['PUT'])
 def api_update_card(card_id):
@@ -1054,6 +1062,45 @@ def api_remove_card_label(card_id, label_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         conn.execute('DELETE FROM card_labels WHERE id=? AND card_id=?', (label_id, card_id))
+    return jsonify({'ok': True})
+
+
+# ===== API — CARD LINKS =====
+
+@app.route('/api/cards/<int:card_id>/links', methods=['GET'])
+def api_get_card_links(card_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT * FROM card_links WHERE card_id=? ORDER BY position, id', (card_id,)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/cards/<int:card_id>/links', methods=['POST'])
+def api_add_card_link(card_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d     = request.get_json()
+    url   = d.get('url', '').strip()
+    title = d.get('title', '').strip()
+    if not url: return jsonify({'error': 'url required'}), 400
+    if not re.match(r'^https?://', url, re.IGNORECASE):
+        url = 'https://' + url
+    with get_db() as conn:
+        pos = conn.execute(
+            'SELECT COALESCE(MAX(position),-1)+1 FROM card_links WHERE card_id=?', (card_id,)
+        ).fetchone()[0]
+        cur = conn.execute(
+            'INSERT INTO card_links (card_id, url, title, position) VALUES (?,?,?,?)',
+            (card_id, url, title, pos)
+        )
+        row = dict(conn.execute('SELECT * FROM card_links WHERE id=?', (cur.lastrowid,)).fetchone())
+    return jsonify(row), 201
+
+@app.route('/api/cards/<int:card_id>/links/<int:link_id>', methods=['DELETE'])
+def api_remove_card_link(card_id, link_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute('DELETE FROM card_links WHERE id=? AND card_id=?', (link_id, card_id))
     return jsonify({'ok': True})
 
 
@@ -1480,6 +1527,18 @@ def migrate_db():
             INSERT OR IGNORE INTO card_labels (card_id, name, color, position)
             SELECT id, label, label_color, 0 FROM cards
             WHERE TRIM(COALESCE(label, '')) != ''
+        ''')
+
+        # ── Несколько ссылок на карточке (Google Drive и т.п.) ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_links (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                url        TEXT    NOT NULL,
+                title      TEXT    NOT NULL DEFAULT '',
+                position   INTEGER DEFAULT 0,
+                created_at TEXT    DEFAULT (datetime('now','localtime'))
+            )
         ''')
 
 

@@ -345,6 +345,25 @@
                         <p class="cm-empty-hint" id="cmAttachEmpty">Нет вложений</p>
                     </div>
                 </div>
+
+                <div class="cm-section">
+                    <div class="cm-section-head">
+                        <span class="cm-sec-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
+                        <h3 class="cm-sec-title">Ссылки</h3>
+                        <button type="button" class="btn-attach-inline" onclick="showAddLinkForm()">+ Добавить</button>
+                    </div>
+                    <div class="cm-links" id="cmLinks">
+                        <p class="cm-empty-hint" id="cmLinksEmpty">Нет ссылок</p>
+                    </div>
+                    <div class="cm-link-form" id="cmLinkForm" style="display:none">
+                        <input class="csp-input" id="cmLinkUrlInput" type="text" placeholder="https://...">
+                        <input class="csp-input" id="cmLinkTitleInput" type="text" placeholder="Название (необязательно)" style="margin-top:6px" onkeydown="if(event.key==='Enter'){event.preventDefault();addCardLink();}">
+                        <div class="cm-link-form-actions">
+                            <button class="btn-primary btn-sm" onclick="addCardLink()">Добавить</button>
+                            <button class="btn-secondary btn-sm" onclick="hideAddLinkForm()">Отмена</button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="cm-comments-col">
