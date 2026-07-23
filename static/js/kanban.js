@@ -324,6 +324,9 @@ async function loadCardData(dbId) {
         // Метки
         updateModalLabels(data.labels || []);
 
+        // Дата начала
+        updateModalStart(data.start_date || '');
+
         // Связанная доска
         updateBoardLinkMeta(
             data.linked_board_id   || null,
@@ -726,7 +729,7 @@ function updateCardLabelsOnBoard(cardDomId, labels) {
 }
 
 // --- Срок — мини-календарь ---
-const _cal = { year: 0, month: 0, selected: '', onSelect: null, onClear: null };
+const _cal = { year: 0, month: 0, selected: '', onSelect: null, onClear: null, clearLabel: 'Убрать срок' };
 const _RU_MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь',
                     'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 const _CAL_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
@@ -768,7 +771,7 @@ function _calBuild() {
             <span class="cal-dow cal-dow--we">Сб</span><span class="cal-dow cal-dow--we">Вс</span>
             ${cells}
         </div>
-        ${selected ? `<button class="csp-btn csp-btn--secondary" style="margin-top:10px" onclick="clearDueDate()">Убрать срок</button>` : ''}
+        ${selected ? `<button class="csp-btn csp-btn--secondary" style="margin-top:10px" onclick="clearDueDate()">${_cal.clearLabel}</button>` : ''}
     </div>`;
 }
 
@@ -777,15 +780,15 @@ function _calRefresh() {
     if (body) body.innerHTML = _calBuild();
 }
 
-function _calOpenForDate(currentDue) {
+function _calOpenForDate(currentDue, title = 'Срок', clearLabel = 'Убрать срок') {
     const now = new Date();
     let iy = now.getFullYear(), im = now.getMonth();
     if (currentDue) {
         const [, mm, yy] = currentDue.split('.').map(Number);
         if (!isNaN(yy)) { iy = yy; im = mm - 1; }
     }
-    _cal.year = iy; _cal.month = im; _cal.selected = currentDue;
-    openPopover('Срок', _calBuild());
+    _cal.year = iy; _cal.month = im; _cal.selected = currentDue; _cal.clearLabel = clearLabel;
+    openPopover(title, _calBuild());
 }
 
 window.openDueDatePopover = function() {
@@ -856,6 +859,41 @@ function updateCardDue(cardDomId, due) {
         div.className = 'card-due ' + dueDateClass(due);
         div.innerHTML = `<span class="due-icon">${_CAL_SVG}</span> ${escHtml(due)}`;
         cardEl.appendChild(div);
+    }
+}
+
+// --- Дата начала (переиспользует календарь срока, см. _cal) ---
+window.openStartDatePopover = function() {
+    const startEl = document.getElementById('cmMeta')?.querySelector('.cm-start-badge');
+    const currentStart = startEl ? (startEl.dataset.start || '') : '';
+    _cal.onSelect = async (start) => {
+        if (!currentCardDbId) return;
+        await fetch(`/api/cards/${currentCardDbId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ start_date: start })
+        });
+        updateModalStart(start);
+    };
+    _cal.onClear = async () => {
+        if (!currentCardDbId) return;
+        await fetch(`/api/cards/${currentCardDbId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ start_date: '' })
+        });
+        updateModalStart('');
+    };
+    _calOpenForDate(currentStart, 'Дата начала', 'Убрать дату начала');
+};
+
+function updateModalStart(start) {
+    const meta = document.getElementById('cmMeta');
+    meta.querySelector('.cm-start-badge')?.remove();
+    if (start) {
+        const span = document.createElement('span');
+        span.className = 'cm-start-badge';
+        span.dataset.start = start;
+        span.innerHTML = `${_CAL_SVG} ${escHtml(start)}`;
+        meta.appendChild(span);
     }
 }
 

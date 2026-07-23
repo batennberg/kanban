@@ -40,10 +40,10 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
     src = conn.execute('SELECT * FROM cards WHERE id=?', (src_card_id,)).fetchone()
     cur = conn.execute(
         '''INSERT INTO cards
-           (column_id, title, description, label, label_color, due_date, position, cover_color)
-           VALUES (?,?,?,?,?,?,?,?)''',
+           (column_id, title, description, label, label_color, due_date, start_date, position, cover_color)
+           VALUES (?,?,?,?,?,?,?,?,?)''',
         (target_column_id, src['title'] + title_suffix, src['description'],
-         src['label'], src['label_color'], src['due_date'], position, src['cover_color'])
+         src['label'], src['label_color'], src['due_date'], src['start_date'], position, src['cover_color'])
     )
     new_card_id = cur.lastrowid
 
@@ -676,8 +676,8 @@ def api_create_card():
     with get_db() as conn:
         pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=?', (col_id,)).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO cards (column_id,title,label,label_color,due_date,position) VALUES(?,?,?,?,?,?)',
-            (col_id, title, d.get('label',''), d.get('label_color',''), d.get('due_date',''), pos)
+            'INSERT INTO cards (column_id,title,label,label_color,due_date,start_date,position) VALUES(?,?,?,?,?,?,?)',
+            (col_id, title, d.get('label',''), d.get('label_color',''), d.get('due_date',''), d.get('start_date',''), pos)
         )
         card_id = cur.lastrowid
         card = dict(conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone())
@@ -725,7 +725,7 @@ def api_get_card(card_id):
 def api_update_card(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     d = request.get_json()
-    allowed = ['title', 'description', 'label', 'label_color', 'due_date', 'column_id', 'position', 'completed', 'cover_color', 'linked_board_id']
+    allowed = ['title', 'description', 'label', 'label_color', 'due_date', 'start_date', 'column_id', 'position', 'completed', 'cover_color', 'linked_board_id']
     fields, values = [], []
     for f in allowed:
         if f in d:
@@ -1361,6 +1361,7 @@ def migrate_db():
             'ALTER TABLE cards ADD COLUMN linked_board_id  INTEGER REFERENCES boards(id) ON DELETE SET NULL',
             'ALTER TABLE cards ADD COLUMN archived         INTEGER DEFAULT 0',
             'ALTER TABLE cards ADD COLUMN archived_at      TEXT',
+            'ALTER TABLE cards ADD COLUMN start_date       TEXT    DEFAULT ""',
             'ALTER TABLE columns ADD COLUMN archived       INTEGER DEFAULT 0',
             'ALTER TABLE columns ADD COLUMN archived_at    TEXT',
             '''CREATE TABLE IF NOT EXISTS card_members (

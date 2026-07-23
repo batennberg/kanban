@@ -51,6 +51,7 @@ def init_db():
                 label       TEXT DEFAULT '',
                 label_color TEXT DEFAULT '',
                 due_date    TEXT DEFAULT '',
+                start_date  TEXT DEFAULT '',
                 position    INTEGER DEFAULT 0,
                 completed   INTEGER DEFAULT 0,
                 created_at  TEXT DEFAULT (datetime('now','localtime'))
