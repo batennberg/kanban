@@ -677,6 +677,22 @@ input { font-family: inherit; }
 .mp-toggle input:checked + .mp-slider { background: #22c55e; }
 .mp-toggle input:checked + .mp-slider::before { transform: translateX(14px); }
 
+.mp-icon-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; flex-shrink: 0;
+    background: none; border: none; border-radius: 6px;
+    color: var(--text-3, #AFAFAC); cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+.mp-icon-btn:hover { background: #ebebe7; color: var(--text-1, #1a1a1a); }
+.mp-icon-btn--danger:hover { background: #fde8e8; color: #de350b; }
+.mp-add-row { padding: 8px 14px 4px; border-top: 1px solid var(--border, #E8E7E3); margin-top: 4px; }
+.mp-add-select {
+    width: 100%; padding: 7px 8px; font-size: 12px;
+    border: 1px solid var(--border, #E8E7E3); border-radius: 6px;
+    background: #fff; color: var(--text-1, #1a1a1a); cursor: pointer;
+}
+
 /* ===== COLUMN MENU DROPDOWN ===== */
 .col-menu-dd {
     position: absolute;

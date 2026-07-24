@@ -1296,6 +1296,10 @@ window.openMembersPanel = async function(triggerBtn) {
     closeBoardSwitcher();
     triggerBtn?.classList.add('btn-board-action--active');
     panel.style.display = '';
+    await renderMembersPanel();
+};
+
+window.renderMembersPanel = async function() {
     const list = document.getElementById('mpList');
     list.innerHTML = '<div class="mp-loading">Загрузка...</div>';
 
@@ -1304,36 +1308,80 @@ window.openMembersPanel = async function(triggerBtn) {
     const isAdmin = boardEl?.dataset.userRole === 'admin';
 
     try {
-        const res = await fetch(`/api/boards/${boardId}/access`);
-        if (!res.ok) {
-            list.innerHTML = '<div class="mp-note">Только администратор может управлять участниками.</div>';
+        // Список тех, у кого реально есть доступ к доске — виден всем участникам доски
+        const membersRes = await fetch(`/api/boards/${boardId}/members`);
+        if (!membersRes.ok) {
+            list.innerHTML = '<div class="mp-note">Не удалось загрузить участников.</div>';
             return;
         }
-        const users = await res.json();
-        if (!users.length) {
-            list.innerHTML = '<div class="mp-note">Нет пользователей в системе.</div>';
-            return;
+        const members = await membersRes.json();
+
+        // Для админа дополнительно тянем полный список пользователей с флагом доступа —
+        // нужен, чтобы показать кнопки управления и список кандидатов на добавление
+        let accessByEmail = null;
+        let candidates = [];
+        if (isAdmin) {
+            const accessRes = await fetch(`/api/boards/${boardId}/access`);
+            if (accessRes.ok) {
+                const users = await accessRes.json();
+                accessByEmail = new Map(users.map(u => [(u.email || '').toLowerCase(), u]));
+                candidates = users.filter(u => !u.has_access);
+            }
         }
-        list.innerHTML = users.map(u => {
-            const avatar = (u.name || u.email || '?')[0].toUpperCase();
-            return `<div class="mp-user">
-                <div class="mp-avatar">${escHtml(avatar)}</div>
-                <div class="mp-info">
-                    <span class="mp-name">${escHtml(u.name || u.email)}</span>
-                    <span class="mp-email">${escHtml(u.email)}</span>
-                </div>
-                ${isAdmin ? `
-                <label class="mp-toggle">
-                    <input type="checkbox" ${u.has_access ? 'checked' : ''}
-                           onchange="toggleMemberAccess(${boardId}, ${u.id}, this.checked)">
-                    <span class="mp-slider"></span>
-                </label>` : (u.has_access ? '<span class="mp-check">✓</span>' : '')}
+
+        if (!members.length) {
+            list.innerHTML = '<div class="mp-note">Нет пользователей с доступом к доске.</div>';
+        } else {
+            list.innerHTML = members.map(m => {
+                const avatar = (m.name || m.email || '?')[0].toUpperCase();
+                const u = accessByEmail?.get((m.email || '').toLowerCase());
+                return `<div class="mp-user">
+                    <div class="mp-avatar">${escHtml(avatar)}</div>
+                    <div class="mp-info">
+                        <span class="mp-name">${escHtml(m.name || m.email)}</span>
+                        <span class="mp-email">${escHtml(m.email)}</span>
+                    </div>
+                    ${u ? `
+                    <button class="mp-icon-btn" title="Убрать с доски" onclick="mpRevokeAccess(${boardId}, ${u.id})">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                    <button class="mp-icon-btn mp-icon-btn--danger" title="Удалить пользователя из системы" onclick="mpDeleteUser('${escHtml(m.email)}')">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                    </button>` : ''}
+                </div>`;
+            }).join('');
+        }
+
+        if (isAdmin) {
+            const addHtml = `<div class="mp-add-row">
+                <select id="mpAddSelect" class="mp-add-select" onchange="mpAddMember(${boardId}, this.value)">
+                    <option value="">${candidates.length ? '+ Добавить участника…' : 'Нет пользователей для добавления'}</option>
+                    ${candidates.map(u => `<option value="${u.id}">${escHtml(u.name || u.email)}</option>`).join('')}
+                </select>
             </div>`;
-        }).join('');
+            list.insertAdjacentHTML('beforeend', addHtml);
+        }
     } catch (err) {
         console.error('Members panel error:', err);
         list.innerHTML = '<div class="mp-note">Ошибка загрузки участников.</div>';
     }
+};
+
+window.mpRevokeAccess = async function(boardId, userId) {
+    await toggleMemberAccess(boardId, userId, false);
+    renderMembersPanel();
+};
+
+window.mpAddMember = async function(boardId, userId) {
+    if (!userId) return;
+    await toggleMemberAccess(boardId, parseInt(userId), true);
+    renderMembersPanel();
+};
+
+window.mpDeleteUser = async function(email) {
+    if (!confirm(`Удалить пользователя ${email} из системы?\n\nОн потеряет доступ ко всем доскам. Действие необратимо.`)) return;
+    await fetch('/api/users/' + encodeURIComponent(email), { method: 'DELETE' });
+    renderMembersPanel();
 };
 
 window.closeMembersPanel = function() {
