@@ -2197,6 +2197,46 @@ kbd {
 
 .cm-compose-actions { display: flex; gap: 6px; margin-top: 6px; }
 
+.cm-mention-suggestions {
+    display: none;
+    margin-top: 6px;
+    border: 1px solid #dfe1e6;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    overflow: hidden;
+}
+
+.cm-mention-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    padding: 8px 10px;
+    text-align: left;
+    background: #fff;
+    border: none;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+
+.cm-mention-item:hover,
+.cm-mention-item.is-active {
+    background: #f4f5f7;
+}
+
+.cm-mention-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1a2535;
+}
+
+.cm-mention-meta {
+    font-size: 11px;
+    color: #6b778c;
+}
+
 .btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 6px; font-weight: 600; }
 
 /* Comments list */
@@ -2261,6 +2301,15 @@ kbd {
     color: #1a2535;
     line-height: 1.5;
     word-break: break-word;
+}
+
+.comment-mention {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #e3f0ff;
+    color: #0052cc;
+    font-weight: 600;
 }
 
 /* Sidebar */

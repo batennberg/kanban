@@ -299,6 +299,8 @@ window.openCardModal = function(e, cardEl) {
     document.getElementById('cmCommentsEmpty').style.display = 'block';
 
     closePopover();
+    currentBoardId = document.getElementById('boardColumns')?.dataset.boardId || null;
+    hideMentionSuggestions();
     document.getElementById('cardDetailModal').style.display = 'flex';
     document.body.style.overflow = 'hidden';
 
@@ -395,6 +397,8 @@ window.closeCardModal = async function() {
     document.body.style.overflow = '';
     currentCardId   = null;
     currentCardDbId = null;
+    currentBoardId  = null;
+    hideMentionSuggestions();
 
     const boardId = document.getElementById('boardColumns')?.dataset.boardId;
     if (boardId) history.replaceState(null, '', `/board/${boardId}`);
@@ -598,18 +602,152 @@ window.deleteCardLink = async function(id) {
 
 // ===== COMMENTS =====
 
+let mentionCandidates = [];
+let mentionBoardId = null;
+let mentionSuggestions = [];
+let mentionActiveIndex = 0;
+let currentBoardId = null;
+
+function hideMentionSuggestions() {
+    const panel = document.getElementById('cmMentionSuggestions');
+    if (panel) {
+        panel.innerHTML = '';
+        panel.style.display = 'none';
+    }
+    mentionSuggestions = [];
+    mentionActiveIndex = 0;
+}
+
+function getMentionAlias(user) {
+    const emailLocal = String(user?.email || '').split('@')[0].trim();
+    if (emailLocal) return emailLocal;
+    return String(user?.name || 'user')
+        .replace(/\s+/g, '_')
+        .replace(/[^A-Za-z0-9._-]/g, '')
+        .toLowerCase() || 'user';
+}
+
+function getMentionContext() {
+    const input = document.getElementById('cmCommentInput');
+    if (!input) return null;
+    const text = input.value || '';
+    const cursor = input.selectionStart ?? text.length;
+    const beforeCursor = text.slice(0, cursor);
+    const atIndex = beforeCursor.lastIndexOf('@');
+    if (atIndex < 0) return null;
+    const prefix = beforeCursor.slice(0, atIndex);
+    if (prefix.length && !/\s$/.test(prefix)) return null;
+    const query = beforeCursor.slice(atIndex + 1);
+    return { start: atIndex, end: cursor, query };
+}
+
+function filterMentionCandidates(query = '') {
+    const term = String(query || '').trim().toLowerCase();
+    if (!mentionCandidates.length) return [];
+    if (!term) return mentionCandidates;
+    return mentionCandidates.filter(user => {
+        const name = String(user?.name || '').toLowerCase();
+        const email = String(user?.email || '').toLowerCase();
+        const alias = getMentionAlias(user).toLowerCase();
+        return name.includes(term) || email.includes(term) || alias.includes(term);
+    });
+}
+
+function renderMentionSuggestions(list = []) {
+    const panel = document.getElementById('cmMentionSuggestions');
+    if (!panel) return;
+    if (!list.length) {
+        panel.innerHTML = '';
+        panel.style.display = 'none';
+        mentionSuggestions = [];
+        mentionActiveIndex = 0;
+        return;
+    }
+    mentionSuggestions = list;
+    mentionActiveIndex = 0;
+    panel.innerHTML = list.map((user, index) => {
+        const name = String(user?.name || user?.email || 'Пользователь');
+        const email = String(user?.email || '');
+        const alias = getMentionAlias(user);
+        return `
+            <button type="button" class="cm-mention-item${index === 0 ? ' is-active' : ''}" data-index="${index}" onclick="selectMentionSuggestion(${index})">
+                <span class="cm-mention-name">${escHtml(name)}</span>
+                <span class="cm-mention-meta">${escHtml(alias)}${email ? ` · ${escHtml(email)}` : ''}</span>
+            </button>
+        `;
+    }).join('');
+    panel.style.display = 'block';
+}
+
+async function loadMentionCandidates(query = '') {
+    if (!currentBoardId) {
+        hideMentionSuggestions();
+        return;
+    }
+    if (mentionBoardId === currentBoardId && mentionCandidates.length) {
+        renderMentionSuggestions(filterMentionCandidates(query));
+        return;
+    }
+    try {
+        const res = await fetch(`/api/boards/${currentBoardId}/members`);
+        if (!res.ok) throw new Error('failed');
+        const members = await res.json();
+        mentionCandidates = Array.isArray(members) ? members : [];
+        mentionBoardId = currentBoardId;
+        renderMentionSuggestions(filterMentionCandidates(query));
+    } catch (err) {
+        console.error('Ошибка загрузки кандидатов для @упоминаний', err);
+        hideMentionSuggestions();
+    }
+}
+
+function updateMentionSuggestions() {
+    const context = getMentionContext();
+    if (!context) {
+        hideMentionSuggestions();
+        return;
+    }
+    if (!currentBoardId) {
+        hideMentionSuggestions();
+        return;
+    }
+    loadMentionCandidates(context.query);
+}
+
+window.selectMentionSuggestion = function(index) {
+    const input = document.getElementById('cmCommentInput');
+    const item = mentionSuggestions[index];
+    if (!input || !item) return;
+    const context = getMentionContext();
+    if (!context) return;
+    const alias = getMentionAlias(item);
+    const replacement = `@${alias}`;
+    const text = input.value || '';
+    const before = text.slice(0, context.start);
+    const after = text.slice(context.end);
+    input.value = `${before}${replacement}${after}`;
+    const cursorPos = before.length + replacement.length;
+    input.focus();
+    input.setSelectionRange(cursorPos, cursorPos);
+    hideMentionSuggestions();
+    showCommentActions();
+};
+
 window.showCommentActions = () => {
     document.getElementById('cmCommentActions').style.display = 'flex';
 };
 
 window.cancelComment = () => {
-    document.getElementById('cmCommentInput').value = '';
+    const input = document.getElementById('cmCommentInput');
+    input.value = '';
     document.getElementById('cmCommentActions').style.display = 'none';
-    document.getElementById('cmCommentInput').blur();
+    hideMentionSuggestions();
+    input.blur();
 };
 
 window.submitComment = async function() {
-    const text = document.getElementById('cmCommentInput').value.trim();
+    const input = document.getElementById('cmCommentInput');
+    const text = input.value.trim();
     if (!text || !currentCardDbId) return;
 
     const btn = document.querySelector('#cmCommentActions .btn-primary');
@@ -624,6 +762,7 @@ window.submitComment = async function() {
         const comment = await res.json();
         appendCommentToDOM(comment);
         cancelComment();
+        hideMentionSuggestions();
     } finally {
         btn.disabled = false;
     }
@@ -709,10 +848,42 @@ window.deleteCurrentCard = function() {
 };
 
 // Ctrl+Enter → отправить комментарий
+document.getElementById('cmCommentInput').addEventListener('input', updateMentionSuggestions);
 document.getElementById('cmCommentInput').addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' && mentionSuggestions.length) {
+        e.preventDefault();
+        mentionActiveIndex = (mentionActiveIndex + 1) % mentionSuggestions.length;
+        const panel = document.getElementById('cmMentionSuggestions');
+        if (panel) {
+            panel.querySelectorAll('.cm-mention-item').forEach((el, idx) => {
+                el.classList.toggle('is-active', idx === mentionActiveIndex);
+            });
+        }
+        return;
+    }
+    if (e.key === 'ArrowUp' && mentionSuggestions.length) {
+        e.preventDefault();
+        mentionActiveIndex = (mentionActiveIndex - 1 + mentionSuggestions.length) % mentionSuggestions.length;
+        const panel = document.getElementById('cmMentionSuggestions');
+        if (panel) {
+            panel.querySelectorAll('.cm-mention-item').forEach((el, idx) => {
+                el.classList.toggle('is-active', idx === mentionActiveIndex);
+            });
+        }
+        return;
+    }
+    if (e.key === 'Enter' && mentionSuggestions.length) {
+        e.preventDefault();
+        selectMentionSuggestion(mentionActiveIndex);
+        return;
+    }
+    if (e.key === 'Escape' && mentionSuggestions.length) {
+        e.preventDefault();
+        hideMentionSuggestions();
+        return;
+    }
     if (e.key === 'Enter' && e.ctrlKey) submitComment();
 });
-
 
 // ===== SIDEBAR POPOVER =====
 
