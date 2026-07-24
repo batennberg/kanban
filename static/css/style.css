@@ -4293,9 +4293,9 @@ kbd {
 
 /* ===== INBOX / NOTIFICATIONS ===== */
 .inbox-shell {
-    position: fixed;
-    top: 20px;
-    right: 20px;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
     z-index: 1200;
 }
 
