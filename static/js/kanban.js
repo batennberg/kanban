@@ -404,7 +404,18 @@ window.copyCardLink = async function() {
     if (!currentCardDbId) return;
     const link = `${location.origin}/card/${currentCardDbId}`;
     try {
-        await navigator.clipboard.writeText(link);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(link);
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = link;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+        }
         showToast('Ссылка на карточку скопирована');
     } catch (err) {
         console.error('copyCardLink error:', err);
