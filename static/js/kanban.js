@@ -820,7 +820,7 @@ function appendCommentToDOM(c) {
             <p class="cm-comment-text">${formatCommentText(c.text, c.mentions || [])}</p>
         </div>
     `;
-    document.getElementById('cmCommentsList').appendChild(item);
+    document.getElementById('cmCommentsList').prepend(item);
 }
 
 window.deleteComment = async function(id) {
