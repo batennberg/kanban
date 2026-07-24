@@ -3320,6 +3320,72 @@ kbd {
 .ws-board-card:hover .ws-board-delete-btn { opacity: 1; }
 .ws-board-delete-btn:hover { background: #de350b; }
 
+.ws-board-move-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: rgba(0,0,0,0.3);
+    color: rgba(255,255,255,0.92);
+    border: none;
+    border-radius: 6px;
+    padding: 4px 6px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s var(--ease-spring), background 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+.ws-board-card:hover .ws-board-move-btn { opacity: 1; }
+.ws-board-move-btn:hover { background: #6554c0; }
+
+/* Drag & drop доски между пространствами (только admin) */
+.ws-board-card[draggable="true"] { cursor: grab; }
+.ws-board-card--dragging { opacity: 0.4; }
+.ws-boards-grid--drop-target {
+    outline: 2px dashed #4361EE;
+    outline-offset: -4px;
+    border-radius: 12px;
+    background: rgba(67,97,238,0.05);
+}
+
+/* Меню «Переместить в пространство» */
+.move-ws-menu {
+    position: fixed;
+    z-index: 1200;
+    min-width: 200px;
+    max-width: 260px;
+    background: var(--surface, #fff);
+    border: 1px solid var(--border, #E8E7E3);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.14);
+    padding: 6px;
+    display: none;
+}
+.move-ws-menu-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: var(--text-muted, #6b778c);
+    padding: 6px 10px 8px;
+}
+.move-ws-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text, #172b4d);
+    cursor: pointer;
+    transition: background 0.12s;
+}
+.move-ws-item:hover { background: var(--hover-bg, #f4f5f7); }
+.move-ws-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
 /* Footer row — inside outer shell, transparent */
 .ws-board-foot {
     display: flex;

@@ -408,6 +408,28 @@ def api_update_board(board_id):
         conn.execute('UPDATE boards SET name=?, color=? WHERE id=?', (new_name, new_color, board_id))
     return jsonify({'ok': True, 'name': new_name, 'color': new_color})
 
+@app.route('/api/boards/<int:board_id>/workspace', methods=['PUT'])
+def api_move_board_workspace(board_id):
+    if 'user' not in session or session['user'].get('role') != 'admin':
+        return jsonify({'error': 'forbidden'}), 403
+    d = request.get_json() or {}
+    workspace_id = d.get('workspace_id') or None
+    with get_db() as conn:
+        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        if not board:
+            return jsonify({'error': 'not found'}), 404
+        company, ws_color = '', board['color']
+        if workspace_id:
+            ws = conn.execute('SELECT * FROM workspaces WHERE id=?', (workspace_id,)).fetchone()
+            if not ws:
+                return jsonify({'error': 'workspace not found'}), 404
+            company, ws_color = ws['name'], ws['color']
+        conn.execute('UPDATE boards SET workspace_id=?, company=? WHERE id=?', (workspace_id, company, board_id))
+    return jsonify({
+        'ok': True, 'workspace_id': workspace_id,
+        'workspace_name': company, 'workspace_color': ws_color
+    })
+
 @app.route('/api/boards/<int:board_id>/background', methods=['POST'])
 def api_board_background_upload(board_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401

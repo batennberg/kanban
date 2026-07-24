@@ -185,11 +185,19 @@
                        class="ws-board-card"
                        data-name="{{ board.name | lower }}"
                        data-company="{{ board.company | lower }}"
+                       {% if user.role == 'admin' %}draggable="true"{% endif %}
                        style="--bcolor: {{ board.color }}; --i: {{ loop.index0 }}">
                         <div class="ws-board-thumb">
                             <div class="ws-board-bg" {% if board.bg_image %}style="background-image:url('/static/uploads/board-bg/{{ board.bg_image }}');background-size:cover;background-position:center;"{% endif %}></div>
                             <div class="ws-board-deco"></div>
                             {% if user.role == 'admin' %}
+                            <button class="ws-board-move-btn" title="Переместить в пространство"
+                                    onclick="openMoveWorkspaceMenu(event, {{ board.id }}, {{ board.workspace_id or 'null' }})">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M8 3 4 7l4 4"/><path d="M4 7h16"/>
+                                    <path d="M16 21l4-4-4-4"/><path d="M20 17H4"/>
+                                </svg>
+                            </button>
                             <button class="ws-board-access-btn" title="Управление доступом"
                                     onclick="openAccessModal(event, {{ board.id }}, '{{ board.name | e }}')">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
@@ -340,6 +348,12 @@
     </div>
 </div>
 
+<!-- ===== MOVE-TO-WORKSPACE MENU ===== -->
+<div class="move-ws-menu" id="moveWsMenu">
+    <div class="move-ws-menu-title">Переместить в пространство</div>
+    <div id="moveWsMenuBody"></div>
+</div>
+
 <!-- ===== ADD WORKSPACE MODAL ===== -->
 <div class="modal-overlay" id="addWorkspaceModal" style="display:none">
     <div class="modal modal--sm">
@@ -413,6 +427,9 @@
 
 {% block scripts %}
 <script>
+const IS_ADMIN   = {{ 'true' if user.role == 'admin' else 'false' }};
+const WORKSPACES = {{ workspaces | tojson }};
+
 // ===== MOBILE SIDEBAR DRAWER =====
 function toggleSidebar() {
     const sidebar = document.querySelector('.ws-sidebar');
@@ -618,6 +635,7 @@ function appendBoardCard(board) {
     const a      = document.createElement('a');
     a.href       = '/board/' + board.id;
     a.className  = 'ws-board-card';
+    a.draggable  = true;
     a.dataset.name    = board.name.toLowerCase();
     a.dataset.company = company.toLowerCase();
     a.style.setProperty('--bcolor', board.color);
@@ -625,6 +643,13 @@ function appendBoardCard(board) {
         <div class="ws-board-thumb">
             <div class="ws-board-bg" ${board.bg_image ? `style="background-image:url('/static/uploads/board-bg/${board.bg_image}');background-size:cover;background-position:center;"` : ''}></div>
             <div class="ws-board-deco"></div>
+            <button class="ws-board-move-btn" title="Переместить в пространство"
+                    onclick="openMoveWorkspaceMenu(event, ${board.id}, ${wsId || 'null'})">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 3 4 7l4 4"/><path d="M4 7h16"/>
+                    <path d="M16 21l4-4-4-4"/><path d="M20 17H4"/>
+                </svg>
+            </button>
             <button class="ws-board-access-btn" title="Управление доступом"
                     onclick="openAccessModal(event, ${board.id}, '${escHtml(board.name)}')">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
@@ -671,6 +696,159 @@ function updateWsSidebarCount(wsId, delta) {
     // Обновляем счётчик "Все доски"
     const allBadge = document.querySelector('#wsAll .ws-ws-count');
     if (allBadge) allBadge.textContent = Math.max(0, parseInt(allBadge.textContent || '0') + delta);
+}
+
+// ===== MOVE BOARD BETWEEN WORKSPACES (только admin) =====
+let moveWsBoardId = null;
+
+function openMoveWorkspaceMenu(e, boardId, currentWsId) {
+    e.preventDefault();
+    e.stopPropagation();
+    moveWsBoardId = boardId;
+
+    const items = WORKSPACES
+        .filter(ws => ws.id !== currentWsId)
+        .map(ws => `
+            <div class="move-ws-item" onclick="moveBoardToWorkspace(${boardId}, ${ws.id})">
+                <span class="move-ws-dot" style="background:${escHtml(ws.color)}"></span>${escHtml(ws.name)}
+            </div>`).join('');
+    const noneItem = currentWsId
+        ? `<div class="move-ws-item" onclick="moveBoardToWorkspace(${boardId}, null)">Без пространства</div>`
+        : '';
+    document.getElementById('moveWsMenuBody').innerHTML = items + noneItem
+        || '<p class="bl-empty">Нет других пространств</p>';
+
+    const menu = document.getElementById('moveWsMenu');
+    const rect = e.currentTarget.getBoundingClientRect();
+    menu.style.display = 'block';
+    const menuRect = menu.getBoundingClientRect();
+    let left = rect.left + window.scrollX;
+    if (left + menuRect.width > window.innerWidth - 8) left = window.innerWidth - menuRect.width - 8;
+    menu.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+    menu.style.left = left + 'px';
+}
+
+function closeMoveWorkspaceMenu() {
+    document.getElementById('moveWsMenu').style.display = 'none';
+    moveWsBoardId = null;
+}
+
+document.addEventListener('click', e => {
+    if (!e.target.closest('#moveWsMenu') && !e.target.closest('.ws-board-move-btn')) {
+        closeMoveWorkspaceMenu();
+    }
+});
+
+async function moveBoardToWorkspace(boardId, wsId) {
+    closeMoveWorkspaceMenu();
+    const res = await fetch(`/api/boards/${boardId}/workspace`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: wsId })
+    });
+    if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || 'Ошибка при перемещении доски');
+        return;
+    }
+    const data = await res.json();
+    relocateBoardCard(boardId, data);
+}
+
+function relocateBoardCard(boardId, data) {
+    const card = document.querySelector(`a.ws-board-card[href="/board/${boardId}"]`);
+    if (!card) return;
+    const oldWsId = card.closest('.ws-section')?.dataset.wsId || '';
+
+    const wsId    = data.workspace_id || null;
+    const company = data.workspace_name || 'Без проекта';
+    const wsColor = data.workspace_color || '#1a1a1a';
+
+    let section = wsId
+        ? document.querySelector(`.ws-section[data-ws-id="${wsId}"]`)
+        : document.querySelector(`.ws-section[data-company="${company}"]`);
+
+    if (!section) {
+        section = document.createElement('section');
+        section.className = 'ws-section';
+        section.dataset.wsId = wsId || '';
+        section.dataset.company = company;
+        section.innerHTML = `
+            <div class="ws-section-head">
+                <div class="ws-sec-icon" style="background:${escHtml(wsColor)}">${escHtml(company[0].toUpperCase())}</div>
+                <h2 class="ws-section-title">${escHtml(company)}</h2>
+            </div>
+            <div class="ws-boards-grid"></div>
+        `;
+        document.getElementById('wsContent').appendChild(section);
+    }
+
+    card.dataset.company = company.toLowerCase();
+    const grid   = section.querySelector('.ws-boards-grid');
+    const newBtn = grid.querySelector('.ws-board-new');
+    grid.insertBefore(card, newBtn || null);
+
+    if (oldWsId) updateWsSidebarCount(oldWsId, -1);
+    if (wsId)    updateWsSidebarCount(wsId, +1);
+}
+
+if (IS_ADMIN) {
+    document.addEventListener('dragstart', e => {
+        const card = e.target.closest('.ws-board-card:not(.ws-board-new)');
+        if (!card) return;
+        const boardId = card.getAttribute('href')?.match(/\/board\/(\d+)/)?.[1];
+        if (!boardId) return;
+        e.dataTransfer.setData('text/plain', boardId);
+        e.dataTransfer.effectAllowed = 'move';
+        card.classList.add('ws-board-card--dragging');
+    });
+
+    document.addEventListener('dragend', e => {
+        e.target.closest?.('.ws-board-card')?.classList.remove('ws-board-card--dragging');
+    });
+
+    document.addEventListener('dragover', e => {
+        const grid = e.target.closest('.ws-boards-grid');
+        if (!grid) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        grid.classList.add('ws-boards-grid--drop-target');
+    });
+
+    document.addEventListener('dragleave', e => {
+        const grid = e.target.closest('.ws-boards-grid');
+        if (grid && !grid.contains(e.relatedTarget)) grid.classList.remove('ws-boards-grid--drop-target');
+    });
+
+    document.addEventListener('drop', async e => {
+        const grid = e.target.closest('.ws-boards-grid');
+        if (!grid) return;
+        e.preventDefault();
+        grid.classList.remove('ws-boards-grid--drop-target');
+
+        const boardId = parseInt(e.dataTransfer.getData('text/plain'));
+        if (!boardId) return;
+
+        const section     = grid.closest('.ws-section');
+        const targetWsId   = section?.dataset.wsId ? parseInt(section.dataset.wsId) : null;
+        const card         = document.querySelector(`a.ws-board-card[href="/board/${boardId}"]`);
+        const currentWsIdRaw = card?.closest('.ws-section')?.dataset.wsId;
+        const currentWsId  = currentWsIdRaw ? parseInt(currentWsIdRaw) : null;
+        if (currentWsId === targetWsId) return;
+
+        const res = await fetch(`/api/boards/${boardId}/workspace`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workspace_id: targetWsId })
+        });
+        if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.error || 'Ошибка при перемещении доски');
+            return;
+        }
+        const data = await res.json();
+        relocateBoardCard(boardId, data);
+    });
 }
 
 // ===== ADD / EDIT WORKSPACE =====
