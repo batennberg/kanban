@@ -14,6 +14,25 @@
     {% block body %}{% endblock %}
     <div id="toastContainer"></div>
 
+    <div class="inbox-shell">
+        <button class="inbox-trigger" id="inboxTriggerBtn" onclick="toggleInboxPanel()" type="button" title="Уведомления">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 17H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-3"/>
+                <path d="M15 17a3 3 0 1 1-6 0"/>
+            </svg>
+            <span class="inbox-badge" id="inboxBadge" style="display:none">0</span>
+        </button>
+        <div class="inbox-panel" id="inboxPanel" style="display:none">
+            <div class="inbox-header">
+                <span class="inbox-title">Уведомления</span>
+                <button class="inbox-close" onclick="closeInboxPanel()" type="button" title="Закрыть">✕</button>
+            </div>
+            <div class="inbox-list" id="inboxList">
+                <div class="inbox-empty">Загрузка…</div>
+            </div>
+        </div>
+    </div>
+
     <!-- ===== SHORTCUTS MODAL ===== -->
     <div id="shortcutsModal" class="shortcuts-overlay" style="display:none" onclick="if(event.target===this)closeShortcuts()">
         <div class="shortcuts-panel">
@@ -63,6 +82,108 @@
             t.addEventListener('transitionend', function() { t.remove(); }, { once: true });
         }, duration);
     }
+
+    function toggleInboxPanel() {
+        var panel = document.getElementById('inboxPanel');
+        if (!panel) return;
+        if (panel.style.display === 'block') {
+            closeInboxPanel();
+            return;
+        }
+        panel.style.display = 'block';
+        refreshInbox();
+    }
+
+    function closeInboxPanel() {
+        var panel = document.getElementById('inboxPanel');
+        if (panel) panel.style.display = 'none';
+    }
+
+    function renderInboxItem(item) {
+        var payload = item.payload || {};
+        var title = payload.card_title || 'Карточка';
+        var boardName = payload.board_name || '';
+        var actorName = payload.actor_name || payload.actor_email || 'кто-то';
+        var excerpt = payload.comment_excerpt || 'Откройте карточку, чтобы посмотреть контекст.';
+        var meta = boardName ? (boardName + ' · ' + title) : title;
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'inbox-item' + (item.is_read ? '' : ' inbox-item--unread');
+        button.innerHTML = [
+            '<span class="inbox-item-dot"></span>',
+            '<span class="inbox-item-content">',
+            '  <div class="inbox-item-title">' + _escHtml(actorName + ' упомянул(а) вас') + '</div>',
+            '  <div class="inbox-item-meta">' + _escHtml(meta) + '</div>',
+            '  <div class="inbox-item-text">' + _escHtml(excerpt) + '</div>',
+            '</span>'
+        ].join('');
+        button.onclick = function() { handleInboxEntryClick(item.id, payload); };
+        return button;
+    }
+
+    async function refreshInbox() {
+        var list = document.getElementById('inboxList');
+        var badge = document.getElementById('inboxBadge');
+        if (!list || !badge) return;
+        try {
+            var res = await fetch('/api/inbox?limit=20');
+            if (!res.ok) {
+                list.innerHTML = '<div class="inbox-empty">Сначала войдите в систему</div>';
+                badge.textContent = '0';
+                badge.style.display = 'none';
+                return;
+            }
+            var data = await res.json();
+            var count = Number(data.unread_count || 0);
+            badge.textContent = count;
+            badge.style.display = count > 0 ? 'inline-flex' : 'none';
+            if (!data.items || !data.items.length) {
+                list.innerHTML = '<div class="inbox-empty">Пока нет уведомлений</div>';
+                return;
+            }
+            list.innerHTML = '';
+            data.items.forEach(function(item) {
+                list.appendChild(renderInboxItem(item));
+            });
+        } catch (err) {
+            list.innerHTML = '<div class="inbox-empty">Не удалось загрузить уведомления</div>';
+            badge.textContent = '0';
+            badge.style.display = 'none';
+        }
+    }
+
+    async function markInboxEntryRead(entryId) {
+        if (!entryId) return;
+        try {
+            await fetch('/api/inbox/' + entryId + '/read', { method: 'POST' });
+        } catch (err) {
+            // ignore
+        }
+    }
+
+    function handleInboxEntryClick(entryId, payload) {
+        if (entryId) markInboxEntryRead(entryId);
+        if (payload && payload.card_id) {
+            var boardId = payload.board_id || '';
+            var url = '/boards';
+            if (boardId) {
+                url = '/board/' + boardId + '?card=' + payload.card_id;
+            }
+            window.location.href = url;
+            return;
+        }
+        window.location.href = '/boards';
+    }
+
+    document.addEventListener('click', function(e) {
+        var shell = document.querySelector('.inbox-shell');
+        if (!shell) return;
+        if (!shell.contains(e.target)) closeInboxPanel();
+    });
+
+    document.addEventListener('DOMContentLoaded', function() {
+        refreshInbox();
+    });
 
     function openShortcuts()  { document.getElementById('shortcutsModal').style.display = 'flex'; }
     function closeShortcuts() { document.getElementById('shortcutsModal').style.display = 'none'; }

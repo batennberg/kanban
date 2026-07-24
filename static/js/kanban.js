@@ -629,6 +629,24 @@ window.submitComment = async function() {
     }
 };
 
+function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function formatCommentText(text, mentions = []) {
+    const escaped = escHtml(text || '').replace(/\n/g, '<br>');
+    const tokens = (mentions || [])
+        .map(m => String(m.mention || '').trim())
+        .filter(Boolean);
+    if (!tokens.length) return escaped;
+    let html = escaped;
+    [...new Set(tokens)].forEach(token => {
+        const pattern = new RegExp(`@${escapeRegExp(token)}`, 'gi');
+        html = html.replace(pattern, '<span class="comment-mention">$&</span>');
+    });
+    return html;
+}
+
 function renderComments(list) {
     const container = document.getElementById('cmCommentsList');
     const empty     = document.getElementById('cmCommentsEmpty');
@@ -660,7 +678,7 @@ function appendCommentToDOM(c) {
                 <span class="cm-comment-time">${escHtml(time)}</span>
                 <button class="cm-comment-del" onclick="deleteComment(${c.id})" title="Удалить">✕</button>
             </div>
-            <p class="cm-comment-text">${escHtml(c.text).replace(/\n/g,'<br>')}</p>
+            <p class="cm-comment-text">${formatCommentText(c.text, c.mentions || [])}</p>
         </div>
     `;
     document.getElementById('cmCommentsList').appendChild(item);

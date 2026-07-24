@@ -5,7 +5,7 @@ from flask import Flask, render_template, redirect, url_for, session, request, j
 from models import get_db, init_db
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash
-import sqlite3, os, uuid, csv, io, shutil, re
+import sqlite3, os, uuid, csv, io, shutil, re, json
 from datetime import timedelta
 from urllib.parse import quote as url_quote
 
@@ -30,6 +30,99 @@ def _file_type(filename):
     if ext in images: return 'image'
     if ext in docs:   return 'document'
     return 'file'
+
+
+def _normalize_mention_token(token):
+    token = (token or '').strip().lstrip('@').rstrip('.,;:!?')
+    return token.strip()
+
+
+def _mention_matches(user_email, user_name, mention):
+    mention = (mention or '').strip().lower()
+    if not mention:
+        return False
+    email = (user_email or '').strip().lower()
+    name = (user_name or '').strip().lower()
+    if not email and not name:
+        return False
+    if mention in {email, name}:
+        return True
+    email_local = email.split('@', 1)[0] if '@' in email else ''
+    if mention in {email_local}:
+        return True
+    name_parts = {p for p in re.split(r'[\s._-]+', name) if p}
+    return mention in name_parts
+
+
+def _extract_mentions(text):
+    pattern = re.compile(r'(?<!\w)@([A-Za-z0-9._%+-]+(?:@[A-Za-z0-9.-]+\.[A-Za-z]{2,})?|[А-Яа-яЁёA-Za-z0-9._-]+)')
+    return [_normalize_mention_token(match.group(1)) for match in pattern.finditer(text or '')]
+
+
+def _find_mentioned_users(conn, text):
+    seen = set()
+    users = []
+    for raw in _extract_mentions(text):
+        mention = _normalize_mention_token(raw)
+        if not mention or mention in seen:
+            continue
+        seen.add(mention)
+        from sheets import is_configured, get_all_users
+        if is_configured():
+            for rec in get_all_users():
+                email = str(rec.get('Email', '')).strip().lower()
+                name = str(rec.get('Имя', email)).strip()
+                if _mention_matches(email, name, mention):
+                    users.append({'email': email, 'name': name, 'mention': mention})
+                    break
+        else:
+            rows = conn.execute(
+                '''
+                SELECT email, name FROM users
+                WHERE LOWER(email)=? OR LOWER(name)=? OR LOWER(name)=? OR LOWER(SUBSTR(email, 1, CASE WHEN INSTR(email, '@') > 0 THEN INSTR(email, '@') - 1 ELSE LENGTH(email) END))=?
+                ''',
+                (mention, mention, mention, mention)
+            ).fetchall()
+            if rows:
+                row = rows[0]
+                users.append({'email': row['email'], 'name': row['name'], 'mention': mention})
+    return users
+
+
+def _create_comment_mentions(conn, card_id, comment_id, text, actor_email, actor_name):
+    mentions = []
+    card_row = conn.execute('''
+        SELECT c.title AS card_title, col.board_id, b.name AS board_name
+        FROM cards c
+        JOIN columns col ON col.id = c.column_id
+        JOIN boards b ON b.id = col.board_id
+        WHERE c.id = ?
+    ''', (card_id,)).fetchone()
+    for user in _find_mentioned_users(conn, text):
+        if user['email'] == (actor_email or '').strip().lower():
+            continue
+        conn.execute(
+            'INSERT OR IGNORE INTO comment_mentions (comment_id, mentioned_email, mentioned_name) VALUES (?,?,?)',
+            (comment_id, user['email'], user['name'])
+        )
+        payload = json.dumps({
+            'type': 'comment_mention',
+            'card_id': card_id,
+            'card_title': card_row['card_title'] if card_row else '',
+            'board_id': card_row['board_id'] if card_row else None,
+            'board_name': card_row['board_name'] if card_row else '',
+            'comment_id': comment_id,
+            'actor_email': actor_email,
+            'actor_name': actor_name,
+            'mention': user['mention'],
+            'comment_excerpt': (text or '')[:180],
+        })
+        conn.execute(
+            'INSERT INTO inbox_entries (recipient_email, type, card_id, comment_id, payload) VALUES (?,?,?,?,?)',
+            (user['email'], 'comment_mention', card_id, comment_id, payload)
+        )
+        mentions.append(user)
+    return mentions
 
 
 # ===== DUPLICATE HELPERS (карточка → список → доска) =====
@@ -735,9 +828,20 @@ def api_get_card(card_id):
         card = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
         if not card: return jsonify({'error': 'not found'}), 404
         card_dict = dict(card)
-        comments = [dict(c) for c in conn.execute(
-            'SELECT * FROM comments WHERE card_id=? ORDER BY created_at', (card_id,)
-        )]
+        comments = []
+        for c in conn.execute('SELECT * FROM comments WHERE card_id=? ORDER BY created_at', (card_id,)):
+            comment_dict = dict(c)
+            mention_rows = conn.execute(
+                'SELECT mentioned_email, mentioned_name FROM comment_mentions WHERE comment_id=? ORDER BY id',
+                (c['id'],)
+            ).fetchall()
+            allowed_emails = {row['mentioned_email'] for row in mention_rows}
+            resolved_mentions = []
+            for user in _find_mentioned_users(conn, comment_dict['text']):
+                if user['email'] in allowed_emails:
+                    resolved_mentions.append(user)
+            comment_dict['mentions'] = resolved_mentions
+            comments.append(comment_dict)
         attachments = [dict(a) for a in conn.execute(
             'SELECT * FROM attachments WHERE card_id=? ORDER BY uploaded_at', (card_id,)
         )]
@@ -938,12 +1042,25 @@ def api_delete_checklist_item(item_id):
 @app.route('/api/cards/<int:card_id>/comments', methods=['POST'])
 def api_add_comment(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
-    text = request.get_json().get('text', '').strip()
+    payload = request.get_json(silent=True) or {}
+    text = (payload.get('text', '') or '').strip()
     if not text: return jsonify({'error': 'empty'}), 400
     with get_db() as conn:
-        cur = conn.execute('INSERT INTO comments (card_id,author,text) VALUES(?,?,?)',
-                           (card_id, session['user']['name'], text))
-        row = dict(conn.execute('SELECT * FROM comments WHERE id=?', (cur.lastrowid,)).fetchone())
+        cur = conn.execute(
+            'INSERT INTO comments (card_id,author,text) VALUES(?,?,?)',
+            (card_id, session['user']['name'], text)
+        )
+        comment_id = cur.lastrowid
+        row = dict(conn.execute('SELECT * FROM comments WHERE id=?', (comment_id,)).fetchone())
+        mentions = _create_comment_mentions(
+            conn,
+            card_id,
+            comment_id,
+            text,
+            session['user'].get('email', ''),
+            session['user'].get('name', '')
+        )
+        row['mentions'] = mentions
     return jsonify(row)
 
 @app.route('/api/comments/<int:comment_id>', methods=['DELETE'])
@@ -951,6 +1068,49 @@ def api_delete_comment(comment_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         conn.execute('DELETE FROM comments WHERE id=?', (comment_id,))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/inbox')
+def api_get_inbox():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    email = (session['user'].get('email') or '').strip().lower()
+    if not email:
+        return jsonify({'items': [], 'unread_count': 0})
+    limit = request.args.get('limit', 20, type=int)
+    unread_only = request.args.get('unread_only', '0') == '1'
+    with get_db() as conn:
+        sql = 'SELECT * FROM inbox_entries WHERE recipient_email=?'
+        params = [email]
+        if unread_only:
+            sql += ' AND is_read=0'
+        sql += ' ORDER BY created_at DESC, id DESC LIMIT ?'
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item['payload'] = json.loads(item['payload'] or '{}')
+            except (TypeError, ValueError):
+                item['payload'] = {}
+            items.append(item)
+        unread_count = conn.execute(
+            'SELECT COUNT(*) FROM inbox_entries WHERE recipient_email=? AND is_read=0',
+            (email,)
+        ).fetchone()[0]
+    return jsonify({'items': items, 'unread_count': unread_count})
+
+
+@app.route('/api/inbox/<int:entry_id>/read', methods=['POST'])
+def api_mark_inbox_entry_read(entry_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    email = (session['user'].get('email') or '').strip().lower()
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE inbox_entries SET is_read=1 WHERE id=? AND recipient_email=?',
+            (entry_id, email)
+        )
     return jsonify({'ok': True})
 
 
@@ -1578,6 +1738,28 @@ def migrate_db():
                 title      TEXT    NOT NULL DEFAULT '',
                 position   INTEGER DEFAULT 0,
                 created_at TEXT    DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS comment_mentions (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                comment_id        INTEGER NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+                mentioned_email  TEXT    NOT NULL,
+                mentioned_name   TEXT    NOT NULL DEFAULT '',
+                created_at       TEXT    DEFAULT (datetime('now','localtime')),
+                UNIQUE(comment_id, mentioned_email)
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS inbox_entries (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipient_email TEXT    NOT NULL,
+                type           TEXT    NOT NULL DEFAULT 'comment_mention',
+                card_id        INTEGER NOT NULL,
+                comment_id     INTEGER,
+                payload        TEXT,
+                is_read        INTEGER DEFAULT 0,
+                created_at     TEXT    DEFAULT (datetime('now','localtime'))
             )
         ''')
 
