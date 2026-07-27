@@ -1033,8 +1033,6 @@ document.getElementById('cmCommentInput').addEventListener('keydown', e => {
 
 // ===== SIDEBAR POPOVER =====
 
-let selectedPopColor = '#0052cc';
-
 function openPopover(title, bodyHtml) {
     document.getElementById('cmSidebarDefault').style.display = 'none';
     document.getElementById('cspTitle').textContent = title;
@@ -1049,10 +1047,16 @@ window.closePopover = function() {
     if (pop) pop.style.display = 'none';
 };
 
-// --- Метки (несколько на карточку) ---
+// --- Метки-приоритеты (ровно одна на карточку, автоматически ставит обложку) ---
+const PRIORITY_LABELS = [
+    { name: 'Срочно',           color: '#de350b' },
+    { name: 'Средняя важность', color: '#ffab00' },
+    { name: 'Низкий приоритет', color: '#00875a' },
+];
+
 window.openLabelPopover = async function() {
     if (!currentCardDbId) return;
-    openPopover('Метки', '<div class="mp-loading">Загрузка...</div>');
+    openPopover('Приоритет', '<div class="mp-loading">Загрузка...</div>');
 
     let labels = [];
     try {
@@ -1061,59 +1065,42 @@ window.openLabelPopover = async function() {
     } catch (err) {
         console.error('openLabelPopover error:', err);
     }
+    const activeName = labels[0]?.name || '';
 
-    const palette = ['#0052cc','#6554c0','#00875a','#de350b','#ff8b00','#00b8d9'];
-    selectedPopColor = palette[0];
-
-    const existingHtml = labels.map(l => `
-        <div class="mp-user" data-label-id="${l.id}">
-            <span class="card-label" style="background:${l.color}20;color:${l.color};border:1px solid ${l.color}40">${escHtml(l.name)}</span>
-            <button class="cm-attach-del" onclick="removeCardLabel(${l.id})" title="Удалить">✕</button>
-        </div>`).join('');
-
-    const swatches = palette.map(c =>
-        `<div class="pop-color${c === selectedPopColor ? ' active' : ''}"
-              style="background:${c}" data-color="${c}"
-              onclick="selectPopColor(this)"></div>`
-    ).join('');
+    const buttonsHtml = PRIORITY_LABELS.map(l => `
+        <button class="priority-label-btn${l.name === activeName ? ' priority-label-btn--active' : ''}"
+                style="--pl-color:${l.color}"
+                onclick="togglePriorityLabel('${l.name}')">
+            <span class="priority-label-dot" style="background:${l.color}"></span>
+            ${escHtml(l.name)}
+        </button>`).join('');
 
     document.getElementById('cspBody').innerHTML = `
-        ${existingHtml || '<p class="cm-empty-hint">Нет меток</p>'}
-        <div class="csp-form-group" style="margin-top:10px">
-            <label class="csp-label">Новая метка</label>
-            <input class="csp-input" id="popLabelText" type="text" placeholder="Разработка, Сеть...">
-        </div>
-        <div class="csp-form-group">
-            <label class="csp-label">Цвет</label>
-            <div class="pop-colors">${swatches}</div>
-        </div>
-        <button class="csp-btn csp-btn--primary" onclick="addCardLabel()">Добавить метку</button>
+        <div class="priority-label-list">${buttonsHtml}</div>
+        <p class="cm-empty-hint" style="margin-top:8px">Метка ставит обложку того же цвета; повторный клик по активной метке снимает её и убирает обложку.</p>
     `;
-    setTimeout(() => document.getElementById('popLabelText')?.focus(), 50);
 };
 
-window.selectPopColor = el => {
-    document.querySelectorAll('.pop-color').forEach(e => e.classList.remove('active'));
-    el.classList.add('active');
-    selectedPopColor = el.dataset.color;
-};
-
-window.addCardLabel = async function() {
-    const input = document.getElementById('popLabelText');
-    const name  = input?.value.trim();
-    const color = selectedPopColor;
-    if (!name || !currentCardDbId) return;
-    await fetch(`/api/cards/${currentCardDbId}/labels`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, color })
-    });
-    renderCardLabelsInMeta(currentCardDbId);
-    openLabelPopover();
-};
-
-window.removeCardLabel = async function(labelId) {
+window.togglePriorityLabel = async function(name) {
     if (!currentCardDbId) return;
-    await fetch(`/api/cards/${currentCardDbId}/labels/${labelId}`, { method: 'DELETE' });
+    let labels = [];
+    try {
+        const res = await fetch(`/api/cards/${currentCardDbId}/labels`);
+        if (res.ok) labels = await res.json();
+    } catch (err) { console.error('togglePriorityLabel error:', err); }
+
+    const existing = labels.find(l => l.name === name);
+    if (existing) {
+        await fetch(`/api/cards/${currentCardDbId}/labels/${existing.id}`, { method: 'DELETE' });
+        updateCardCoverDOM(currentCardId, '');
+    } else {
+        const res = await fetch(`/api/cards/${currentCardDbId}/labels`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        const label = await res.json();
+        updateCardCoverDOM(currentCardId, label.color || '');
+    }
     renderCardLabelsInMeta(currentCardDbId);
     openLabelPopover();
 };
