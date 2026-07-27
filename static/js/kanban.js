@@ -296,6 +296,7 @@ window.openCardModal = function(e, cardEl) {
     renderComments([]);
     renderActivity([]);
     renderChecklists([]);
+    renderCustomFields([]);
     updateCardMembersMeta([]);
     document.getElementById('cmCommentsEmpty').style.display = 'block';
 
@@ -322,6 +323,7 @@ async function loadCardData(dbId) {
         renderAttachments(data.attachments || []);
         renderLinks(data.links || []);
         renderChecklists(data.checklists || []);
+        renderCustomFields(data.custom_fields || []);
         // Показываем cover в modal-header если есть
         const coverColor = data.cover_color || '';
         const modalEl    = document.querySelector('.card-modal');
@@ -349,6 +351,95 @@ async function loadCardData(dbId) {
     } catch (err) {
         console.error('Ошибка загрузки карточки', err);
     }
+}
+
+// --- Кастомные поля ---
+function renderCustomFields(list) {
+    const section   = document.getElementById('cmCustomFieldsSection');
+    const container = document.getElementById('cmCustomFields');
+    if (!section || !container) return;
+    container.innerHTML = '';
+    if (!list || !list.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+
+    list.forEach(f => {
+        const row = document.createElement('div');
+        row.className = 'cm-cf-row';
+
+        const label = document.createElement('label');
+        label.className   = 'cm-cf-label';
+        label.textContent = f.name;
+        row.appendChild(label);
+
+        let input;
+        if (f.type === 'checkbox') {
+            input = document.createElement('input');
+            input.type = 'checkbox';
+            input.className = 'cm-cf-checkbox';
+            input.checked = f.value === '1';
+            input.onchange = () => saveCustomFieldValue(f, input.checked ? '1' : '');
+        } else if (f.type === 'list') {
+            input = document.createElement('select');
+            input.className = 'cm-cf-select';
+            const empty = document.createElement('option');
+            empty.value = ''; empty.textContent = '—';
+            input.appendChild(empty);
+            let options = [];
+            try { options = JSON.parse(f.options || '[]'); } catch (e) { options = []; }
+            options.forEach(opt => {
+                const o = document.createElement('option');
+                o.value = opt; o.textContent = opt;
+                if (f.value === opt) o.selected = true;
+                input.appendChild(o);
+            });
+            input.onchange = () => saveCustomFieldValue(f, input.value);
+        } else {
+            input = document.createElement('input');
+            input.type = f.type === 'number' ? 'number' : (f.type === 'date' ? 'date' : 'text');
+            input.className = 'cm-cf-input';
+            input.value = f.value || '';
+            input.onblur = () => saveCustomFieldValue(f, input.value);
+            input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); };
+        }
+        row.appendChild(input);
+        container.appendChild(row);
+    });
+}
+
+async function saveCustomFieldValue(field, value) {
+    if (!currentCardDbId) return;
+    await fetch(`/api/cards/${currentCardDbId}/custom-fields/${field.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value })
+    });
+    if (currentCardId) updateCardCfChip(currentCardId, field, value);
+}
+
+function updateCardCfChip(cardDomId, field, value) {
+    const cardEl = document.getElementById(cardDomId);
+    if (!cardEl || !field.show_on_card) return;
+    let wrap = cardEl.querySelector('.card-cf-chips');
+    let chip = wrap ? wrap.querySelector(`[data-cf-field-id="${field.id}"]`) : null;
+    if (!value) {
+        chip?.remove();
+        if (wrap && !wrap.children.length) wrap.remove();
+        return;
+    }
+    if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'card-cf-chips';
+        cardEl.insertBefore(wrap, cardEl.querySelector('.card-title'));
+    }
+    if (!chip) {
+        chip = document.createElement('span');
+        chip.className = 'card-cf-chip';
+        chip.dataset.cfFieldId = field.id;
+        wrap.appendChild(chip);
+    }
+    chip.dataset.cfName  = field.name;
+    chip.dataset.cfValue = value;
+    chip.textContent = field.type === 'checkbox' ? `✓ ${field.name}` : `${field.name}: ${value}`;
 }
 
 // --- Описание (Markdown) ---
@@ -848,6 +939,7 @@ const ACTIVITY_LABELS = {
     attachment_removed:       (d) => `удалил(а) вложение: ${d}`,
     link_added:               (d) => `добавил(а) ссылку: ${d}`,
     link_removed:             (d) => `удалил(а) ссылку: ${d}`,
+    custom_field_changed:     (d) => `изменил(а) поле: ${d}`,
 };
 
 function renderActivity(list) {
@@ -2114,7 +2206,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // ===== FILTER BAR =====
 
-let activeFilters = { labels: new Set(), due: null, done: null };
+let activeFilters = { labels: new Set(), due: null, done: null, customFields: new Set() };
 
 window.toggleFiltersPanel = function() {
     const bar = document.getElementById('filterBar');
@@ -2125,6 +2217,7 @@ window.toggleFiltersPanel = function() {
         document.getElementById('btnFilters')?.classList.remove('btn-board-action--active');
     } else {
         buildLabelChips();
+        buildCustomFieldChips();
         bar.style.display = '';
         document.getElementById('btnFilters')?.classList.add('btn-board-action--active');
     }
@@ -2167,6 +2260,41 @@ function buildLabelChips() {
     });
 }
 
+function buildCustomFieldChips() {
+    const combos = new Map();
+    document.querySelectorAll('.card-cf-chip').forEach(el => {
+        const name  = el.dataset.cfName;
+        const value = el.dataset.cfValue;
+        if (name && value) combos.set(`${name}::${value}`, { name, value });
+    });
+
+    const section   = document.getElementById('fbCustomFieldsSection');
+    const container = document.getElementById('fbCustomFieldChips');
+    if (!section || !container) return;
+    container.innerHTML = '';
+
+    if (!combos.size) { section.style.display = 'none'; return; }
+    section.style.display = '';
+
+    combos.forEach((info, key) => {
+        const btn = document.createElement('button');
+        btn.className   = 'fb-chip';
+        btn.textContent  = `${info.name}: ${info.value}`;
+        if (activeFilters.customFields.has(key)) btn.classList.add('fb-chip--active');
+        btn.onclick = () => {
+            if (activeFilters.customFields.has(key)) {
+                activeFilters.customFields.delete(key);
+                btn.classList.remove('fb-chip--active');
+            } else {
+                activeFilters.customFields.add(key);
+                btn.classList.add('fb-chip--active');
+            }
+            applyFilters();
+        };
+        container.appendChild(btn);
+    });
+}
+
 window.toggleDueFilter = function(btn) {
     const val = btn.dataset.filterDue;
     if (activeFilters.due === val) {
@@ -2194,8 +2322,8 @@ window.toggleDoneFilter = function(btn) {
 };
 
 function applyFilters() {
-    const { labels, due, done } = activeFilters;
-    const hasAny = labels.size > 0 || due || done;
+    const { labels, due, done, customFields } = activeFilters;
+    const hasAny = labels.size > 0 || due || done || customFields.size > 0;
 
     document.querySelectorAll('.card').forEach(card => {
         let show = true;
@@ -2203,6 +2331,12 @@ function applyFilters() {
         if (labels.size > 0) {
             const cardLabelTexts = [...card.querySelectorAll('.card-label')].map(el => el.textContent.trim());
             show = show && cardLabelTexts.some(text => labels.has(text));
+        }
+
+        if (customFields.size > 0) {
+            const cardCfKeys = [...card.querySelectorAll('.card-cf-chip')]
+                .map(el => `${el.dataset.cfName}::${el.dataset.cfValue}`);
+            show = show && cardCfKeys.some(k => customFields.has(k));
         }
 
         if (due) {
@@ -2231,7 +2365,7 @@ function applyFilters() {
 }
 
 window.clearFilters = function() {
-    activeFilters = { labels: new Set(), due: null, done: null };
+    activeFilters = { labels: new Set(), due: null, done: null, customFields: new Set() };
     document.querySelectorAll('.fb-chip').forEach(b => b.classList.remove('fb-chip--active'));
     document.querySelectorAll('.card').forEach(c => c.style.display = '');
     document.getElementById('btnFilters')?.classList.remove('btn-board-action--active');
@@ -3058,6 +3192,75 @@ window.removeBoardBackground = async function() {
     const uploadLabel = document.getElementById('bspUploadLabel');
     if (uploadLabel) uploadLabel.style.display = '';
     showBspMsg('Фон удалён');
+};
+
+// --- Кастомные поля (управление в настройках доски) ---
+const CF_TYPE_LABELS = { text: 'Текст', number: 'Число', date: 'Дата', list: 'Список', checkbox: 'Чекбокс' };
+
+window.onCfTypeChange = function() {
+    const type = document.getElementById('bspCfTypeInput').value;
+    document.getElementById('bspCfOptionsInput').style.display = type === 'list' ? '' : 'none';
+};
+
+window.addCustomField = async function() {
+    const boardId   = _getBoardId();
+    const nameInput = document.getElementById('bspCfNameInput');
+    const typeInput = document.getElementById('bspCfTypeInput');
+    const optsInput = document.getElementById('bspCfOptionsInput');
+    const name = nameInput.value.trim();
+    const type = typeInput.value;
+    if (!name) { showToast('Введите название поля', 'error'); return; }
+    const options = type === 'list'
+        ? optsInput.value.split(',').map(s => s.trim()).filter(Boolean)
+        : [];
+    const res = await fetch(`/api/boards/${boardId}/custom-fields`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, type, options })
+    });
+    const field = await res.json();
+    appendCfItemToSettings(field);
+    nameInput.value = '';
+    optsInput.value = '';
+    optsInput.style.display = 'none';
+    typeInput.value = 'text';
+    showToast('Поле добавлено');
+};
+
+function appendCfItemToSettings(field) {
+    const list = document.getElementById('bspCfList');
+    if (!list) return;
+    const item = document.createElement('div');
+    item.className = 'bsp-cf-item';
+    item.dataset.cfId = field.id;
+    item.innerHTML = `
+        <span class="bsp-cf-name"></span>
+        <span class="bsp-cf-type"></span>
+        <label class="bsp-cf-toggle">
+            <input type="checkbox" onchange="toggleCustomFieldShowOnCard(${field.id}, this.checked)">
+            на карточке
+        </label>
+        <button class="bsp-cf-delete" onclick="deleteCustomField(${field.id}, this)" title="Удалить поле">✕</button>
+    `;
+    item.querySelector('.bsp-cf-name').textContent = field.name;
+    item.querySelector('.bsp-cf-type').textContent = CF_TYPE_LABELS[field.type] || field.type;
+    list.appendChild(item);
+}
+
+window.toggleCustomFieldShowOnCard = async function(fieldId, checked) {
+    await fetch(`/api/custom-fields/${fieldId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ show_on_card: checked })
+    });
+    showToast(checked ? 'Поле будет видно на карточках после обновления страницы' : 'Поле скрыто с карточек после обновления страницы');
+};
+
+window.deleteCustomField = async function(fieldId, btn) {
+    if (!confirm('Удалить это поле? Значения на всех карточках доски будут потеряны.')) return;
+    await fetch(`/api/custom-fields/${fieldId}`, { method: 'DELETE' });
+    btn.closest('.bsp-cf-item')?.remove();
+    showToast('Поле удалено');
 };
 
 function showBspMsg(text, isError) {

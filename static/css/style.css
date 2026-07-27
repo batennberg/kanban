@@ -1262,6 +1262,24 @@ input { font-family: inherit; }
 
 .due-icon { font-size: 12px; }
 
+/* Кастомные поля — чипы на лицевой стороне карточки */
+.card-cf-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+.card-cf-chip {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: #f0f2f5;
+    color: #44546f;
+    width: fit-content;
+}
+
 .btn-add-card {
     display: flex;
     align-items: center;
@@ -1953,6 +1971,33 @@ kbd {
 }
 
 .btn-attach-inline:hover { background: #e3f0ff; }
+
+/* Кастомные поля (карточка) */
+.cm-custom-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+}
+.cm-cf-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.cm-cf-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #6b778c;
+}
+.cm-cf-input, .cm-cf-select {
+    font-size: 13px;
+    padding: 6px 8px;
+    border: 1px solid #dfe1e6;
+    border-radius: 5px;
+    background: #fafbfc;
+    color: #1a2535;
+}
+.cm-cf-input:focus, .cm-cf-select:focus { outline: none; border-color: #4361EE; background: #fff; }
+.cm-cf-checkbox { width: 18px; height: 18px; align-self: flex-start; }
 
 /* Description */
 .cm-description {
@@ -4377,6 +4422,67 @@ kbd {
     color: var(--success, #00875a);
 }
 .bsp-msg.error { color: var(--danger, #de350b); }
+
+/* Кастомные поля — панель управления в настройках доски */
+.bsp-cf-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.bsp-cf-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--border, #dfe1e6);
+    border-radius: 6px;
+    background: var(--surface, #fff);
+}
+.bsp-cf-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text, #172b4d);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bsp-cf-type {
+    font-size: 11px;
+    color: var(--text-muted, #6b778c);
+    background: var(--hover-bg, #f4f5f7);
+    padding: 2px 7px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+.bsp-cf-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-muted, #6b778c);
+    white-space: nowrap;
+    cursor: pointer;
+}
+.bsp-cf-delete {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted, #6b778c);
+    font-size: 13px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    line-height: 1;
+}
+.bsp-cf-delete:hover { background: var(--hover-bg, #f4f5f7); color: var(--danger, #de350b); }
+.bsp-cf-add {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+}
+.bsp-cf-add .bsp-input { flex: 1; min-width: 90px; }
+.bsp-cf-add select.bsp-input { flex: 0 0 auto; width: auto; }
 
 /* ===== INBOX / NOTIFICATIONS ===== */
 .inbox-shell {

@@ -124,6 +124,10 @@
             <button class="fb-chip" data-filter-done="active" onclick="toggleDoneFilter(this)">Активные</button>
             <button class="fb-chip" data-filter-done="done" onclick="toggleDoneFilter(this)">Выполненные</button>
         </div>
+        <div class="fb-section" id="fbCustomFieldsSection" style="display:none">
+            <span class="fb-label">Поля</span>
+            <div id="fbCustomFieldChips" class="fb-chips"></div>
+        </div>
         <button class="fb-clear-btn" onclick="clearFilters()">Сбросить</button>
     </div>
 
@@ -216,6 +220,35 @@
                 </label>
             </div>
 
+            <div class="bsp-field-group">
+                <label class="bsp-label">Кастомные поля</label>
+                <div class="bsp-cf-list" id="bspCfList">
+                    {% for cf in board.custom_fields %}
+                    <div class="bsp-cf-item" data-cf-id="{{ cf.id }}">
+                        <span class="bsp-cf-name">{{ cf.name }}</span>
+                        <span class="bsp-cf-type">{{ {'text':'Текст','number':'Число','date':'Дата','list':'Список','checkbox':'Чекбокс'}[cf.type] }}</span>
+                        <label class="bsp-cf-toggle">
+                            <input type="checkbox" onchange="toggleCustomFieldShowOnCard({{ cf.id }}, this.checked)" {% if cf.show_on_card %}checked{% endif %}>
+                            на карточке
+                        </label>
+                        <button class="bsp-cf-delete" onclick="deleteCustomField({{ cf.id }}, this)" title="Удалить поле">✕</button>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="bsp-cf-add">
+                    <input class="bsp-input" id="bspCfNameInput" type="text" placeholder="Название поля">
+                    <select class="bsp-input" id="bspCfTypeInput" onchange="onCfTypeChange()">
+                        <option value="text">Текст</option>
+                        <option value="number">Число</option>
+                        <option value="date">Дата</option>
+                        <option value="list">Список</option>
+                        <option value="checkbox">Чекбокс</option>
+                    </select>
+                    <input class="bsp-input" id="bspCfOptionsInput" type="text" placeholder="Варианты через запятую" style="display:none">
+                    <button class="btn-secondary btn-sm" onclick="addCustomField()">Добавить поле</button>
+                </div>
+            </div>
+
             <button class="btn-primary bsp-save-btn" onclick="saveBoardSettings()">Сохранить</button>
             <div class="bsp-msg" id="bspMsg"></div>
         </div>
@@ -269,6 +302,15 @@
                                   data-label-id="{{ lbl.id }}"
                                   style="background:{{ lbl.color }}20;color:{{ lbl.color }};border:1px solid {{ lbl.color }}40">
                                 {{ lbl.name }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        {% if card.custom_fields %}
+                        <div class="card-cf-chips">
+                            {% for cf in card.custom_fields %}
+                            <span class="card-cf-chip" data-cf-field-id="{{ cf.field_id }}" data-cf-name="{{ cf.name }}" data-cf-value="{{ cf.value }}">
+                                {% if cf.type == 'checkbox' %}✓ {{ cf.name }}{% else %}{{ cf.name }}: {{ cf.value }}{% endif %}
                             </span>
                             {% endfor %}
                         </div>
@@ -340,6 +382,14 @@
 
         <div class="cm-body">
             <div class="cm-main">
+                <div class="cm-section" id="cmCustomFieldsSection" style="display:none">
+                    <div class="cm-section-head">
+                        <span class="cm-sec-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></span>
+                        <h3 class="cm-sec-title">Кастомные поля</h3>
+                    </div>
+                    <div class="cm-custom-fields" id="cmCustomFields"></div>
+                </div>
+
                 <div class="cm-section">
                     <div class="cm-section-head">
                         <span class="cm-sec-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg></span>

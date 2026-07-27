@@ -153,11 +153,35 @@ def _log_card_update_activity(conn, card_id, before, d):
                       f"{names.get(before['column_id'], '?')} → {names.get(d['column_id'], '?')}")
 
 
+# ===== КАСТОМНЫЕ ПОЛЯ =====
+
+CUSTOM_FIELD_TYPES = {'text', 'number', 'date', 'list', 'checkbox'}
+
+def _card_custom_fields(conn, card_id):
+    row = conn.execute(
+        'SELECT co.board_id FROM cards c JOIN columns co ON co.id=c.column_id WHERE c.id=?',
+        (card_id,)
+    ).fetchone()
+    if not row:
+        return []
+    values = {v['field_id']: v['value'] for v in conn.execute(
+        'SELECT field_id, value FROM card_custom_field_values WHERE card_id=?', (card_id,)
+    )}
+    out = []
+    for f in conn.execute(
+        'SELECT * FROM custom_fields WHERE board_id=? ORDER BY position, id', (row['board_id'],)
+    ):
+        item = dict(f)
+        item['value'] = values.get(f['id'], '')
+        out.append(item)
+    return out
+
+
 # ===== DUPLICATE HELPERS (карточка → список → доска) =====
 # Комментарии и вложения сознательно не копируются (как в Trello) — это история
 # оригинала, а не шаблон для копии.
 
-def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=''):
+def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix='', field_id_map=None):
     src = conn.execute('SELECT * FROM cards WHERE id=?', (src_card_id,)).fetchone()
     cur = conn.execute(
         '''INSERT INTO cards
@@ -201,9 +225,24 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
             'INSERT INTO card_links (card_id, url, title, position) VALUES (?,?,?,?)',
             (new_card_id, lnk['url'], lnk['title'], lnk['position'])
         )
+
+    src_board_id = conn.execute(
+        'SELECT board_id FROM columns WHERE id=?', (src['column_id'],)
+    ).fetchone()['board_id']
+    target_board_id = conn.execute(
+        'SELECT board_id FROM columns WHERE id=?', (target_column_id,)
+    ).fetchone()['board_id']
+    if field_id_map is not None or target_board_id == src_board_id:
+        for v in conn.execute('SELECT * FROM card_custom_field_values WHERE card_id=?', (src_card_id,)):
+            new_field_id = field_id_map.get(v['field_id']) if field_id_map is not None else v['field_id']
+            if new_field_id:
+                conn.execute(
+                    'INSERT INTO card_custom_field_values (card_id, field_id, value) VALUES (?,?,?)',
+                    (new_card_id, new_field_id, v['value'])
+                )
     return new_card_id
 
-def _duplicate_column(conn, src_col_id, target_board_id, position, name_suffix=''):
+def _duplicate_column(conn, src_col_id, target_board_id, position, name_suffix='', field_id_map=None):
     src = conn.execute('SELECT * FROM columns WHERE id=?', (src_col_id,)).fetchone()
     cur = conn.execute(
         'INSERT INTO columns (board_id, name, position) VALUES (?,?,?)',
@@ -215,7 +254,7 @@ def _duplicate_column(conn, src_col_id, target_board_id, position, name_suffix='
         (src_col_id,)
     ).fetchall()
     for i, card in enumerate(cards):
-        _duplicate_card(conn, card['id'], new_col_id, i)
+        _duplicate_card(conn, card['id'], new_col_id, i, field_id_map=field_id_map)
     return new_col_id
 
 def _duplicate_board(conn, src_board_id, name_suffix=' (копия)'):
@@ -225,12 +264,21 @@ def _duplicate_board(conn, src_board_id, name_suffix=' (копия)'):
         (src['name'] + name_suffix, src['company'], src['color'], src['workspace_id'], src['description'])
     )
     new_board_id = cur.lastrowid
+    field_id_map = {}
+    for f in conn.execute(
+        'SELECT * FROM custom_fields WHERE board_id=? ORDER BY position, id', (src_board_id,)
+    ):
+        cur2 = conn.execute(
+            'INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position) VALUES (?,?,?,?,?,?)',
+            (new_board_id, f['name'], f['type'], f['options'], f['show_on_card'], f['position'])
+        )
+        field_id_map[f['id']] = cur2.lastrowid
     cols = conn.execute(
         'SELECT id FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
         (src_board_id,)
     ).fetchall()
     for i, col in enumerate(cols):
-        _duplicate_column(conn, col['id'], new_board_id, i)
+        _duplicate_column(conn, col['id'], new_board_id, i, field_id_map=field_id_map)
     for row in conn.execute('SELECT user_id FROM board_access WHERE board_id=?', (src_board_id,)):
         conn.execute(
             'INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (?,?)',
@@ -408,6 +456,24 @@ def board(board_id):
             WHERE co.board_id=? ORDER BY cl.position, cl.id
         ''', (board_id,)):
             labels_by_card.setdefault(l['card_id'], []).append(dict(l))
+
+        custom_field_defs = [dict(f) for f in conn.execute(
+            'SELECT * FROM custom_fields WHERE board_id=? ORDER BY position, id', (board_id,)
+        )]
+        board_data['custom_fields'] = custom_field_defs
+        visible_fields = [f for f in custom_field_defs if f['show_on_card']]
+        cf_values_by_card = {}
+        if visible_fields:
+            field_ids = [f['id'] for f in visible_fields]
+            ph = ','.join('?' * len(field_ids))
+            for v in conn.execute(f'''
+                SELECT v.card_id, v.field_id, v.value FROM card_custom_field_values v
+                JOIN cards ca ON ca.id = v.card_id
+                JOIN columns co ON co.id = ca.column_id
+                WHERE co.board_id=? AND v.field_id IN ({ph})
+            ''', [board_id] + field_ids):
+                cf_values_by_card.setdefault(v['card_id'], {})[v['field_id']] = v['value']
+
         for col in conn.execute(
             'SELECT * FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
             (board_id,)
@@ -419,6 +485,11 @@ def board(board_id):
             ):
                 card_dict = dict(c)
                 card_dict['labels'] = labels_by_card.get(c['id'], [])
+                card_cf_values = cf_values_by_card.get(c['id'], {})
+                card_dict['custom_fields'] = [
+                    {'field_id': f['id'], 'name': f['name'], 'type': f['type'], 'value': card_cf_values[f['id']]}
+                    for f in visible_fields if card_cf_values.get(f['id'])
+                ]
                 col_dict['cards'].append(card_dict)
             board_data['columns'].append(col_dict)
     return render_template('board.html', board=board_data, board_id=board_id, user=session['user'])
@@ -896,6 +967,7 @@ def api_get_card(card_id):
         activity = [dict(a) for a in conn.execute(
             'SELECT * FROM card_activity WHERE card_id=? ORDER BY created_at DESC, id DESC', (card_id,)
         )]
+        custom_fields = _card_custom_fields(conn, card_id)
         if card_dict.get('linked_board_id'):
             lb = conn.execute('SELECT id, name, color FROM boards WHERE id=?',
                               (card_dict['linked_board_id'],)).fetchone()
@@ -904,7 +976,7 @@ def api_get_card(card_id):
                 card_dict['linked_board_color'] = lb['color']
     return jsonify({**card_dict, 'comments': comments, 'attachments': attachments,
                     'checklists': checklists, 'members': members, 'labels': labels, 'links': links,
-                    'activity': activity})
+                    'activity': activity, 'custom_fields': custom_fields})
 
 @app.route('/api/cards/<int:card_id>', methods=['PUT'])
 def api_update_card(card_id):
@@ -1324,6 +1396,84 @@ def api_remove_card_label(card_id, label_id):
         conn.execute('DELETE FROM card_labels WHERE id=? AND card_id=?', (label_id, card_id))
         if label:
             _log_activity(conn, card_id, 'label_removed', label['name'])
+    return jsonify({'ok': True})
+
+
+# ===== API — CUSTOM FIELDS =====
+
+@app.route('/api/boards/<int:board_id>/custom-fields', methods=['GET'])
+def api_get_custom_fields(board_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT * FROM custom_fields WHERE board_id=? ORDER BY position, id', (board_id,)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/boards/<int:board_id>/custom-fields', methods=['POST'])
+def api_create_custom_field(board_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json() or {}
+    name  = (d.get('name') or '').strip()
+    ftype = (d.get('type') or '').strip()
+    if not name or ftype not in CUSTOM_FIELD_TYPES:
+        return jsonify({'error': 'invalid'}), 400
+    options = json.dumps(d.get('options') or []) if ftype == 'list' else ''
+    show_on_card = 1 if d.get('show_on_card') else 0
+    with get_db() as conn:
+        pos = conn.execute(
+            'SELECT COALESCE(MAX(position),-1)+1 FROM custom_fields WHERE board_id=?', (board_id,)
+        ).fetchone()[0]
+        cur = conn.execute(
+            'INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position) VALUES (?,?,?,?,?,?)',
+            (board_id, name, ftype, options, show_on_card, pos)
+        )
+        row = dict(conn.execute('SELECT * FROM custom_fields WHERE id=?', (cur.lastrowid,)).fetchone())
+    return jsonify(row), 201
+
+@app.route('/api/custom-fields/<int:field_id>', methods=['PUT'])
+def api_update_custom_field(field_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json() or {}
+    fields, values = [], []
+    if 'name' in d:
+        fields.append('name=?'); values.append((d['name'] or '').strip())
+    if 'options' in d:
+        fields.append('options=?'); values.append(json.dumps(d['options'] or []))
+    if 'show_on_card' in d:
+        fields.append('show_on_card=?'); values.append(1 if d['show_on_card'] else 0)
+    if 'position' in d:
+        fields.append('position=?'); values.append(d['position'])
+    if fields:
+        values.append(field_id)
+        with get_db() as conn:
+            conn.execute(f'UPDATE custom_fields SET {",".join(fields)} WHERE id=?', values)
+    return jsonify({'ok': True})
+
+@app.route('/api/custom-fields/<int:field_id>', methods=['DELETE'])
+def api_delete_custom_field(field_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute('DELETE FROM custom_fields WHERE id=?', (field_id,))
+    return jsonify({'ok': True})
+
+@app.route('/api/cards/<int:card_id>/custom-fields/<int:field_id>', methods=['PUT'])
+def api_set_custom_field_value(card_id, field_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json() or {}
+    value = d.get('value', '')
+    if not isinstance(value, str):
+        value = str(value)
+    with get_db() as conn:
+        field = conn.execute('SELECT name FROM custom_fields WHERE id=?', (field_id,)).fetchone()
+        if not field: return jsonify({'error': 'not found'}), 404
+        conn.execute(
+            '''INSERT INTO card_custom_field_values (card_id, field_id, value) VALUES (?,?,?)
+               ON CONFLICT(card_id, field_id) DO UPDATE SET value=excluded.value''',
+            (card_id, field_id, value)
+        )
+        _log_activity(conn, card_id, 'custom_field_changed',
+                      f"{field['name']}: {value}" if value else f"{field['name']}: —")
     return jsonify({'ok': True})
 
 
@@ -1838,6 +1988,28 @@ def migrate_db():
                 actor_name TEXT    NOT NULL DEFAULT '',
                 detail     TEXT    NOT NULL DEFAULT '',
                 created_at TEXT    DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+
+        # ── Кастомные поля ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS custom_fields (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_id      INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                name          TEXT    NOT NULL,
+                type          TEXT    NOT NULL,
+                options       TEXT    NOT NULL DEFAULT '',
+                show_on_card  INTEGER NOT NULL DEFAULT 0,
+                position      INTEGER NOT NULL DEFAULT 0
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_custom_field_values (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id  INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                field_id INTEGER NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
+                value    TEXT    NOT NULL DEFAULT '',
+                UNIQUE(card_id, field_id)
             )
         ''')
 
