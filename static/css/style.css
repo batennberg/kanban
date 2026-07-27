@@ -2319,6 +2319,28 @@ kbd {
     word-break: break-word;
 }
 
+/* Activity (audit) list */
+.cm-activity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+    max-height: 220px;
+    padding-right: 2px;
+}
+.cm-activity-list::-webkit-scrollbar { width: 3px; }
+.cm-activity-list::-webkit-scrollbar-thumb { background: #dfe1e6; border-radius: 2px; }
+
+.cm-activity-item { display: flex; align-items: flex-start; gap: 8px; }
+.cm-activity-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #c1c7d0; flex-shrink: 0; margin-top: 6px;
+}
+.cm-activity-body { flex: 1; min-width: 0; }
+.cm-activity-text { font-size: 12px; color: #44546f; line-height: 1.5; word-break: break-word; }
+.cm-activity-text b { color: #1a2535; font-weight: 700; }
+.cm-activity-time { font-size: 11px; color: #b3bac5; }
+
 .comment-mention {
     display: inline-block;
     padding: 1px 6px;

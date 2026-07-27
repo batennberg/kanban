@@ -294,6 +294,7 @@ window.openCardModal = function(e, cardEl) {
     renderAttachments([]);
     renderLinks([]);
     renderComments([]);
+    renderActivity([]);
     renderChecklists([]);
     updateCardMembersMeta([]);
     document.getElementById('cmCommentsEmpty').style.display = 'block';
@@ -317,6 +318,7 @@ async function loadCardData(dbId) {
         document.getElementById('cmDescription').value = data.description || '';
         renderDescriptionView(data.description || '');
         renderComments(data.comments || []);
+        renderActivity(data.activity || []);
         renderAttachments(data.attachments || []);
         renderLinks(data.links || []);
         renderChecklists(data.checklists || []);
@@ -821,6 +823,58 @@ function appendCommentToDOM(c) {
         </div>
     `;
     document.getElementById('cmCommentsList').prepend(item);
+}
+
+const ACTIVITY_LABELS = {
+    created:                  () => 'создал(а) карточку',
+    renamed:                  (d) => `переименовал(а) карточку: ${d}`,
+    description_changed:      () => 'изменил(а) описание',
+    due_date_changed:         (d) => `установил(а) срок: ${d}`,
+    due_date_removed:         () => 'убрал(а) срок',
+    start_date_changed:       (d) => `установил(а) дату начала: ${d}`,
+    start_date_removed:       () => 'убрал(а) дату начала',
+    completed:                () => 'отметил(а) карточку как выполненную',
+    reopened:                 () => 'снял(а) отметку о выполнении',
+    archived:                 () => 'отправил(а) карточку в архив',
+    restored:                 () => 'восстановил(а) карточку из архива',
+    moved_column:             (d) => `переместил(а) карточку: ${d}`,
+    label_added:              (d) => `добавил(а) метку «${d}»`,
+    label_removed:            (d) => `убрал(а) метку «${d}»`,
+    member_added:             (d) => `добавил(а) участника: ${d}`,
+    member_removed:           (d) => `убрал(а) участника: ${d}`,
+    checklist_item_checked:   (d) => `отметил(а) пункт чек-листа: «${d}»`,
+    checklist_item_unchecked: (d) => `снял(а) отметку с пункта чек-листа: «${d}»`,
+    attachment_added:         (d) => `добавил(а) вложение: ${d}`,
+    attachment_removed:       (d) => `удалил(а) вложение: ${d}`,
+    link_added:               (d) => `добавил(а) ссылку: ${d}`,
+    link_removed:             (d) => `удалил(а) ссылку: ${d}`,
+};
+
+function renderActivity(list) {
+    const container = document.getElementById('cmActivityList');
+    const empty     = document.getElementById('cmActivityEmpty');
+    container.querySelectorAll('.cm-activity-item').forEach(el => el.remove());
+
+    if (!list || !list.length) { empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+
+    list.forEach(a => {
+        const describe = ACTIVITY_LABELS[a.event_type];
+        if (!describe) return;
+        const actor = a.actor_name || 'Пользователь';
+        const time  = a.created_at ? a.created_at.replace('T', ' ').slice(0, 16) : '';
+
+        const item = document.createElement('div');
+        item.className = 'cm-activity-item';
+        item.innerHTML = `
+            <span class="cm-activity-dot"></span>
+            <div class="cm-activity-body">
+                <div class="cm-activity-text"><b>${escHtml(actor)}</b> ${escHtml(describe(a.detail || ''))}</div>
+                <span class="cm-activity-time">${escHtml(time)}</span>
+            </div>
+        `;
+        container.appendChild(item);
+    });
 }
 
 window.deleteComment = async function(id) {

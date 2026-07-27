@@ -125,6 +125,34 @@ def _create_comment_mentions(conn, card_id, comment_id, text, actor_email, actor
     return mentions
 
 
+def _log_activity(conn, card_id, event_type, detail=''):
+    actor = (session.get('user') or {}).get('name', '') if session else ''
+    conn.execute(
+        'INSERT INTO card_activity (card_id, event_type, actor_name, detail) VALUES (?,?,?,?)',
+        (card_id, event_type, actor, detail)
+    )
+
+
+def _log_card_update_activity(conn, card_id, before, d):
+    if 'title' in d and d['title'] != before['title']:
+        _log_activity(conn, card_id, 'renamed', f"{before['title']} → {d['title']}")
+    if 'description' in d and (d['description'] or '') != (before['description'] or ''):
+        _log_activity(conn, card_id, 'description_changed')
+    if 'due_date' in d and (d['due_date'] or '') != (before['due_date'] or ''):
+        _log_activity(conn, card_id, 'due_date_changed' if d['due_date'] else 'due_date_removed', d['due_date'] or '')
+    if 'start_date' in d and (d['start_date'] or '') != (before['start_date'] or ''):
+        _log_activity(conn, card_id, 'start_date_changed' if d['start_date'] else 'start_date_removed', d['start_date'] or '')
+    if 'completed' in d and bool(d['completed']) != bool(before['completed']):
+        _log_activity(conn, card_id, 'completed' if d['completed'] else 'reopened')
+    if 'column_id' in d and d['column_id'] and d['column_id'] != before['column_id']:
+        cols = conn.execute(
+            'SELECT id, name FROM columns WHERE id IN (?,?)', (before['column_id'], d['column_id'])
+        ).fetchall()
+        names = {c['id']: c['name'] for c in cols}
+        _log_activity(conn, card_id, 'moved_column',
+                      f"{names.get(before['column_id'], '?')} → {names.get(d['column_id'], '?')}")
+
+
 # ===== DUPLICATE HELPERS (карточка → список → доска) =====
 # Комментарии и вложения сознательно не копируются (как в Trello) — это история
 # оригинала, а не шаблон для копии.
@@ -818,6 +846,7 @@ def api_create_card():
             (col_id, title, d.get('label',''), d.get('label_color',''), d.get('due_date',''), d.get('start_date',''), pos)
         )
         card_id = cur.lastrowid
+        _log_activity(conn, card_id, 'created')
         card = dict(conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone())
     return jsonify(card)
 
@@ -864,6 +893,9 @@ def api_get_card(card_id):
         links = [dict(l) for l in conn.execute(
             'SELECT * FROM card_links WHERE card_id=? ORDER BY position, id', (card_id,)
         )]
+        activity = [dict(a) for a in conn.execute(
+            'SELECT * FROM card_activity WHERE card_id=? ORDER BY created_at DESC, id DESC', (card_id,)
+        )]
         if card_dict.get('linked_board_id'):
             lb = conn.execute('SELECT id, name, color FROM boards WHERE id=?',
                               (card_dict['linked_board_id'],)).fetchone()
@@ -871,7 +903,8 @@ def api_get_card(card_id):
                 card_dict['linked_board_name']  = lb['name']
                 card_dict['linked_board_color'] = lb['color']
     return jsonify({**card_dict, 'comments': comments, 'attachments': attachments,
-                    'checklists': checklists, 'members': members, 'labels': labels, 'links': links})
+                    'checklists': checklists, 'members': members, 'labels': labels, 'links': links,
+                    'activity': activity})
 
 @app.route('/api/cards/<int:card_id>', methods=['PUT'])
 def api_update_card(card_id):
@@ -884,9 +917,12 @@ def api_update_card(card_id):
             fields.append(f'{f}=?')
             values.append(d[f])
     if fields:
-        values.append(card_id)
         with get_db() as conn:
+            before = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+            values.append(card_id)
             conn.execute(f'UPDATE cards SET {",".join(fields)} WHERE id=?', values)
+            if before:
+                _log_card_update_activity(conn, card_id, before, d)
     return jsonify({'ok': True})
 
 @app.route('/api/cards/<int:card_id>', methods=['DELETE'])
@@ -897,6 +933,7 @@ def api_delete_card(card_id):
             "UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE id=?",
             (card_id,)
         )
+        _log_activity(conn, card_id, 'archived')
     return jsonify({'ok': True})
 
 @app.route('/api/cards/<int:card_id>/restore', methods=['POST'])
@@ -904,6 +941,7 @@ def api_restore_card(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         conn.execute('UPDATE cards SET archived=0, archived_at=NULL WHERE id=?', (card_id,))
+        _log_activity(conn, card_id, 'restored')
     return jsonify({'ok': True})
 
 @app.route('/api/archive')
@@ -955,8 +993,16 @@ def api_reorder_cards():
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         for item in request.get_json().get('cards', []):
+            before = conn.execute('SELECT column_id FROM cards WHERE id=?', (item['id'],)).fetchone()
             conn.execute('UPDATE cards SET column_id=?,position=? WHERE id=?',
                          (item['column_id'], item['position'], item['id']))
+            if before and before['column_id'] != item['column_id']:
+                cols = conn.execute(
+                    'SELECT id, name FROM columns WHERE id IN (?,?)', (before['column_id'], item['column_id'])
+                ).fetchall()
+                names = {c['id']: c['name'] for c in cols}
+                _log_activity(conn, item['id'], 'moved_column',
+                              f"{names.get(before['column_id'], '?')} → {names.get(item['column_id'], '?')}")
     return jsonify({'ok': True})
 
 
@@ -1024,9 +1070,14 @@ def api_update_checklist_item(item_id):
             fields.append(f'{f}=?')
             values.append(d[f])
     if fields:
-        values.append(item_id)
         with get_db() as conn:
+            before = conn.execute('SELECT * FROM checklist_items WHERE id=?', (item_id,)).fetchone()
+            values.append(item_id)
             conn.execute(f'UPDATE checklist_items SET {",".join(fields)} WHERE id=?', values)
+            if before and 'checked' in d and bool(d['checked']) != bool(before['checked']):
+                _log_activity(conn, before['card_id'],
+                              'checklist_item_checked' if d['checked'] else 'checklist_item_unchecked',
+                              before['text'])
     return jsonify({'ok': True})
 
 @app.route('/api/checklist/<int:item_id>', methods=['DELETE'])
@@ -1162,6 +1213,7 @@ def api_upload_attachment(card_id):
             'INSERT INTO attachments (card_id,filename,filesize,filetype,filepath) VALUES(?,?,?,?,?)',
             (card_id, original, size_str, ftype, filepath)
         )
+        _log_activity(conn, card_id, 'attachment_added', original)
         row = dict(conn.execute('SELECT * FROM attachments WHERE id=?', (cur.lastrowid,)).fetchone())
     return jsonify(row), 201
 
@@ -1183,6 +1235,7 @@ def api_delete_attachment(att_id):
         att = conn.execute('SELECT * FROM attachments WHERE id=?', (att_id,)).fetchone()
         if not att: return jsonify({'error': 'not found'}), 404
         conn.execute('DELETE FROM attachments WHERE id=?', (att_id,))
+        _log_activity(conn, att['card_id'], 'attachment_removed', att['filename'])
     try:
         os.remove(att['filepath'])
     except OSError:
@@ -1213,15 +1266,20 @@ def api_assign_card_member(card_id):
             'INSERT OR IGNORE INTO card_members (card_id, user_email, user_name) VALUES (?,?,?)',
             (card_id, email, name)
         )
+        _log_activity(conn, card_id, 'member_added', name or email)
     return jsonify({'ok': True})
 
 @app.route('/api/cards/<int:card_id>/members/<path:email>', methods=['DELETE'])
 def api_remove_card_member(card_id, email):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
+        member = conn.execute(
+            'SELECT user_name FROM card_members WHERE card_id=? AND user_email=?', (card_id, email)
+        ).fetchone()
         conn.execute(
             'DELETE FROM card_members WHERE card_id=? AND user_email=?', (card_id, email)
         )
+        _log_activity(conn, card_id, 'member_removed', (member['user_name'] if member else '') or email)
     return jsonify({'ok': True})
 
 
@@ -1255,13 +1313,17 @@ def api_add_card_label(card_id):
         row = dict(conn.execute(
             'SELECT * FROM card_labels WHERE card_id=? AND name=?', (card_id, name)
         ).fetchone())
+        _log_activity(conn, card_id, 'label_added', name)
     return jsonify(row), 201
 
 @app.route('/api/cards/<int:card_id>/labels/<int:label_id>', methods=['DELETE'])
 def api_remove_card_label(card_id, label_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
+        label = conn.execute('SELECT name FROM card_labels WHERE id=? AND card_id=?', (label_id, card_id)).fetchone()
         conn.execute('DELETE FROM card_labels WHERE id=? AND card_id=?', (label_id, card_id))
+        if label:
+            _log_activity(conn, card_id, 'label_removed', label['name'])
     return jsonify({'ok': True})
 
 
@@ -1294,13 +1356,17 @@ def api_add_card_link(card_id):
             (card_id, url, title, pos)
         )
         row = dict(conn.execute('SELECT * FROM card_links WHERE id=?', (cur.lastrowid,)).fetchone())
+        _log_activity(conn, card_id, 'link_added', title or url)
     return jsonify(row), 201
 
 @app.route('/api/cards/<int:card_id>/links/<int:link_id>', methods=['DELETE'])
 def api_remove_card_link(card_id, link_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
+        link = conn.execute('SELECT url, title FROM card_links WHERE id=? AND card_id=?', (link_id, card_id)).fetchone()
         conn.execute('DELETE FROM card_links WHERE id=? AND card_id=?', (link_id, card_id))
+        if link:
+            _log_activity(conn, card_id, 'link_removed', link['title'] or link['url'])
     return jsonify({'ok': True})
 
 
@@ -1760,6 +1826,18 @@ def migrate_db():
                 payload        TEXT,
                 is_read        INTEGER DEFAULT 0,
                 created_at     TEXT    DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+
+        # ── История активности карточки (audit) ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_activity (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                event_type TEXT    NOT NULL,
+                actor_name TEXT    NOT NULL DEFAULT '',
+                detail     TEXT    NOT NULL DEFAULT '',
+                created_at TEXT    DEFAULT (datetime('now','localtime'))
             )
         ''')
 
