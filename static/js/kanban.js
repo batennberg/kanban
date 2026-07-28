@@ -257,9 +257,10 @@ window.openCardModal = function(e, cardEl) {
     if (boardId) history.replaceState(null, '', `/board/${boardId}?card=${dbId}`);
 
     // Populate from DOM (instant — без задержки)
-    const titleEl  = cardEl.querySelector('.card-title');
-    const labelEls = cardEl.querySelectorAll('.card-label');
-    const dueEl    = cardEl.querySelector('.card-due');
+    const titleEl      = cardEl.querySelector('.card-title');
+    const labelEls     = cardEl.querySelectorAll('.card-label');
+    const importanceEl = cardEl.querySelector('.card-importance');
+    const dueEl        = cardEl.querySelector('.card-due');
 
     document.getElementById('cmTitle').textContent = titleEl ? titleEl.textContent : '';
 
@@ -275,6 +276,13 @@ window.openCardModal = function(e, cardEl) {
         b.textContent   = labelEl.textContent.trim();
         meta.appendChild(b);
     });
+    if (importanceEl) {
+        const b = document.createElement('span');
+        b.className = 'card-importance';
+        b.style.cssText = importanceEl.style.cssText;
+        b.textContent   = importanceEl.textContent.trim();
+        meta.appendChild(b);
+    }
     if (dueEl) {
         const d = document.createElement('span');
         d.className   = 'cm-due-badge';
@@ -334,6 +342,9 @@ async function loadCardData(dbId) {
 
         // Метки
         updateModalLabels(data.labels || []);
+
+        // Важность
+        updateModalImportance({ name: data.importance || '', color: data.importance_color || '' });
 
         // Дата начала
         updateModalStart(data.start_date || '');
@@ -931,6 +942,8 @@ const ACTIVITY_LABELS = {
     moved_column:             (d) => `переместил(а) карточку: ${d}`,
     label_added:              (d) => `добавил(а) метку «${d}»`,
     label_removed:            (d) => `убрал(а) метку «${d}»`,
+    importance_set:           (d) => `установил(а) важность: «${d}»`,
+    importance_cleared:       (d) => `снял(а) важность «${d}»`,
     member_added:             (d) => `добавил(а) участника: ${d}`,
     member_removed:           (d) => `убрал(а) участника: ${d}`,
     checklist_item_checked:   (d) => `отметил(а) пункт чек-листа: «${d}»`,
@@ -1047,16 +1060,12 @@ window.closePopover = function() {
     if (pop) pop.style.display = 'none';
 };
 
-// --- Метки-приоритеты (ровно одна на карточку, автоматически ставит обложку) ---
-const PRIORITY_LABELS = [
-    { name: 'Срочно',           color: '#de350b' },
-    { name: 'Средняя важность', color: '#ffab00' },
-    { name: 'Низкий приоритет', color: '#00875a' },
-];
+// --- Метки (несколько произвольных на карточку) ---
+let selectedPopColor = '#0052cc';
 
 window.openLabelPopover = async function() {
     if (!currentCardDbId) return;
-    openPopover('Приоритет', '<div class="mp-loading">Загрузка...</div>');
+    openPopover('Метки', '<div class="mp-loading">Загрузка...</div>');
 
     let labels = [];
     try {
@@ -1065,42 +1074,59 @@ window.openLabelPopover = async function() {
     } catch (err) {
         console.error('openLabelPopover error:', err);
     }
-    const activeName = labels[0]?.name || '';
 
-    const buttonsHtml = PRIORITY_LABELS.map(l => `
-        <button class="priority-label-btn${l.name === activeName ? ' priority-label-btn--active' : ''}"
-                style="--pl-color:${l.color}"
-                onclick="togglePriorityLabel('${l.name}')">
-            <span class="priority-label-dot" style="background:${l.color}"></span>
-            ${escHtml(l.name)}
-        </button>`).join('');
+    const palette = ['#0052cc','#6554c0','#00875a','#de350b','#ff8b00','#00b8d9'];
+    selectedPopColor = palette[0];
+
+    const existingHtml = labels.map(l => `
+        <div class="mp-user" data-label-id="${l.id}">
+            <span class="card-label" style="background:${l.color}20;color:${l.color};border:1px solid ${l.color}40">${escHtml(l.name)}</span>
+            <button class="cm-attach-del" onclick="removeCardLabel(${l.id})" title="Удалить">✕</button>
+        </div>`).join('');
+
+    const swatches = palette.map(c =>
+        `<div class="pop-color${c === selectedPopColor ? ' active' : ''}"
+              style="background:${c}" data-color="${c}"
+              onclick="selectPopColor(this)"></div>`
+    ).join('');
 
     document.getElementById('cspBody').innerHTML = `
-        <div class="priority-label-list">${buttonsHtml}</div>
-        <p class="cm-empty-hint" style="margin-top:8px">Метка ставит обложку того же цвета; повторный клик по активной метке снимает её и убирает обложку.</p>
+        ${existingHtml || '<p class="cm-empty-hint">Нет меток</p>'}
+        <div class="csp-form-group" style="margin-top:10px">
+            <label class="csp-label">Новая метка</label>
+            <input class="csp-input" id="popLabelText" type="text" placeholder="Разработка, Сеть...">
+        </div>
+        <div class="csp-form-group">
+            <label class="csp-label">Цвет</label>
+            <div class="pop-colors">${swatches}</div>
+        </div>
+        <button class="csp-btn csp-btn--primary" onclick="addCardLabel()">Добавить метку</button>
     `;
+    setTimeout(() => document.getElementById('popLabelText')?.focus(), 50);
 };
 
-window.togglePriorityLabel = async function(name) {
-    if (!currentCardDbId) return;
-    let labels = [];
-    try {
-        const res = await fetch(`/api/cards/${currentCardDbId}/labels`);
-        if (res.ok) labels = await res.json();
-    } catch (err) { console.error('togglePriorityLabel error:', err); }
+window.selectPopColor = el => {
+    document.querySelectorAll('.pop-color').forEach(e => e.classList.remove('active'));
+    el.classList.add('active');
+    selectedPopColor = el.dataset.color;
+};
 
-    const existing = labels.find(l => l.name === name);
-    if (existing) {
-        await fetch(`/api/cards/${currentCardDbId}/labels/${existing.id}`, { method: 'DELETE' });
-        updateCardCoverDOM(currentCardId, '');
-    } else {
-        const res = await fetch(`/api/cards/${currentCardDbId}/labels`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name })
-        });
-        const label = await res.json();
-        updateCardCoverDOM(currentCardId, label.color || '');
-    }
+window.addCardLabel = async function() {
+    const input = document.getElementById('popLabelText');
+    const name  = input?.value.trim();
+    const color = selectedPopColor;
+    if (!name || !currentCardDbId) return;
+    await fetch(`/api/cards/${currentCardDbId}/labels`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, color })
+    });
+    renderCardLabelsInMeta(currentCardDbId);
+    openLabelPopover();
+};
+
+window.removeCardLabel = async function(labelId) {
+    if (!currentCardDbId) return;
+    await fetch(`/api/cards/${currentCardDbId}/labels/${labelId}`, { method: 'DELETE' });
     renderCardLabelsInMeta(currentCardDbId);
     openLabelPopover();
 };
@@ -1146,6 +1172,83 @@ function updateCardLabelsOnBoard(cardDomId, labels) {
         });
         const checkBtn = cardEl.querySelector('.card-check-btn');
         checkBtn ? checkBtn.after(wrap) : cardEl.prepend(wrap);
+    }
+}
+
+// --- Важность (ровно один уровень на карточку, автоматически ставит обложку) ---
+const IMPORTANCE_LEVELS = [
+    { name: 'Срочно',           color: '#de350b' },
+    { name: 'Средняя важность', color: '#ffab00' },
+    { name: 'Низкий приоритет', color: '#00875a' },
+];
+
+window.openImportancePopover = async function() {
+    if (!currentCardDbId) return;
+    openPopover('Важность', '<div class="mp-loading">Загрузка...</div>');
+
+    let activeName = '';
+    try {
+        const res = await fetch(`/api/cards/${currentCardDbId}/importance`);
+        if (res.ok) activeName = (await res.json()).name || '';
+    } catch (err) {
+        console.error('openImportancePopover error:', err);
+    }
+
+    const buttonsHtml = IMPORTANCE_LEVELS.map(l => `
+        <button class="importance-btn${l.name === activeName ? ' importance-btn--active' : ''}"
+                style="--pl-color:${l.color}"
+                onclick="toggleImportance('${l.name}')">
+            <span class="importance-dot" style="background:${l.color}"></span>
+            ${escHtml(l.name)}
+        </button>`).join('');
+
+    document.getElementById('cspBody').innerHTML = `
+        <div class="importance-list">${buttonsHtml}</div>
+        <p class="cm-empty-hint" style="margin-top:8px">Важность ставит обложку того же цвета; повторный клик по активному уровню снимает его и убирает обложку.</p>
+    `;
+};
+
+window.toggleImportance = async function(name) {
+    if (!currentCardDbId) return;
+    let data = { name: '', color: '' };
+    try {
+        const res = await fetch(`/api/cards/${currentCardDbId}/importance`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        data = await res.json();
+    } catch (err) { console.error('toggleImportance error:', err); }
+
+    updateCardCoverDOM(currentCardId, data.color || '');
+    updateModalImportance(data);
+    updateCardImportanceOnBoard(currentCardId, data);
+    openImportancePopover();
+};
+
+function updateModalImportance(imp) {
+    const meta = document.getElementById('cmMeta');
+    if (!meta) return;
+    meta.querySelectorAll('.card-importance').forEach(el => el.remove());
+    if (imp && imp.name) {
+        const span = document.createElement('span');
+        span.className = 'card-importance';
+        span.style.cssText = `background:${imp.color}20;color:${imp.color};border:1px solid ${imp.color}40`;
+        span.textContent = imp.name;
+        meta.appendChild(span);
+    }
+}
+
+function updateCardImportanceOnBoard(cardDomId, imp) {
+    const cardEl = document.getElementById(cardDomId);
+    if (!cardEl) return;
+    cardEl.querySelector('.card-importance')?.remove();
+    if (imp && imp.name) {
+        const span = document.createElement('span');
+        span.className = 'card-importance';
+        span.style.cssText = `background:${imp.color}20;color:${imp.color};border:1px solid ${imp.color}40`;
+        span.textContent = imp.name;
+        const anchor = cardEl.querySelector('.card-labels') || cardEl.querySelector('.card-edit-btn');
+        anchor ? anchor.after(span) : cardEl.prepend(span);
     }
 }
 

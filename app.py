@@ -153,17 +153,17 @@ def _log_card_update_activity(conn, card_id, before, d):
                       f"{names.get(before['column_id'], '?')} → {names.get(d['column_id'], '?')}")
 
 
-# ===== МЕТКИ-ПРИОРИТЕТЫ =====
-# Набор меток жёстко ограничен тремя уровнями приоритета; на карточке может быть
-# назначена только одна из них — при назначении карточка получает обложку того же
-# цвета, при снятии обложка сбрасывается.
+# ===== ВАЖНОСТЬ =====
+# Отдельная от произвольных меток характеристика карточки: ровно один уровень
+# важности из фиксированного набора. При назначении карточка получает обложку
+# того же цвета, при снятии обложка сбрасывается.
 
-PRIORITY_LABELS = [
+IMPORTANCE_LEVELS = [
     {'name': 'Срочно',            'color': '#de350b'},
     {'name': 'Средняя важность',  'color': '#ffab00'},
     {'name': 'Низкий приоритет',  'color': '#00875a'},
 ]
-PRIORITY_LABEL_COLORS = {l['name']: l['color'] for l in PRIORITY_LABELS}
+IMPORTANCE_COLORS = {l['name']: l['color'] for l in IMPORTANCE_LEVELS}
 
 
 # ===== КАСТОМНЫЕ ПОЛЯ =====
@@ -198,10 +198,11 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
     src = conn.execute('SELECT * FROM cards WHERE id=?', (src_card_id,)).fetchone()
     cur = conn.execute(
         '''INSERT INTO cards
-           (column_id, title, description, label, label_color, due_date, start_date, position, cover_color)
-           VALUES (?,?,?,?,?,?,?,?,?)''',
+           (column_id, title, description, label, label_color, due_date, start_date, position, cover_color, importance)
+           VALUES (?,?,?,?,?,?,?,?,?,?)''',
         (target_column_id, src['title'] + title_suffix, src['description'],
-         src['label'], src['label_color'], src['due_date'], src['start_date'], position, src['cover_color'])
+         src['label'], src['label_color'], src['due_date'], src['start_date'], position, src['cover_color'],
+         src['importance'])
     )
     new_card_id = cur.lastrowid
 
@@ -498,6 +499,7 @@ def board(board_id):
             ):
                 card_dict = dict(c)
                 card_dict['labels'] = labels_by_card.get(c['id'], [])
+                card_dict['importance_color'] = IMPORTANCE_COLORS.get(card_dict.get('importance') or '', '')
                 card_cf_values = cf_values_by_card.get(c['id'], {})
                 card_dict['custom_fields'] = [
                     {'field_id': f['id'], 'name': f['name'], 'type': f['type'], 'value': card_cf_values[f['id']]}
@@ -987,6 +989,7 @@ def api_get_card(card_id):
             if lb:
                 card_dict['linked_board_name']  = lb['name']
                 card_dict['linked_board_color'] = lb['color']
+        card_dict['importance_color'] = IMPORTANCE_COLORS.get(card_dict.get('importance') or '', '')
     return jsonify({**card_dict, 'comments': comments, 'attachments': attachments,
                     'checklists': checklists, 'members': members, 'labels': labels, 'links': links,
                     'activity': activity, 'custom_fields': custom_fields})
@@ -1382,23 +1385,22 @@ def api_get_card_labels(card_id):
 @app.route('/api/cards/<int:card_id>/labels', methods=['POST'])
 def api_add_card_label(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
-    d    = request.get_json()
-    name = (d.get('name') or '').strip()
-    if name not in PRIORITY_LABEL_COLORS:
-        return jsonify({'error': 'invalid label'}), 400
-    color = PRIORITY_LABEL_COLORS[name]
+    d     = request.get_json()
+    name  = (d.get('name') or '').strip()
+    color = (d.get('color') or '').strip()
+    if not name: return jsonify({'error': 'name required'}), 400
     with get_db() as conn:
-        # Метки-приоритеты взаимоисключающие — на карточке может быть только одна.
-        conn.execute('DELETE FROM card_labels WHERE card_id=? AND name!=?', (card_id, name))
+        pos = conn.execute(
+            'SELECT COALESCE(MAX(position),-1)+1 FROM card_labels WHERE card_id=?', (card_id,)
+        ).fetchone()[0]
         conn.execute(
-            '''INSERT INTO card_labels (card_id, name, color, position) VALUES (?,?,?,0)
+            '''INSERT INTO card_labels (card_id, name, color, position) VALUES (?,?,?,?)
                ON CONFLICT(card_id, name) DO UPDATE SET color=excluded.color''',
-            (card_id, name, color)
+            (card_id, name, color, pos)
         )
         row = dict(conn.execute(
             'SELECT * FROM card_labels WHERE card_id=? AND name=?', (card_id, name)
         ).fetchone())
-        conn.execute('UPDATE cards SET cover_color=? WHERE id=?', (color, card_id))
         _log_activity(conn, card_id, 'label_added', name)
     return jsonify(row), 201
 
@@ -1409,9 +1411,35 @@ def api_remove_card_label(card_id, label_id):
         label = conn.execute('SELECT name FROM card_labels WHERE id=? AND card_id=?', (label_id, card_id)).fetchone()
         conn.execute('DELETE FROM card_labels WHERE id=? AND card_id=?', (label_id, card_id))
         if label:
-            conn.execute('UPDATE cards SET cover_color=? WHERE id=?', ('', card_id))
             _log_activity(conn, card_id, 'label_removed', label['name'])
     return jsonify({'ok': True})
+
+
+# ===== API — ВАЖНОСТЬ (одна на карточку, автоматически ставит обложку) =====
+
+@app.route('/api/cards/<int:card_id>/importance', methods=['GET'])
+def api_get_card_importance(card_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        row = conn.execute('SELECT importance FROM cards WHERE id=?', (card_id,)).fetchone()
+    name = row['importance'] if row else ''
+    return jsonify({'name': name or '', 'color': IMPORTANCE_COLORS.get(name, '')})
+
+@app.route('/api/cards/<int:card_id>/importance', methods=['PUT'])
+def api_set_card_importance(card_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d    = request.get_json()
+    name = (d.get('name') or '').strip()
+    if name and name not in IMPORTANCE_COLORS:
+        return jsonify({'error': 'invalid importance'}), 400
+    with get_db() as conn:
+        current = conn.execute('SELECT importance FROM cards WHERE id=?', (card_id,)).fetchone()['importance']
+        if name and name == current:
+            name = ''  # повторный клик по активному уровню — снимаем важность
+        color = IMPORTANCE_COLORS.get(name, '')
+        conn.execute('UPDATE cards SET importance=?, cover_color=? WHERE id=?', (name, color, card_id))
+        _log_activity(conn, card_id, 'importance_set' if name else 'importance_cleared', name or current)
+    return jsonify({'name': name, 'color': color})
 
 
 # ===== API — CUSTOM FIELDS =====
@@ -1840,6 +1868,7 @@ def migrate_db():
             'ALTER TABLE cards ADD COLUMN archived         INTEGER DEFAULT 0',
             'ALTER TABLE cards ADD COLUMN archived_at      TEXT',
             'ALTER TABLE cards ADD COLUMN start_date       TEXT    DEFAULT ""',
+            'ALTER TABLE cards ADD COLUMN importance       TEXT    DEFAULT ""',
             'ALTER TABLE columns ADD COLUMN archived       INTEGER DEFAULT 0',
             'ALTER TABLE columns ADD COLUMN archived_at    TEXT',
             '''CREATE TABLE IF NOT EXISTS card_members (
@@ -2028,36 +2057,25 @@ def migrate_db():
             )
         ''')
 
-        # ── Метки ограничены тремя фиксированными приоритетами ──
-        # Произвольные метки, созданные до этого ограничения, удаляются; цвет
-        # оставшихся (совпадающих по названию) приводится к канону.
-        placeholders = ','.join('?' * len(PRIORITY_LABELS))
+        # ── Разовый перенос меток-приоритетов (введённых временно 27.07) в cards.importance ──
+        # Метки-приоритеты когда-то хранились в card_labels наравне с обычными метками;
+        # теперь важность — отдельное поле карточки, а card_labels снова свободен для
+        # произвольных пользовательских меток.
+        placeholders = ','.join('?' * len(IMPORTANCE_LEVELS))
+        importance_rows = conn.execute(
+            f'SELECT card_id, name FROM card_labels WHERE name IN ({placeholders}) ORDER BY id DESC',
+            [l['name'] for l in IMPORTANCE_LEVELS]
+        ).fetchall()
+        seen_cards = set()
+        for row in importance_rows:
+            if row['card_id'] in seen_cards:
+                continue  # на карточке уже была только одна метка-приоритет, но на всякий случай
+            seen_cards.add(row['card_id'])
+            conn.execute('UPDATE cards SET importance=? WHERE id=?', (row['name'], row['card_id']))
         conn.execute(
-            f'DELETE FROM card_labels WHERE name NOT IN ({placeholders})',
-            [l['name'] for l in PRIORITY_LABELS]
+            f'DELETE FROM card_labels WHERE name IN ({placeholders})',
+            [l['name'] for l in IMPORTANCE_LEVELS]
         )
-        for l in PRIORITY_LABELS:
-            conn.execute(
-                'UPDATE card_labels SET color=? WHERE name=? AND color!=?',
-                (l['color'], l['name'], l['color'])
-            )
-        # Взаимоисключаемость: если на карточке случайно осталось более одной
-        # метки-приоритета, оставляем только последнюю по id.
-        dupes = conn.execute('''
-            SELECT card_id FROM card_labels GROUP BY card_id HAVING COUNT(*) > 1
-        ''').fetchall()
-        for row in dupes:
-            keep = conn.execute(
-                'SELECT id FROM card_labels WHERE card_id=? ORDER BY id DESC LIMIT 1', (row['card_id'],)
-            ).fetchone()['id']
-            conn.execute('DELETE FROM card_labels WHERE card_id=? AND id!=?', (row['card_id'], keep))
-        # Обложка карточек с уцелевшей меткой-приоритетом приводится к цвету метки.
-        conn.execute('''
-            UPDATE cards SET cover_color = (
-                SELECT color FROM card_labels WHERE card_labels.card_id = cards.id
-            )
-            WHERE id IN (SELECT card_id FROM card_labels)
-        ''')
 
 
 @app.route('/api/search')

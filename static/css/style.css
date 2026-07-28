@@ -1161,6 +1161,7 @@ input { font-family: inherit; }
 .card.card--done                   { opacity: 0.75; }
 .card.card--done .card-title       { text-decoration: line-through; color: #6b778c; }
 .card.card--done .card-label       { opacity: 0.6; }
+.card.card--done .card-importance  { opacity: 0.6; }
 
 /* Column title rename */
 .column-title {
@@ -2747,13 +2748,13 @@ kbd {
 .pop-color:hover { transform: scale(1.12); }
 .pop-color.active { outline-color: #1a2535; }
 
-/* Метки-приоритеты (Срочно/Средняя важность/Низкий приоритет) */
-.priority-label-list {
+/* Важность (Срочно/Средняя важность/Низкий приоритет) */
+.importance-list {
     display: flex;
     flex-direction: column;
     gap: 6px;
 }
-.priority-label-btn {
+.importance-btn {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -2770,16 +2771,27 @@ kbd {
     font-family: inherit;
     transition: background 0.15s, border-color 0.15s;
 }
-.priority-label-btn:hover { background: var(--hover-bg, #f4f5f7); }
-.priority-label-btn--active {
+.importance-btn:hover { background: var(--hover-bg, #f4f5f7); }
+.importance-btn--active {
     border-color: var(--pl-color);
     background: color-mix(in srgb, var(--pl-color) 12%, transparent);
 }
-.priority-label-dot {
+.importance-dot {
     width: 12px;
     height: 12px;
     border-radius: 50%;
     flex-shrink: 0;
+}
+
+.card-importance-row { display: flex; margin-top: 4px; }
+.card-importance {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 10px;
+    letter-spacing: 0.3px;
+    width: fit-content;
 }
 
 .csp-btn {
