@@ -1,0 +1,239 @@
+{% extends 'base.html' %}
+{% block title %}{{ workspace.name }} — Лента задач — Almaly Kanban{% endblock %}
+
+{% block head %}
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+{% endblock %}
+
+{% block body %}
+<div class="ws-layout">
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="ws-sidebar">
+        <div class="ws-sidebar-top">
+            <div class="ws-logo">
+                <div class="ws-logo-icon">АК</div>
+                <span class="ws-logo-text">Almaly Kanban</span>
+            </div>
+        </div>
+
+        <nav class="ws-nav">
+            <a href="/boards" class="ws-nav-item">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
+                    <rect x="1" y="1" width="6" height="6" rx="1.2"/>
+                    <rect x="9" y="1" width="6" height="6" rx="1.2"/>
+                    <rect x="1" y="9" width="6" height="6" rx="1.2"/>
+                    <rect x="9" y="9" width="6" height="6" rx="1.2"/>
+                </svg>
+                Все доски
+            </a>
+        </nav>
+
+        <div class="ws-sidebar-divider"></div>
+
+        <div class="ws-workspaces-nav">
+            <p class="ws-workspaces-label">Лента задач по пространству</p>
+            {% for ws in workspaces %}
+            <a href="/workspace/{{ ws.id }}/tasks"
+               class="ws-workspace-item{% if ws.id == workspace.id %} ws-workspace-item--active{% endif %}">
+                <div class="ws-ws-icon" style="background: {{ ws.color }}">{{ ws.name[0].upper() }}</div>
+                <span class="ws-ws-name">{{ ws.name }}</span>
+            </a>
+            {% endfor %}
+        </div>
+
+        <div class="ws-sidebar-footer">
+            <div class="ws-sidebar-user">
+                <div class="ws-s-avatar">{{ user.name[0].upper() }}</div>
+                <div class="ws-s-user-info">
+                    <span class="ws-s-user-name">{{ user.name }}</span>
+                    <span class="ws-s-user-role">
+                        {% if user.role == 'admin' %}Администратор{% else %}Пользователь{% endif %}
+                    </span>
+                </div>
+                <a href="/logout" class="ws-logout-btn" title="Выйти">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                        <polyline points="16 17 21 12 16 7"/>
+                        <line x1="21" y1="12" x2="9" y2="12"/>
+                    </svg>
+                </a>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ===== MAIN ===== -->
+    <div class="ws-main">
+
+        <!-- Top bar -->
+        <header class="ws-topbar">
+            <button class="ws-hamburger" id="wsSidebarToggle" onclick="toggleSidebar()" aria-label="Меню">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                    <line x1="3" y1="6" x2="21" y2="6"/>
+                    <line x1="3" y1="12" x2="21" y2="12"/>
+                    <line x1="3" y1="18" x2="21" y2="18"/>
+                </svg>
+            </button>
+            <div class="ws-search">
+                <svg class="ws-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                </svg>
+                <input type="text" class="ws-search-input" id="taskSearch"
+                       placeholder="Поиск по задачам..." autocomplete="off"
+                       oninput="filterTasks(this.value)">
+            </div>
+            <div class="ws-topbar-right">
+                <div class="inbox-shell">
+                    <button class="inbox-trigger" id="inboxTriggerBtn" onclick="toggleInboxPanel()" type="button" title="Уведомления">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M15 17H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-3"/>
+                            <path d="M15 17a3 3 0 1 1-6 0"/>
+                        </svg>
+                        <span class="inbox-badge" id="inboxBadge" style="display:none">0</span>
+                    </button>
+                    <div class="inbox-panel" id="inboxPanel" style="display:none">
+                        <div class="inbox-header">
+                            <span class="inbox-title">Уведомления</span>
+                            <button class="inbox-close" onclick="closeInboxPanel()" type="button" title="Закрыть">✕</button>
+                        </div>
+                        <div class="inbox-list" id="inboxList">
+                            <div class="inbox-empty">Загрузка…</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Task feed content -->
+        <div class="ws-content" id="wsContent">
+            <div class="wt-header">
+                <div class="ws-sec-icon" style="background: {{ workspace.color or '#1a1a1a' }}">{{ workspace.name[0].upper() }}</div>
+                <div>
+                    <div class="wt-header-title">{{ workspace.name }} — сводная лента задач</div>
+                    <div class="wt-header-count">{{ cards | length }} задач(и) по {{ boards | length }} доск(ам)</div>
+                </div>
+            </div>
+
+            <div class="wt-filters">
+                <button class="wt-chip wt-chip--active" onclick="wtFilter('all', this)">Все</button>
+                <button class="wt-chip" onclick="wtFilter('active', this)">Активные</button>
+                <button class="wt-chip" onclick="wtFilter('overdue', this)">Просрочено</button>
+                <button class="wt-chip" onclick="wtFilter('done', this)">Выполнено</button>
+            </div>
+
+            <div class="wt-grid" id="wtGrid">
+                {% for card in cards %}
+                <a href="/card/{{ card.id }}"
+                   class="card wt-card{% if card.completed %} card--done{% endif %}"
+                   data-due="{{ card.due_date or '' }}"
+                   data-done="{{ 1 if card.completed else 0 }}">
+                    <div class="wt-source">
+                        <span class="wt-source-dot" style="background:{{ card.board_color or '#4361EE' }}"></span>
+                        {{ card.board_name }} · {{ card.column_name }}
+                    </div>
+                    {% if card.labels %}
+                    <div class="card-labels">
+                        {% for lbl in card.labels %}
+                        <span class="card-label"
+                              style="background:{{ lbl.color }}20;color:{{ lbl.color }};border:1px solid {{ lbl.color }}40">
+                            {{ lbl.name }}
+                        </span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if card.importance %}
+                    <div class="card-importance-row">
+                        <span class="card-importance"
+                              style="background:{{ card.importance_color }}20;color:{{ card.importance_color }};border:1px solid {{ card.importance_color }}40">
+                            {{ card.importance }}
+                        </span>
+                    </div>
+                    {% endif %}
+                    <p class="card-title">{{ card.title }}</p>
+                    {% if card.due_date %}
+                    <div class="card-due">
+                        <span class="due-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> {{ card.due_date }}
+                    </div>
+                    {% endif %}
+                </a>
+                {% endfor %}
+            </div>
+
+            {% if not cards %}
+            <div class="ws-empty-state">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#b3bac5" stroke-width="1.5">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                    <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+                </svg>
+                <p>В этом пространстве пока нет задач</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Sidebar overlay (mobile) -->
+<div class="ws-sidebar-overlay" id="wsSidebarOverlay" onclick="closeSidebar()"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ===== MOBILE SIDEBAR DRAWER =====
+function toggleSidebar() {
+    const sidebar = document.querySelector('.ws-sidebar');
+    const overlay = document.getElementById('wsSidebarOverlay');
+    const isOpen  = sidebar.classList.toggle('ws-sidebar--open');
+    overlay.classList.toggle('ws-sidebar-overlay--visible', isOpen);
+}
+function closeSidebar() {
+    document.querySelector('.ws-sidebar').classList.remove('ws-sidebar--open');
+    document.getElementById('wsSidebarOverlay').classList.remove('ws-sidebar-overlay--visible');
+}
+
+// ===== SEARCH =====
+function filterTasks(query) {
+    const q = query.toLowerCase().trim();
+    document.querySelectorAll('#wtGrid .wt-card').forEach(function(card) {
+        const title = card.querySelector('.card-title')?.textContent.toLowerCase() || '';
+        const src   = card.querySelector('.wt-source')?.textContent.toLowerCase() || '';
+        card.style.display = (!q || title.includes(q) || src.includes(q)) ? '' : 'none';
+    });
+}
+
+// ===== DUE DATE HIGHLIGHTING (формат дд.мм.гггг) =====
+function dueDateClass(dateStr) {
+    if (!dateStr) return '';
+    const parts = dateStr.trim().split('.');
+    if (parts.length !== 3) return '';
+    const [d, m, y] = parts.map(Number);
+    const due   = new Date(y, m - 1, d);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diff = (due - today) / 86400000;
+    if (diff < 0)  return 'due--overdue';
+    if (diff <= 1) return 'due--soon';
+    return '';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('#wtGrid .card-due').forEach(function(el) {
+        el.className = 'card-due ' + dueDateClass(el.textContent.trim());
+    });
+});
+
+// ===== STATUS FILTER =====
+function wtFilter(type, btn) {
+    document.querySelectorAll('.wt-filters .wt-chip').forEach(function(c) { c.classList.remove('wt-chip--active'); });
+    btn.classList.add('wt-chip--active');
+    document.querySelectorAll('#wtGrid .wt-card').forEach(function(card) {
+        const done = card.dataset.done === '1';
+        const cls  = card.querySelector('.card-due')?.className || '';
+        let show = true;
+        if (type === 'active')  show = !done;
+        else if (type === 'overdue') show = !done && cls.includes('due--overdue');
+        else if (type === 'done') show = done;
+        card.style.display = show ? '' : 'none';
+    });
+}
+</script>
+{% endblock %}

@@ -4335,6 +4335,13 @@ kbd {
    ЭКСПОРТ
 ═══════════════════════════════════════ */
 
+.ws-section-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
 .ws-export-btn {
     display: inline-flex; align-items: center; gap: 4px;
     margin-left: auto;
@@ -4750,4 +4757,84 @@ kbd {
         width: 40px;
         height: 40px;
     }
+}
+
+/* ===== СВОДНАЯ ЛЕНТА ЗАДАЧ ПО WORKSPACE (Must №41) ===== */
+
+.wt-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 22px;
+}
+
+.wt-header-title {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--text-1);
+    letter-spacing: -0.02em;
+}
+
+.wt-header-count {
+    font-size: 12px;
+    color: #6b778c;
+}
+
+.wt-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 18px;
+}
+
+.wt-chip {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    background: #fff;
+    color: #5e6c84;
+    border: 1px solid #dfe1e6;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.wt-chip:hover { background: #f4f5f7; }
+.wt-chip--active {
+    background: #1a1a1a;
+    color: #fff;
+    border-color: #1a1a1a;
+}
+
+.wt-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 14px;
+}
+
+.wt-card {
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.wt-source {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6b778c;
+}
+
+.wt-source-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+@media (max-width: 600px) {
+    .wt-grid { grid-template-columns: 1fr; }
 }

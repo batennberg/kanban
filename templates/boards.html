@@ -190,11 +190,18 @@
                          style="background: {{ first_board.workspace_color or '#1a1a1a' }}">{{ company[0].upper() }}</div>
                     <h2 class="ws-section-title">{{ company }}</h2>
                     {% if first_board.workspace_id %}
-                    <a href="/api/workspaces/{{ first_board.workspace_id }}/export"
-                       class="ws-export-btn" title="Экспорт в CSV">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        <span class="ws-export-label">CSV</span>
-                    </a>
+                    <div class="ws-section-actions">
+                        <a href="/workspace/{{ first_board.workspace_id }}/tasks"
+                           class="ws-export-btn" title="Сводная лента задач по всем доскам пространства">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                            <span class="ws-export-label">Лента задач</span>
+                        </a>
+                        <a href="/api/workspaces/{{ first_board.workspace_id }}/export"
+                           class="ws-export-btn" title="Экспорт в CSV">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            <span class="ws-export-label">CSV</span>
+                        </a>
+                    </div>
                     {% endif %}
                 </div>
                 <div class="ws-boards-grid">
