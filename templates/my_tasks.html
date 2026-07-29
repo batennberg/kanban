@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}{{ workspace.name }} — Лента задач — Almaly Kanban{% endblock %}
+{% block title %}Мои задачи — Almaly Kanban{% endblock %}
 
 {% block head %}
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
@@ -27,7 +27,7 @@
                 </svg>
                 Все доски
             </a>
-            <a href="/tasks/mine" class="ws-nav-item">
+            <a href="/tasks/mine" class="ws-nav-item ws-nav-item--active">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                     <circle cx="12" cy="7" r="4"/>
@@ -37,17 +37,6 @@
         </nav>
 
         <div class="ws-sidebar-divider"></div>
-
-        <div class="ws-workspaces-nav">
-            <p class="ws-workspaces-label">Лента задач по пространству</p>
-            {% for ws in workspaces %}
-            <a href="/workspace/{{ ws.id }}/tasks"
-               class="ws-workspace-item{% if ws.id == workspace.id %} ws-workspace-item--active{% endif %}">
-                <div class="ws-ws-icon" style="background: {{ ws.color }}">{{ ws.name[0].upper() }}</div>
-                <span class="ws-ws-name">{{ ws.name }}</span>
-            </a>
-            {% endfor %}
-        </div>
 
         <div class="ws-sidebar-footer">
             <div class="ws-sidebar-user">
@@ -114,10 +103,10 @@
         <!-- Task feed content -->
         <div class="ws-content" id="wsContent">
             <div class="wt-header">
-                <div class="ws-sec-icon" style="background: {{ workspace.color or '#1a1a1a' }}">{{ workspace.name[0].upper() }}</div>
+                <div class="ws-sec-icon" style="background:#1a1a1a">{{ user.name[0].upper() }}</div>
                 <div>
-                    <div class="wt-header-title">{{ workspace.name }} — сводная лента задач</div>
-                    <div class="wt-header-count">{{ cards | length }} задач(и) по {{ boards | length }} доск(ам)</div>
+                    <div class="wt-header-title">Мои задачи</div>
+                    <div class="wt-header-count">{{ cards | length }} задач(и) по всем доступным доскам, где вы участник</div>
                 </div>
             </div>
 
@@ -172,7 +161,7 @@
                     <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
                     <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
                 </svg>
-                <p>В этом пространстве пока нет задач</p>
+                <p>Вы пока не участник ни одной карточки</p>
             </div>
             {% endif %}
         </div>

@@ -528,6 +528,26 @@ def card_deep_link(card_id):
     return redirect(url_for('board', board_id=board_id, card=card_id))
 
 
+def _attach_card_extras(conn, rows):
+    """Добавляет labels и importance_color к строкам карточек (общая часть для сводных лент задач)."""
+    card_ids       = [r['id'] for r in rows]
+    labels_by_card = {}
+    if card_ids:
+        ph = ','.join('?' * len(card_ids))
+        for l in conn.execute(f'''
+            SELECT * FROM card_labels WHERE card_id IN ({ph}) ORDER BY position, id
+        ''', card_ids):
+            labels_by_card.setdefault(l['card_id'], []).append(dict(l))
+
+    cards = []
+    for r in rows:
+        c = dict(r)
+        c['labels']           = labels_by_card.get(c['id'], [])
+        c['importance_color'] = IMPORTANCE_COLORS.get(c.get('importance') or '', '')
+        cards.append(c)
+    return cards
+
+
 @app.route('/workspace/<int:ws_id>/tasks')
 def workspace_tasks(ws_id):
     """Сводный вид: карточки со всех доступных досок одного workspace одним списком (Must №41)."""
@@ -569,21 +589,7 @@ def workspace_tasks(ws_id):
                 ORDER BY (ca.due_date IS NULL OR ca.due_date=''), ca.completed,
                          substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)
             ''', ws_board_ids).fetchall()
-
-            card_ids       = [r['id'] for r in rows]
-            labels_by_card = {}
-            if card_ids:
-                ph2 = ','.join('?' * len(card_ids))
-                for l in conn.execute(f'''
-                    SELECT * FROM card_labels WHERE card_id IN ({ph2}) ORDER BY position, id
-                ''', card_ids):
-                    labels_by_card.setdefault(l['card_id'], []).append(dict(l))
-
-            for r in rows:
-                c = dict(r)
-                c['labels']           = labels_by_card.get(c['id'], [])
-                c['importance_color'] = IMPORTANCE_COLORS.get(c.get('importance') or '', '')
-                cards.append(c)
+            cards = _attach_card_extras(conn, rows)
 
     return render_template('workspace_tasks.html',
                             workspace=dict(ws),
@@ -591,6 +597,40 @@ def workspace_tasks(ws_id):
                             boards=ws_boards,
                             cards=cards,
                             user=session['user'])
+
+
+@app.route('/tasks/mine')
+def my_tasks():
+    """Личный вид «Мои задачи»: карточки, где я участник, через все доступные доски (Must №42)."""
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    board_ids  = _get_board_ids()
+    user_email = session['user']['email']
+
+    cards = []
+    if board_ids is None or len(board_ids) > 0:
+        with get_db() as conn:
+            sql = '''
+                SELECT ca.*, co.name AS column_name, b.name AS board_name, b.color AS board_color
+                FROM cards ca
+                JOIN columns co ON co.id = ca.column_id
+                JOIN boards b ON b.id = co.board_id
+                JOIN card_members cm ON cm.card_id = ca.id
+                WHERE cm.user_email=? AND (ca.archived=0 OR ca.archived IS NULL)
+            '''
+            params = [user_email]
+            if board_ids is not None:
+                ph   = ','.join('?' * len(board_ids))
+                sql += f' AND b.id IN ({ph})'
+                params += board_ids
+            sql += '''
+                ORDER BY (ca.due_date IS NULL OR ca.due_date=''), ca.completed,
+                         substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)
+            '''
+            rows  = conn.execute(sql, params).fetchall()
+            cards = _attach_card_extras(conn, rows)
+
+    return render_template('my_tasks.html', cards=cards, user=session['user'])
 
 
 # ===== API — BOARDS =====
