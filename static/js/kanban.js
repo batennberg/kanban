@@ -2685,36 +2685,37 @@ window.openMembersPopover = async function() {
     if (!currentCardDbId) return;
     openPopover('Участники', '<div class="mp-loading">Загрузка...</div>');
 
-    let cardMembers = [];
-    let allUsers    = [];
+    let cardMembers   = [];
+    let boardMembers  = [];
+    const boardId = _getBoardId();
 
     try {
-        const [mRes, uRes] = await Promise.all([
+        const [mRes, bRes] = await Promise.all([
             fetch(`/api/cards/${currentCardDbId}/members`),
-            fetch('/api/users')
+            boardId ? fetch(`/api/boards/${boardId}/members`) : Promise.resolve(null)
         ]);
-        if (mRes.ok) cardMembers = await mRes.json();
-        if (uRes.ok) allUsers    = await uRes.json();
+        if (mRes.ok) cardMembers  = await mRes.json();
+        if (bRes && bRes.ok) boardMembers = await bRes.json();
     } catch (err) {
         console.error('openMembersPopover error:', err);
     }
 
     const assignedEmails = new Set(cardMembers.map(m => m.user_email));
 
-    // Если /api/users недоступен (не-admin) — показываем только назначенных
-    const users = allUsers.length
-        ? allUsers
+    // Список кандидатов — участники доски (у кого есть доступ); если почему-то
+    // не удалось загрузить — хотя бы показываем уже назначенных на карточку
+    const users = boardMembers.length
+        ? boardMembers
         : cardMembers.map(m => ({ email: m.user_email, name: m.user_name }));
 
     const body = document.getElementById('cspBody');
     body.innerHTML = '';
 
     if (!users.length) {
-        body.innerHTML = '<p class="bl-empty">Нет пользователей</p>';
+        body.innerHTML = '<p class="bl-empty">Нет пользователей с доступом к доске</p>';
         return;
     }
 
-    const isAdmin = allUsers.length > 0;  // если смогли загрузить /api/users — пользователь admin
     users.forEach(u => {
         const email = u.email || u.user_email || '';
         const name  = u.name  || u.user_name  || email;
@@ -2735,28 +2736,21 @@ window.openMembersPopover = async function() {
         row.appendChild(av);
         row.appendChild(info);
 
-        if (isAdmin) {
-            const lbl    = document.createElement('label');
-            lbl.className = 'mp-toggle';
-            const chk    = document.createElement('input');
-            chk.type     = 'checkbox';
-            chk.checked  = isAssigned;
-            chk.dataset.email = email;
-            chk.dataset.name  = name;
-            chk.onchange = function() {
-                toggleCardMember(currentCardDbId, this.dataset.email, this.dataset.name, this.checked);
-            };
-            const slider = document.createElement('span');
-            slider.className = 'mp-slider';
-            lbl.appendChild(chk);
-            lbl.appendChild(slider);
-            row.appendChild(lbl);
-        } else if (isAssigned) {
-            const check = document.createElement('span');
-            check.className = 'mp-check';
-            check.textContent = '✓';
-            row.appendChild(check);
-        }
+        const lbl    = document.createElement('label');
+        lbl.className = 'mp-toggle';
+        const chk    = document.createElement('input');
+        chk.type     = 'checkbox';
+        chk.checked  = isAssigned;
+        chk.dataset.email = email;
+        chk.dataset.name  = name;
+        chk.onchange = function() {
+            toggleCardMember(currentCardDbId, this.dataset.email, this.dataset.name, this.checked);
+        };
+        const slider = document.createElement('span');
+        slider.className = 'mp-slider';
+        lbl.appendChild(chk);
+        lbl.appendChild(slider);
+        row.appendChild(lbl);
 
         body.appendChild(row);
     });
