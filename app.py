@@ -994,10 +994,17 @@ def api_get_board_members(board_id):
     if board_ids is not None and board_id not in board_ids:
         return jsonify({'error': 'forbidden'}), 403
 
+    # Обычный пользователь не должен видеть admin-ов как участников доски —
+    # только тех, кому явно выдан доступ. Admin по-прежнему видит и себя, и всех остальных.
+    viewer_is_admin = session['user'].get('role') == 'admin'
+
     from sheets import is_configured, get_all_users, get_board_ids as sheets_get_board_ids
     if is_configured():
         result = []
         for u in get_all_users():
+            target_role = str(u.get('Роль', 'user')).strip().lower()
+            if not viewer_is_admin and target_role == 'admin':
+                continue
             ids = sheets_get_board_ids(u)
             if ids is None or board_id in ids:
                 email = str(u.get('Email', '')).strip().lower()
@@ -1005,13 +1012,22 @@ def api_get_board_members(board_id):
         return jsonify(result)
 
     with get_db() as conn:
-        rows = conn.execute('''
-            SELECT DISTINCT u.email, u.name
-            FROM users u
-            LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = ?
-            WHERE u.role = 'admin' OR ba.user_id IS NOT NULL
-            ORDER BY u.name
-        ''', (board_id,)).fetchall()
+        if viewer_is_admin:
+            rows = conn.execute('''
+                SELECT DISTINCT u.email, u.name
+                FROM users u
+                LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = ?
+                WHERE u.role = 'admin' OR ba.user_id IS NOT NULL
+                ORDER BY u.name
+            ''', (board_id,)).fetchall()
+        else:
+            rows = conn.execute('''
+                SELECT DISTINCT u.email, u.name
+                FROM users u
+                JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = ?
+                WHERE u.role != 'admin'
+                ORDER BY u.name
+            ''', (board_id,)).fetchall()
     return jsonify([dict(r) for r in rows])
 
 
