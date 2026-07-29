@@ -48,6 +48,42 @@ function updateColumnCounts() {
     });
 }
 
+// ===== СВОРАЧИВАНИЕ КОЛОНОК =====
+
+function collapsedColsStorageKey() {
+    const boardId = document.getElementById('boardColumns')?.dataset.boardId;
+    return `kanban_collapsed_cols_${boardId}`;
+}
+
+function saveColumnCollapseState(colId, collapsed) {
+    const key = collapsedColsStorageKey();
+    const ids = new Set(JSON.parse(localStorage.getItem(key) || '[]'));
+    if (collapsed) ids.add(String(colId)); else ids.delete(String(colId));
+    localStorage.setItem(key, JSON.stringify([...ids]));
+}
+
+window.toggleColumnCollapse = function(e, btn) {
+    e.stopPropagation();
+    const col = btn.closest('.column');
+    if (!col) return;
+    const collapsed = col.classList.toggle('column--collapsed');
+    btn.textContent = collapsed ? '›' : '‹';
+    btn.title = collapsed ? 'Развернуть список' : 'Свернуть список';
+    saveColumnCollapseState(col.dataset.colId, collapsed);
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+    const key = collapsedColsStorageKey();
+    const ids = new Set(JSON.parse(localStorage.getItem(key) || '[]'));
+    ids.forEach(function(colId) {
+        const col = document.querySelector(`.column[data-col-id="${colId}"]`);
+        if (!col) return;
+        col.classList.add('column--collapsed');
+        const btn = col.querySelector('.column-collapse-btn');
+        if (btn) { btn.textContent = '›'; btn.title = 'Развернуть список'; }
+    });
+});
+
 function persistOrder() {
     const cards = [];
     document.querySelectorAll('.cards-list').forEach(list => {
@@ -185,6 +221,7 @@ window.inlineColSave = async function() {
     col.dataset.colId = colId;
     col.innerHTML = `
         <div class="column-header">
+            <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список">‹</button>
             <h3 class="column-title" onclick="startRenameColumn(this)"
                 title="Нажмите для переименования">${escHtml(name)}</h3>
             <span class="column-count">0</span>
@@ -2537,6 +2574,7 @@ window.colMenuDuplicate = async function() {
     col.dataset.colId = data.id;
     col.innerHTML = `
         <div class="column-header">
+            <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список">‹</button>
             <h3 class="column-title" onclick="startRenameColumn(this)"
                 title="Нажмите для переименования">${escHtml(data.name)}</h3>
             <span class="column-count">0</span>

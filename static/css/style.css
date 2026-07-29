@@ -996,6 +996,50 @@ input { font-family: inherit; }
 
 .column-menu-btn:hover { background: rgba(0,0,0,0.1); }
 
+.column-collapse-btn {
+    color: #5e6c84;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 5px;
+    border-radius: 4px;
+    transition: background 0.15s;
+    flex-shrink: 0;
+}
+
+.column-collapse-btn:hover { background: rgba(0,0,0,0.1); }
+
+/* Свёрнутая колонка — узкая полоса с вертикальным заголовком */
+.column--collapsed {
+    width: 44px;
+    min-width: 44px;
+    padding: 10px 4px;
+}
+
+.column--collapsed .column-header {
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    padding: 4px 0;
+    gap: 10px;
+}
+
+.column--collapsed .column-title {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-height: 60vh;
+    flex: none;
+}
+
+.column--collapsed .column-menu-btn,
+.column--collapsed .cards-list,
+.column--collapsed .inline-add-card,
+.column--collapsed .btn-add-card {
+    display: none !important;
+}
+
 .cards-list {
     flex: 1;
     overflow-y: auto;

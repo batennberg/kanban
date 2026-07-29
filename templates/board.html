@@ -272,6 +272,7 @@
             {% for col in board.columns %}
             <div class="column" id="column-{{ col.id }}" data-col-id="{{ col.id }}">
                 <div class="column-header">
+                    <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список">‹</button>
                     <h3 class="column-title"
                         onclick="startRenameColumn(this)"
                         title="Нажмите для переименования">{{ col.name }}</h3>
