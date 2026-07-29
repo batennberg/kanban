@@ -2334,7 +2334,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // ===== FILTER BAR =====
 
-let activeFilters = { labels: new Set(), due: null, done: null, customFields: new Set(), members: new Set() };
+let activeFilters = { labels: new Set(), importance: new Set(), due: null, done: null, customFields: new Set(), members: new Set() };
 
 window.toggleFiltersPanel = function() {
     const bar = document.getElementById('filterBar');
@@ -2345,6 +2345,7 @@ window.toggleFiltersPanel = function() {
         document.getElementById('btnFilters')?.classList.remove('btn-board-action--active');
     } else {
         buildLabelChips();
+        buildImportanceChips();
         buildCustomFieldChips();
         buildMemberChips();
         bar.style.display = '';
@@ -2381,6 +2382,43 @@ function buildLabelChips() {
                 btn.classList.remove('fb-chip--active');
             } else {
                 activeFilters.labels.add(text);
+                btn.classList.add('fb-chip--active');
+            }
+            applyFilters();
+        };
+        container.appendChild(btn);
+    });
+}
+
+function buildImportanceChips() {
+    const levels = new Map();
+    document.querySelectorAll('.card-importance').forEach(el => {
+        const text  = el.textContent.trim();
+        const color = el.style.color;
+        if (text && color) levels.set(text, color);
+    });
+
+    const container = document.getElementById('fbImportanceChips');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!levels.size) {
+        container.innerHTML = '<span class="fb-no-labels">Нет важности</span>';
+        return;
+    }
+    levels.forEach((color, text) => {
+        const btn = document.createElement('button');
+        btn.className = 'fb-chip fb-chip--label';
+        btn.dataset.filterImportance = text;
+        btn.style.setProperty('--lc', color);
+        btn.textContent = text;
+        if (activeFilters.importance.has(text)) btn.classList.add('fb-chip--active');
+        btn.onclick = () => {
+            if (activeFilters.importance.has(text)) {
+                activeFilters.importance.delete(text);
+                btn.classList.remove('fb-chip--active');
+            } else {
+                activeFilters.importance.add(text);
                 btn.classList.add('fb-chip--active');
             }
             applyFilters();
@@ -2490,8 +2528,8 @@ window.toggleDoneFilter = function(btn) {
 };
 
 function applyFilters() {
-    const { labels, due, done, customFields, members } = activeFilters;
-    const hasAny = labels.size > 0 || due || done || customFields.size > 0 || members.size > 0;
+    const { labels, importance, due, done, customFields, members } = activeFilters;
+    const hasAny = labels.size > 0 || importance.size > 0 || due || done || customFields.size > 0 || members.size > 0;
 
     document.querySelectorAll('.card').forEach(card => {
         let show = true;
@@ -2499,6 +2537,11 @@ function applyFilters() {
         if (labels.size > 0) {
             const cardLabelTexts = [...card.querySelectorAll('.card-label')].map(el => el.textContent.trim());
             show = show && cardLabelTexts.some(text => labels.has(text));
+        }
+
+        if (importance.size > 0) {
+            const cardImportanceText = card.querySelector('.card-importance')?.textContent.trim() || '';
+            show = show && importance.has(cardImportanceText);
         }
 
         if (members.size > 0) {
@@ -2539,7 +2582,7 @@ function applyFilters() {
 }
 
 window.clearFilters = function() {
-    activeFilters = { labels: new Set(), due: null, done: null, customFields: new Set(), members: new Set() };
+    activeFilters = { labels: new Set(), importance: new Set(), due: null, done: null, customFields: new Set(), members: new Set() };
     document.querySelectorAll('.fb-chip').forEach(b => b.classList.remove('fb-chip--active'));
     document.querySelectorAll('.card').forEach(c => c.style.display = '');
     document.getElementById('btnFilters')?.classList.remove('btn-board-action--active');
