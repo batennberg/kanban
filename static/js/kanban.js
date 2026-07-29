@@ -159,6 +159,7 @@ function appendCardToDOM(card, colId) {
     el.id           = 'card-' + card.id;
     el.draggable    = true;
     el.dataset.cardId = card.id;
+    el.dataset.members = (card.members || []).map(m => `${m.user_email}::${m.user_name}`).join('|');
     el.onclick      = (e) => openCardModal(e, el);
 
     let html = `<button class="card-check-btn" onclick="toggleComplete(event, this)" title="Отметить выполненной">✓</button>`;
@@ -2333,7 +2334,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // ===== FILTER BAR =====
 
-let activeFilters = { labels: new Set(), due: null, done: null, customFields: new Set() };
+let activeFilters = { labels: new Set(), due: null, done: null, customFields: new Set(), members: new Set() };
 
 window.toggleFiltersPanel = function() {
     const bar = document.getElementById('filterBar');
@@ -2345,6 +2346,7 @@ window.toggleFiltersPanel = function() {
     } else {
         buildLabelChips();
         buildCustomFieldChips();
+        buildMemberChips();
         bar.style.display = '';
         document.getElementById('btnFilters')?.classList.add('btn-board-action--active');
     }
@@ -2422,6 +2424,45 @@ function buildCustomFieldChips() {
     });
 }
 
+function buildMemberChips() {
+    const members = new Map(); // email -> name
+    document.querySelectorAll('.card[data-members]').forEach(card => {
+        const raw = card.dataset.members;
+        if (!raw) return;
+        raw.split('|').forEach(pair => {
+            const [email, name] = pair.split('::');
+            if (email) members.set(email, name || email);
+        });
+    });
+
+    const container = document.getElementById('fbMemberChips');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!members.size) {
+        container.innerHTML = '<span class="fb-no-labels">Нет участников</span>';
+        return;
+    }
+    members.forEach((name, email) => {
+        const btn = document.createElement('button');
+        btn.className = 'fb-chip';
+        btn.dataset.filterMember = email;
+        btn.textContent = name;
+        if (activeFilters.members.has(email)) btn.classList.add('fb-chip--active');
+        btn.onclick = () => {
+            if (activeFilters.members.has(email)) {
+                activeFilters.members.delete(email);
+                btn.classList.remove('fb-chip--active');
+            } else {
+                activeFilters.members.add(email);
+                btn.classList.add('fb-chip--active');
+            }
+            applyFilters();
+        };
+        container.appendChild(btn);
+    });
+}
+
 window.toggleDueFilter = function(btn) {
     const val = btn.dataset.filterDue;
     if (activeFilters.due === val) {
@@ -2449,8 +2490,8 @@ window.toggleDoneFilter = function(btn) {
 };
 
 function applyFilters() {
-    const { labels, due, done, customFields } = activeFilters;
-    const hasAny = labels.size > 0 || due || done || customFields.size > 0;
+    const { labels, due, done, customFields, members } = activeFilters;
+    const hasAny = labels.size > 0 || due || done || customFields.size > 0 || members.size > 0;
 
     document.querySelectorAll('.card').forEach(card => {
         let show = true;
@@ -2458,6 +2499,12 @@ function applyFilters() {
         if (labels.size > 0) {
             const cardLabelTexts = [...card.querySelectorAll('.card-label')].map(el => el.textContent.trim());
             show = show && cardLabelTexts.some(text => labels.has(text));
+        }
+
+        if (members.size > 0) {
+            const cardMemberEmails = (card.dataset.members || '').split('|')
+                .map(pair => pair.split('::')[0]).filter(Boolean);
+            show = show && cardMemberEmails.some(email => members.has(email));
         }
 
         if (customFields.size > 0) {
@@ -2492,7 +2539,7 @@ function applyFilters() {
 }
 
 window.clearFilters = function() {
-    activeFilters = { labels: new Set(), due: null, done: null, customFields: new Set() };
+    activeFilters = { labels: new Set(), due: null, done: null, customFields: new Set(), members: new Set() };
     document.querySelectorAll('.fb-chip').forEach(b => b.classList.remove('fb-chip--active'));
     document.querySelectorAll('.card').forEach(c => c.style.display = '');
     document.getElementById('btnFilters')?.classList.remove('btn-board-action--active');
@@ -2726,6 +2773,14 @@ window.toggleCardMember = async function(cardId, email, name, assign) {
         await fetch(`/api/cards/${cardId}/members/${encodeURIComponent(email)}`, { method: 'DELETE' });
     }
     if (currentCardDbId === cardId) renderCardMembersInMeta(cardId);
+
+    const cardEl = document.getElementById('card-' + cardId);
+    if (cardEl) {
+        let pairs = (cardEl.dataset.members || '').split('|').filter(Boolean);
+        pairs = pairs.filter(p => p.split('::')[0] !== email);
+        if (assign) pairs.push(`${email}::${name || email}`);
+        cardEl.dataset.members = pairs.join('|');
+    }
 };
 
 async function renderCardMembersInMeta(cardId) {

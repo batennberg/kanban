@@ -124,6 +124,10 @@
             <button class="fb-chip" data-filter-done="active" onclick="toggleDoneFilter(this)">Активные</button>
             <button class="fb-chip" data-filter-done="done" onclick="toggleDoneFilter(this)">Выполненные</button>
         </div>
+        <div class="fb-section">
+            <span class="fb-label">Участник</span>
+            <div id="fbMemberChips" class="fb-chips"></div>
+        </div>
         <div class="fb-section" id="fbCustomFieldsSection" style="display:none">
             <span class="fb-label">Поля</span>
             <div id="fbCustomFieldChips" class="fb-chips"></div>
@@ -285,6 +289,7 @@
                          id="card-{{ card.id }}"
                          data-card-id="{{ card.id }}"
                          data-linked-board-id="{{ card.linked_board_id or '' }}"
+                         data-members="{% for m in card.members %}{{ m.user_email }}::{{ m.user_name }}{% if not loop.last %}|{% endif %}{% endfor %}"
                          draggable="true"
                          onclick="openCardModal(event, this)">
                         {% if card.cover_color %}

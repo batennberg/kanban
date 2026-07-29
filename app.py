@@ -471,6 +471,15 @@ def board(board_id):
         ''', (board_id,)):
             labels_by_card.setdefault(l['card_id'], []).append(dict(l))
 
+        members_by_card = {}
+        for m in conn.execute('''
+            SELECT cm.card_id, cm.user_email, cm.user_name FROM card_members cm
+            JOIN cards ca ON ca.id = cm.card_id
+            JOIN columns co ON co.id = ca.column_id
+            WHERE co.board_id=? ORDER BY cm.id
+        ''', (board_id,)):
+            members_by_card.setdefault(m['card_id'], []).append(dict(m))
+
         custom_field_defs = [dict(f) for f in conn.execute(
             'SELECT * FROM custom_fields WHERE board_id=? ORDER BY position, id', (board_id,)
         )]
@@ -499,6 +508,7 @@ def board(board_id):
             ):
                 card_dict = dict(c)
                 card_dict['labels'] = labels_by_card.get(c['id'], [])
+                card_dict['members'] = members_by_card.get(c['id'], [])
                 card_dict['importance_color'] = IMPORTANCE_COLORS.get(card_dict.get('importance') or '', '')
                 card_cf_values = cf_values_by_card.get(c['id'], {})
                 card_dict['custom_fields'] = [
