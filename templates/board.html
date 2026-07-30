@@ -279,6 +279,7 @@
     <!-- ===== COLUMN MENU DROPDOWN ===== -->
     <div id="colMenuDropdown" class="col-menu-dd" style="display:none">
         <button class="col-menu-item" onclick="colMenuRename()">Переименовать</button>
+        <button class="col-menu-item" onclick="colMenuSetWipLimit()">WIP-лимит</button>
         <div class="col-menu-sep"></div>
         <button class="col-menu-item" onclick="colMenuSort('name')">Сортировать А→Я</button>
         <button class="col-menu-item" onclick="colMenuSort('due')">Сортировать по сроку</button>
@@ -295,13 +296,15 @@
     <div class="board-columns-wrap">
         <div class="board-columns" id="boardColumns" data-board-id="{{ board_id }}" data-user-role="{{ user.role }}">
             {% for col in board.columns %}
-            <div class="column" id="column-{{ col.id }}" data-col-id="{{ col.id }}">
+            <div class="column{% if col.wip_limit and col.cards | length > col.wip_limit %} column--wip-over{% endif %}"
+                 id="column-{{ col.id }}" data-col-id="{{ col.id }}" data-wip-limit="{{ col.wip_limit or 0 }}">
                 <div class="column-header">
                     <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список">‹</button>
                     <h3 class="column-title"
                         onclick="startRenameColumn(this)"
                         title="Нажмите для переименования">{{ col.name }}</h3>
-                    <span class="column-count">{{ col.cards | length }}</span>
+                    <span class="column-count{% if col.wip_limit and col.cards | length > col.wip_limit %} column-count--over{% endif %}"
+                          title="{% if col.wip_limit %}Лимит: {{ col.wip_limit }} карточек{% endif %}">{{ col.cards | length }}{% if col.wip_limit %}/{{ col.wip_limit }}{% endif %}</span>
                     <button class="column-menu-btn" onclick="openColumnMenu(event, this)" title="Меню">⋯</button>
                 </div>
                 <div class="cards-list" id="cards-{{ col.id }}" data-col-id="{{ col.id }}">

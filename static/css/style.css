@@ -1002,6 +1002,16 @@ input { font-family: inherit; }
     letter-spacing: 0.02em;
 }
 
+/* WIP-лимит превышен (Should №36) */
+.column-count--over {
+    background: #ffebe6;
+    color: #de350b;
+}
+
+.column--wip-over {
+    box-shadow: 0 0 0 2px #de350b, 0 6px 32px rgba(0,0,0,0.07);
+}
+
 .column-menu-btn {
     color: #5e6c84;
     font-size: 18px;

@@ -328,8 +328,8 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
 def _duplicate_column(conn, src_col_id, target_board_id, position, name_suffix='', field_id_map=None):
     src = conn.execute('SELECT * FROM columns WHERE id=?', (src_col_id,)).fetchone()
     cur = conn.execute(
-        'INSERT INTO columns (board_id, name, position) VALUES (?,?,?)',
-        (target_board_id, src['name'] + name_suffix, position)
+        'INSERT INTO columns (board_id, name, position, wip_limit) VALUES (?,?,?,?)',
+        (target_board_id, src['name'] + name_suffix, position, src['wip_limit'] or 0)
     )
     new_col_id = cur.lastrowid
     cards = conn.execute(
@@ -2336,11 +2336,26 @@ def api_reorder_columns():
 
 @app.route('/api/columns/<int:col_id>', methods=['PUT'])
 def api_update_column(col_id):
+    """Переименование и/или WIP-лимит колонки (Should №36) — оба поля необязательны и независимы."""
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
-    name = request.get_json().get('name', '').strip()
-    if not name: return jsonify({'error': 'name required'}), 400
+    d = request.get_json() or {}
+    fields, values = [], []
+    if 'name' in d:
+        name = (d.get('name') or '').strip()
+        if not name: return jsonify({'error': 'name required'}), 400
+        fields.append('name=?'); values.append(name)
+    if 'wip_limit' in d:
+        wip_limit = d.get('wip_limit')
+        try:
+            wip_limit = max(0, int(wip_limit)) if wip_limit not in (None, '') else 0
+        except (TypeError, ValueError):
+            return jsonify({'error': 'invalid wip_limit'}), 400
+        fields.append('wip_limit=?'); values.append(wip_limit)
+    if not fields:
+        return jsonify({'error': 'nothing to update'}), 400
+    values.append(col_id)
     with get_db() as conn:
-        conn.execute('UPDATE columns SET name=? WHERE id=?', (name, col_id))
+        conn.execute(f'UPDATE columns SET {",".join(fields)} WHERE id=?', values)
     return jsonify({'ok': True})
 
 
@@ -2605,6 +2620,7 @@ def migrate_db():
             'ALTER TABLE cards ADD COLUMN importance       TEXT    DEFAULT ""',
             'ALTER TABLE columns ADD COLUMN archived       INTEGER DEFAULT 0',
             'ALTER TABLE columns ADD COLUMN archived_at    TEXT',
+            'ALTER TABLE columns ADD COLUMN wip_limit      INTEGER DEFAULT 0',
             '''CREATE TABLE IF NOT EXISTS card_members (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,

@@ -57,8 +57,16 @@ function updateColumnCounts() {
     document.querySelectorAll('.column').forEach(col => {
         const counter = col.querySelector('.column-count');
         const list    = col.querySelector('.cards-list');
-        if (counter && list) counter.textContent = list.querySelectorAll('.card').length;
+        if (counter && list) _setColumnCountDisplay(col, counter, list.querySelectorAll('.card').length);
     });
+}
+
+// WIP-лимит (Should №36) — общий рендер счётчика «N» / «N/лимит» с классом переполнения
+function _setColumnCountDisplay(col, counter, count) {
+    const limit = parseInt(col.dataset.wipLimit || '0');
+    counter.textContent = limit ? `${count}/${limit}` : String(count);
+    counter.classList.toggle('column-count--over', !!limit && count > limit);
+    col.classList.toggle('column--wip-over', !!limit && count > limit);
 }
 
 // ===== СВОРАЧИВАНИЕ КОЛОНОК =====
@@ -230,9 +238,10 @@ window.inlineColSave = async function() {
     const colId = data.id;
 
     const col = document.createElement('div');
-    col.className     = 'column';
-    col.id            = 'column-' + colId;
-    col.dataset.colId = colId;
+    col.className        = 'column';
+    col.id                = 'column-' + colId;
+    col.dataset.colId     = colId;
+    col.dataset.wipLimit  = 0;
     col.innerHTML = `
         <div class="column-header">
             <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список">‹</button>
@@ -2941,7 +2950,7 @@ function applyFilters() {
         const list    = col.querySelector('.cards-list');
         if (counter && list) {
             const visible = [...list.querySelectorAll('.card')].filter(c => c.style.display !== 'none').length;
-            counter.textContent = visible;
+            _setColumnCountDisplay(col, counter, visible);
         }
     });
 }
@@ -3014,6 +3023,30 @@ window.colMenuRename = function() {
     if (h3) startRenameColumn(h3);
 };
 
+window.colMenuSetWipLimit = async function() {
+    document.getElementById('colMenuDropdown').style.display = 'none';
+    const colId = colMenuTargetId;
+    const col   = document.querySelector(`.column[data-col-id="${colId}"]`);
+    if (!col) return;
+
+    const current = parseInt(col.dataset.wipLimit || '0');
+    const input = prompt('WIP-лимит для этой колонки (0 — без лимита):', current || '');
+    if (input === null) return;
+    const limit = Math.max(0, parseInt(input) || 0);
+
+    const res = await fetch(`/api/columns/${colId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wip_limit: limit })
+    });
+    if (!res.ok) { showToast('Не удалось обновить лимит', 'error'); return; }
+
+    col.dataset.wipLimit = limit;
+    const counter = col.querySelector('.column-count');
+    const list    = col.querySelector('.cards-list');
+    if (counter && list) _setColumnCountDisplay(col, counter, list.querySelectorAll('.card').length);
+    showToast(limit ? `Лимит установлен: ${limit}` : 'Лимит снят');
+};
+
 window.colMenuDuplicate = async function() {
     document.getElementById('colMenuDropdown').style.display = 'none';
     const colId = colMenuTargetId;
@@ -3024,9 +3057,10 @@ window.colMenuDuplicate = async function() {
     const data = await res.json();
 
     const col = document.createElement('div');
-    col.className     = 'column';
-    col.id            = 'column-' + data.id;
-    col.dataset.colId = data.id;
+    col.className        = 'column';
+    col.id                = 'column-' + data.id;
+    col.dataset.colId     = data.id;
+    col.dataset.wipLimit  = data.wip_limit || 0;
     col.innerHTML = `
         <div class="column-header">
             <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список">‹</button>
