@@ -778,6 +778,7 @@ def api_create_board():
     workspace_id = d.get('workspace_id')
     color        = d.get('color', '#0052cc')
     description  = d.get('description', '')
+    template_id  = d.get('template_id')
     with get_db() as conn:
         company = ''
         ws_color = color
@@ -791,11 +792,82 @@ def api_create_board():
             (name, company, color, workspace_id, description)
         )
         bid = cur.lastrowid
+
+        # Из шаблона доски (Should №9) — переносим колонки и кастомные поля, без карточек
+        if template_id:
+            for col in conn.execute(
+                'SELECT * FROM board_template_columns WHERE template_id=? ORDER BY position', (template_id,)
+            ):
+                conn.execute(
+                    'INSERT INTO columns (board_id, name, position) VALUES (?,?,?)',
+                    (bid, col['name'], col['position'])
+                )
+            for f in conn.execute(
+                'SELECT * FROM board_template_custom_fields WHERE template_id=? ORDER BY position', (template_id,)
+            ):
+                conn.execute(
+                    '''INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position)
+                       VALUES (?,?,?,?,?,?)''',
+                    (bid, f['name'], f['type'], f['options'], f['show_on_card'], f['position'])
+                )
     return jsonify({
         'id': bid, 'name': name, 'company': company,
         'color': color, 'workspace_id': workspace_id,
         'workspace_color': ws_color
     })
+
+
+@app.route('/api/board-templates', methods=['GET'])
+def api_get_board_templates():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute('''
+            SELECT bt.id, bt.name,
+                   (SELECT COUNT(*) FROM board_template_columns WHERE template_id=bt.id) AS column_count
+            FROM board_templates bt
+            ORDER BY bt.name
+        ''').fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/boards/<int:board_id>/save-as-template', methods=['POST'])
+def api_save_board_as_template(board_id):
+    """Сохраняет структуру доски (колонки + кастомные поля, без карточек) как шаблон
+    для создания новых досок (Should №9)."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    name = (request.get_json() or {}).get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'name required'}), 400
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        cur = conn.execute('INSERT INTO board_templates (name) VALUES (?)', (name,))
+        template_id = cur.lastrowid
+
+        for col in conn.execute(
+            'SELECT * FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
+            (board_id,)
+        ):
+            conn.execute(
+                'INSERT INTO board_template_columns (template_id, name, position) VALUES (?,?,?)',
+                (template_id, col['name'], col['position'])
+            )
+        for f in conn.execute('SELECT * FROM custom_fields WHERE board_id=? ORDER BY position', (board_id,)):
+            conn.execute(
+                '''INSERT INTO board_template_custom_fields
+                   (template_id, name, type, options, show_on_card, position) VALUES (?,?,?,?,?,?)''',
+                (template_id, f['name'], f['type'], f['options'], f['show_on_card'], f['position'])
+            )
+    return jsonify({'id': template_id, 'name': name}), 201
+
+
+@app.route('/api/board-templates/<int:template_id>', methods=['DELETE'])
+def api_delete_board_template(template_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute('DELETE FROM board_templates WHERE id=?', (template_id,))
+    return jsonify({'ok': True})
 
 @app.route('/api/boards/<int:board_id>/duplicate', methods=['POST'])
 def api_duplicate_board(board_id):
@@ -1892,6 +1964,153 @@ def api_set_custom_field_value(card_id, field_id):
     return jsonify({'ok': True})
 
 
+# ===== API — CARD TEMPLATES (Should №10) =====
+
+@app.route('/api/boards/<int:board_id>/card-templates', methods=['GET'])
+def api_get_card_templates(board_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT id, name, title FROM card_templates WHERE board_id=? ORDER BY name', (board_id,)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/cards/<int:card_id>/save-as-template', methods=['POST'])
+def api_save_card_as_template(card_id):
+    """Сохраняет текущую карточку (название, описание, важность, метки, чек-листы,
+    значения кастомных полей) как переиспользуемый шаблон на доске этой карточки."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    name = (request.get_json() or {}).get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'name required'}), 400
+    with get_db() as conn:
+        card = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+        if not card:
+            return jsonify({'error': 'not found'}), 404
+        board_id = conn.execute(
+            'SELECT board_id FROM columns WHERE id=?', (card['column_id'],)
+        ).fetchone()['board_id']
+        board_ids = _get_board_ids()
+        if board_ids is not None and board_id not in board_ids:
+            return jsonify({'error': 'forbidden'}), 403
+
+        cur = conn.execute(
+            'INSERT INTO card_templates (board_id, name, title, description, importance) VALUES (?,?,?,?,?)',
+            (board_id, name, card['title'], card['description'], card['importance'])
+        )
+        template_id = cur.lastrowid
+
+        for lbl in conn.execute('SELECT * FROM card_labels WHERE card_id=? ORDER BY position', (card_id,)):
+            conn.execute(
+                'INSERT INTO card_template_labels (template_id, name, color) VALUES (?,?,?)',
+                (template_id, lbl['name'], lbl['color'])
+            )
+
+        for cl in conn.execute('SELECT * FROM checklists WHERE card_id=? ORDER BY position', (card_id,)):
+            cl_cur = conn.execute(
+                'INSERT INTO card_template_checklists (template_id, title, position) VALUES (?,?,?)',
+                (template_id, cl['title'], cl['position'])
+            )
+            new_tpl_cl_id = cl_cur.lastrowid
+            for item in conn.execute(
+                'SELECT * FROM checklist_items WHERE checklist_id=? ORDER BY position', (cl['id'],)
+            ):
+                conn.execute(
+                    'INSERT INTO card_template_checklist_items (template_checklist_id, text, position) VALUES (?,?,?)',
+                    (new_tpl_cl_id, item['text'], item['position'])
+                )
+
+        for v in conn.execute('SELECT * FROM card_custom_field_values WHERE card_id=?', (card_id,)):
+            conn.execute(
+                'INSERT INTO card_template_custom_fields (template_id, field_id, value) VALUES (?,?,?)',
+                (template_id, v['field_id'], v['value'])
+            )
+    return jsonify({'id': template_id, 'name': name}), 201
+
+
+@app.route('/api/card-templates/<int:template_id>/instantiate', methods=['POST'])
+def api_instantiate_card_template(template_id):
+    """Создаёт новую карточку в указанной колонке из шаблона — обратная операция к save-as-template."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    column_id = (request.get_json() or {}).get('column_id')
+    if not column_id:
+        return jsonify({'error': 'column_id required'}), 400
+    with get_db() as conn:
+        tpl = conn.execute('SELECT * FROM card_templates WHERE id=?', (template_id,)).fetchone()
+        if not tpl:
+            return jsonify({'error': 'not found'}), 404
+        col = conn.execute('SELECT board_id FROM columns WHERE id=?', (column_id,)).fetchone()
+        if not col:
+            return jsonify({'error': 'column not found'}), 404
+        board_ids = _get_board_ids()
+        if board_ids is not None and col['board_id'] not in board_ids:
+            return jsonify({'error': 'forbidden'}), 403
+
+        pos = conn.execute(
+            'SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=?', (column_id,)
+        ).fetchone()[0]
+        cur = conn.execute(
+            'INSERT INTO cards (column_id, title, description, importance, position) VALUES (?,?,?,?,?)',
+            (column_id, tpl['title'] or tpl['name'], tpl['description'], tpl['importance'], pos)
+        )
+        new_card_id = cur.lastrowid
+        _log_activity(conn, new_card_id, 'created')
+
+        for lbl in conn.execute('SELECT * FROM card_template_labels WHERE template_id=?', (template_id,)):
+            conn.execute(
+                'INSERT OR IGNORE INTO card_labels (card_id, name, color) VALUES (?,?,?)',
+                (new_card_id, lbl['name'], lbl['color'])
+            )
+
+        checklist_id_map = {}
+        for cl in conn.execute(
+            'SELECT * FROM card_template_checklists WHERE template_id=? ORDER BY position', (template_id,)
+        ):
+            new_cl = conn.execute(
+                'INSERT INTO checklists (card_id, title, position) VALUES (?,?,?)',
+                (new_card_id, cl['title'], cl['position'])
+            )
+            checklist_id_map[cl['id']] = new_cl.lastrowid
+        for item in conn.execute('''
+            SELECT ti.* FROM card_template_checklist_items ti
+            JOIN card_template_checklists tc ON tc.id = ti.template_checklist_id
+            WHERE tc.template_id=? ORDER BY ti.position
+        ''', (template_id,)):
+            new_cl_id = checklist_id_map.get(item['template_checklist_id'])
+            if new_cl_id:
+                conn.execute(
+                    'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (?,?,?,?)',
+                    (new_card_id, new_cl_id, item['text'], item['position'])
+                )
+
+        for v in conn.execute('SELECT * FROM card_template_custom_fields WHERE template_id=?', (template_id,)):
+            # переносим значение, только если кастомное поле всё ещё существует на доске
+            if conn.execute('SELECT 1 FROM custom_fields WHERE id=?', (v['field_id'],)).fetchone():
+                conn.execute(
+                    'INSERT INTO card_custom_field_values (card_id, field_id, value) VALUES (?,?,?)',
+                    (new_card_id, v['field_id'], v['value'])
+                )
+
+        card_dict = dict(conn.execute('SELECT * FROM cards WHERE id=?', (new_card_id,)).fetchone())
+        card_dict['labels'] = [dict(l) for l in conn.execute(
+            'SELECT * FROM card_labels WHERE card_id=? ORDER BY position, id', (new_card_id,)
+        )]
+        card_dict['importance_color'] = IMPORTANCE_COLORS.get(card_dict.get('importance') or '', '')
+    return jsonify(card_dict), 201
+
+
+@app.route('/api/card-templates/<int:template_id>', methods=['DELETE'])
+def api_delete_card_template(template_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute('DELETE FROM card_templates WHERE id=?', (template_id,))
+    return jsonify({'ok': True})
+
+
 # ===== API — CARD LINKS =====
 
 @app.route('/api/cards/<int:card_id>/links', methods=['GET'])
@@ -2456,6 +2675,79 @@ def migrate_db():
                 field_id INTEGER NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
                 value    TEXT    NOT NULL DEFAULT '',
                 UNIQUE(card_id, field_id)
+            )
+        ''')
+
+        # ── Шаблоны досок (Should №9) — глобальные, не привязаны к workspace ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS board_templates (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT    NOT NULL,
+                created_at TEXT    DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS board_template_columns (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL REFERENCES board_templates(id) ON DELETE CASCADE,
+                name        TEXT    NOT NULL,
+                position    INTEGER DEFAULT 0
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS board_template_custom_fields (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id  INTEGER NOT NULL REFERENCES board_templates(id) ON DELETE CASCADE,
+                name         TEXT    NOT NULL,
+                type         TEXT    NOT NULL,
+                options      TEXT    DEFAULT '',
+                show_on_card INTEGER DEFAULT 0,
+                position     INTEGER DEFAULT 0
+            )
+        ''')
+
+        # ── Шаблоны карточек (Should №10) ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_templates (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                name        TEXT    NOT NULL,
+                title       TEXT    NOT NULL DEFAULT '',
+                description TEXT    DEFAULT '',
+                importance  TEXT    DEFAULT '',
+                created_at  TEXT    DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_template_labels (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL REFERENCES card_templates(id) ON DELETE CASCADE,
+                name        TEXT    NOT NULL DEFAULT '',
+                color       TEXT    NOT NULL DEFAULT ''
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_template_checklists (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL REFERENCES card_templates(id) ON DELETE CASCADE,
+                title       TEXT    NOT NULL DEFAULT 'Чек-лист',
+                position    INTEGER DEFAULT 0
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_template_checklist_items (
+                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_checklist_id  INTEGER NOT NULL REFERENCES card_template_checklists(id) ON DELETE CASCADE,
+                text                   TEXT    NOT NULL,
+                position               INTEGER DEFAULT 0
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_template_custom_fields (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL REFERENCES card_templates(id) ON DELETE CASCADE,
+                field_id    INTEGER NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
+                value       TEXT    DEFAULT ''
             )
         ''')
 

@@ -726,6 +726,22 @@ input { font-family: inherit; }
 .col-menu-item--danger:hover { background: #fef2f2; }
 .col-menu-sep { height: 1px; background: #E8E7E3; margin: 3px 0; }
 
+#cardTemplateDropdown { min-width: 220px; max-width: 320px; max-height: 260px; overflow-y: auto; }
+.col-menu-item-row { display: flex; align-items: center; }
+.col-menu-item-del {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #9ca3af;
+    border-radius: 4px;
+    margin-right: 6px;
+    font-size: 11px;
+}
+.col-menu-item-del:hover { background: #fef2f2; color: #dc2626; }
+
 .btn-export-sheets { background: rgba(0,200,100,0.25); }
 .btn-export-sheets:hover { background: rgba(0,200,100,0.40); }
 .btn-export-sheets:disabled { opacity: 0.6; cursor: default; }

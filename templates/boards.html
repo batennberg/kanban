@@ -441,6 +441,12 @@
                 </select>
             </div>
             <div class="form-group">
+                <label>Шаблон доски</label>
+                <select id="newBoardTemplate" class="form-select">
+                    <option value="">Пустая доска</option>
+                </select>
+            </div>
+            <div class="form-group">
                 <label>Цвет</label>
                 <div class="color-picker" id="boardColorPicker">
                     <div class="color-option active" style="background:#0052cc" data-color="#0052cc"></div>
@@ -609,7 +615,7 @@ document.getElementById('accessModal').addEventListener('click', function(e) {
 // ===== BOARD CREATION =====
 let selectedBoardColor = '#0052cc';
 
-function showCreateModal() {
+async function showCreateModal() {
     document.getElementById('newBoardName').value = '';
     selectedBoardColor = '#0052cc';
     document.querySelectorAll('#boardColorPicker .color-option').forEach(o => o.classList.remove('active'));
@@ -621,6 +627,23 @@ function showCreateModal() {
     }
     document.getElementById('createModal').style.display = 'flex';
     setTimeout(() => document.getElementById('newBoardName').focus(), 50);
+
+    const tplSel = document.getElementById('newBoardTemplate');
+    if (tplSel) {
+        tplSel.innerHTML = '<option value="">Пустая доска</option>';
+        try {
+            const res = await fetch('/api/board-templates');
+            if (res.ok) {
+                const templates = await res.json();
+                templates.forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.id;
+                    opt.textContent = `${t.name} (${t.column_count} кол.)`;
+                    tplSel.appendChild(opt);
+                });
+            }
+        } catch (err) { console.error('showCreateModal templates error:', err); }
+    }
 }
 
 function hideCreateModal() {
@@ -630,6 +653,7 @@ function hideCreateModal() {
 async function saveBoard() {
     const name        = document.getElementById('newBoardName').value.trim();
     const workspaceId = parseInt(document.getElementById('newBoardWorkspace').value) || null;
+    const templateId  = parseInt(document.getElementById('newBoardTemplate')?.value) || null;
     if (!name) { document.getElementById('newBoardName').focus(); return; }
 
     const btn = document.getElementById('saveBoardBtn');
@@ -640,7 +664,7 @@ async function saveBoard() {
         const res   = await fetch('/api/boards', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, workspace_id: workspaceId, color: selectedBoardColor })
+            body: JSON.stringify({ name, workspace_id: workspaceId, color: selectedBoardColor, template_id: templateId })
         });
         const board = await res.json();
         hideCreateModal();

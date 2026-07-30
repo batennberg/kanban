@@ -1992,6 +1992,105 @@ window.copyChecklistFrom = async function(sourceChecklistId) {
     showToast('Чек-лист скопирован');
 };
 
+
+// ===== ШАБЛОНЫ КАРТОЧЕК (Should №10) =====
+
+window.openSaveAsTemplatePopover = function() {
+    if (!currentCardDbId) return;
+    openPopover('Сохранить как шаблон', `
+        <div class="csp-form-group">
+            <label class="csp-label">Название шаблона</label>
+            <input class="csp-input" id="tplNameInput" type="text" placeholder="Например: Онбординг сотрудника">
+        </div>
+        <p class="cm-empty-hint" style="margin-top:6px">В шаблон войдут название, описание, важность, метки, чек-листы и кастомные поля этой карточки.</p>
+        <button class="csp-btn csp-btn--primary" style="margin-top:8px" onclick="saveCardAsTemplate()">Сохранить</button>
+    `);
+    setTimeout(() => document.getElementById('tplNameInput')?.focus(), 50);
+};
+
+window.saveCardAsTemplate = async function() {
+    const input = document.getElementById('tplNameInput');
+    const name  = input?.value.trim();
+    if (!name || !currentCardDbId) return;
+    const res = await fetch(`/api/cards/${currentCardDbId}/save-as-template`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+    });
+    if (!res.ok) { showToast('Не удалось сохранить шаблон', 'error'); return; }
+    closePopover();
+    showToast('Шаблон сохранён');
+};
+
+let cardTemplateTargetColId = null;
+
+window.openCardTemplatePicker = function(e, colId) {
+    e.stopPropagation();
+    cardTemplateTargetColId = colId;
+    const dd   = document.getElementById('cardTemplateDropdown');
+    const rect = e.currentTarget.getBoundingClientRect();
+    dd.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+    dd.style.left = rect.left + 'px';
+    dd.style.display = 'block';
+    _refreshCardTemplateDropdown();
+};
+
+async function _refreshCardTemplateDropdown() {
+    const dd = document.getElementById('cardTemplateDropdown');
+    dd.innerHTML = '<div class="col-menu-item" style="color:#6b778c">Загрузка...</div>';
+
+    const boardId = _getBoardId();
+    let templates = [];
+    try {
+        const res = await fetch(`/api/boards/${boardId}/card-templates`);
+        if (res.ok) templates = await res.json();
+    } catch (err) {
+        console.error('_refreshCardTemplateDropdown error:', err);
+    }
+
+    if (!templates.length) {
+        dd.innerHTML = '<div class="col-menu-item" style="color:#6b778c">Нет шаблонов на этой доске</div>';
+        return;
+    }
+    dd.innerHTML = templates.map(t => `
+        <div class="col-menu-item-row">
+            <button class="col-menu-item" style="flex:1" onclick="createCardFromTemplate(${t.id})">${escHtml(t.name)}</button>
+            <button class="col-menu-item-del" onclick="deleteCardTemplate(event, ${t.id})" title="Удалить шаблон">✕</button>
+        </div>
+    `).join('');
+}
+
+window.createCardFromTemplate = async function(templateId) {
+    document.getElementById('cardTemplateDropdown').style.display = 'none';
+    const colId = cardTemplateTargetColId;
+    if (!colId) return;
+    const res = await fetch(`/api/card-templates/${templateId}/instantiate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ column_id: colId })
+    });
+    if (!res.ok) { showToast('Не удалось создать карточку из шаблона', 'error'); return; }
+    const card = await res.json();
+    appendCardToDOM(card, colId);
+    updateColumnCounts();
+    inlineCardCancel(colId);
+    showToast('Карточка создана из шаблона');
+};
+
+window.deleteCardTemplate = async function(e, templateId) {
+    e.stopPropagation();
+    if (!confirm('Удалить этот шаблон карточки? Уже созданные из него карточки не пострадают.')) return;
+    await fetch(`/api/card-templates/${templateId}`, { method: 'DELETE' });
+    _refreshCardTemplateDropdown();
+};
+
+document.addEventListener('click', function(e) {
+    const dd = document.getElementById('cardTemplateDropdown');
+    if (dd && dd.style.display !== 'none' && !dd.contains(e.target) && !e.target.closest('.tpl-picker-btn')) {
+        dd.style.display = 'none';
+    }
+});
+
 function renderChecklists(checklists) {
     const container = document.getElementById('cmChecklistsContainer');
     const section    = document.getElementById('cmChecklistSection');
@@ -3361,6 +3460,23 @@ window.saveBoardSettings = function() {
             }
         }
     }).catch(() => showBspMsg('Ошибка сети', true));
+};
+
+window.saveBoardAsTemplate = async function() {
+    const boardId = _getBoardId();
+    if (!boardId) return;
+    const input = document.getElementById('bspTemplateNameInput');
+    const name  = input?.value.trim();
+    if (!name) { showBspMsg('Введите название шаблона', true); return; }
+
+    const res = await fetch(`/api/boards/${boardId}/save-as-template`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+    });
+    if (!res.ok) { showBspMsg('Не удалось сохранить шаблон', true); return; }
+    input.value = '';
+    showBspMsg('Шаблон доски сохранён');
 };
 
 window.uploadBoardBackground = async function(input) {

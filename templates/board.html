@@ -262,6 +262,15 @@
                 </div>
             </div>
 
+            <div class="bsp-field-group">
+                <label class="bsp-label">Шаблон доски</label>
+                <p class="cm-empty-hint" style="margin:0 0 6px">Сохранит колонки и кастомные поля этой доски (без карточек) — можно будет выбрать при создании новой доски.</p>
+                <div class="bsp-cf-add">
+                    <input class="bsp-input" id="bspTemplateNameInput" type="text" placeholder="Название шаблона">
+                    <button class="btn-secondary btn-sm" onclick="saveBoardAsTemplate()">Сохранить как шаблон</button>
+                </div>
+            </div>
+
             <button class="btn-primary bsp-save-btn" onclick="saveBoardSettings()">Сохранить</button>
             <div class="bsp-msg" id="bspMsg"></div>
         </div>
@@ -279,6 +288,9 @@
         <div class="col-menu-sep"></div>
         <button class="col-menu-item col-menu-item--danger" onclick="colMenuDelete()">Удалить список</button>
     </div>
+
+    <!-- ===== CARD TEMPLATE PICKER DROPDOWN (Should №10) ===== -->
+    <div id="cardTemplateDropdown" class="col-menu-dd" style="display:none"></div>
 
     <div class="board-columns-wrap">
         <div class="board-columns" id="boardColumns" data-board-id="{{ board_id }}" data-user-role="{{ user.role }}">
@@ -359,6 +371,7 @@
                               onkeydown="inlineCardKey(event, {{ col.id }})"></textarea>
                     <div class="inline-add-actions">
                         <button class="btn-primary btn-sm" onclick="inlineCardSave({{ col.id }})">Добавить карточку</button>
+                        <button class="btn-secondary btn-sm tpl-picker-btn" onclick="openCardTemplatePicker(event, {{ col.id }})" title="Создать карточку из шаблона">Из шаблона</button>
                         <button class="inline-cancel-btn" onclick="inlineCardCancel({{ col.id }})">✕</button>
                     </div>
                 </div>
@@ -541,6 +554,9 @@
                     </button>
                     <button class="cm-sidebar-btn" onclick="duplicateCard()">
                         <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span> Копировать
+                    </button>
+                    <button class="cm-sidebar-btn" onclick="openSaveAsTemplatePopover()">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span> Сохранить как шаблон
                     </button>
                     <button class="cm-sidebar-btn" onclick="copyCardLink()">
                         <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span> Скопировать ссылку
