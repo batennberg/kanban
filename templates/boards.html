@@ -1326,11 +1326,30 @@ window.toggleFavourite = function(e, btn, boardId) {
     }
     saveFavs(favs);
     updateFavNavBtn(favs);
+    sortFavouritesToTop(favs);
 };
 
 function updateFavNavBtn(favs) {
     const btn = document.getElementById('navFavourites');
     if (btn) btn.style.display = favs.size > 0 ? '' : 'none';
+}
+
+// Ваша заявка: избранные доски закрепляются в самом верху списка внутри
+// своей секции (компании), а не только фильтруются — сортировка стабильна,
+// порядок среди остальных досок не трогаем.
+function sortFavouritesToTop(favs) {
+    document.querySelectorAll('.ws-boards-grid').forEach(grid => {
+        const newCard = grid.querySelector('.ws-board-new');
+        const cards   = [...grid.querySelectorAll('.ws-board-card:not(.ws-board-new)')];
+        cards
+            .sort((a, b) => {
+                const aFav = favs.has(parseInt(a.querySelector('.ws-board-star')?.dataset.boardId || '0')) ? 1 : 0;
+                const bFav = favs.has(parseInt(b.querySelector('.ws-board-star')?.dataset.boardId || '0')) ? 1 : 0;
+                return bFav - aFav;
+            })
+            .forEach(card => grid.appendChild(card));
+        if (newCard) grid.appendChild(newCard);
+    });
 }
 
 function initFavourites() {
@@ -1340,6 +1359,7 @@ function initFavourites() {
         if (star) star.classList.add('ws-board-star--active');
     });
     updateFavNavBtn(favs);
+    sortFavouritesToTop(favs);
 }
 
 window.filterFavourites = function(btn) {

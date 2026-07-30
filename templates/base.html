@@ -94,6 +94,10 @@
                 title = 'Просрочена задача';
                 label = payload.card_title || '';
                 break;
+            case 'card_due_today':
+                title = 'Срок задачи — сегодня';
+                label = payload.card_title || '';
+                break;
             case 'card_archived':
                 title = actorName + ' отправил(а) карточку в архив';
                 label = payload.card_title || '';

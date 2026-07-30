@@ -999,6 +999,7 @@ const ACTIVITY_LABELS = {
     member_removed:           (d) => `убрал(а) участника: ${d}`,
     checklist_item_checked:   (d) => `отметил(а) пункт чек-листа: «${d}»`,
     checklist_item_unchecked: (d) => `снял(а) отметку с пункта чек-листа: «${d}»`,
+    checklist_copied:         (d) => `скопировал(а) чек-лист «${d}» с другой карточки`,
     attachment_added:         (d) => `добавил(а) вложение: ${d}`,
     attachment_removed:       (d) => `удалил(а) вложение: ${d}`,
     link_added:               (d) => `добавил(а) ссылку: ${d}`,
@@ -1916,6 +1917,79 @@ window.addChecklist = async function() {
     const group = renderChecklistGroup(cl);
     const titleEl = group.querySelector('.cm-checklist-group-title');
     if (titleEl) startRenameChecklist(titleEl);
+};
+
+window.openCopyChecklistPopover = async function() {
+    if (!currentCardDbId) return;
+    openPopover('Копировать чек-лист', '<div class="mp-loading">Загрузка...</div>');
+
+    const boardId = _getBoardId();
+    let checklists = [];
+    try {
+        const res = await fetch(`/api/boards/${boardId}/checklists`);
+        if (res.ok) checklists = await res.json();
+    } catch (err) {
+        console.error('openCopyChecklistPopover error:', err);
+    }
+
+    // Не предлагаем копировать чек-лист с этой же карточки на неё же
+    checklists = checklists.filter(cl => cl.card_id !== currentCardDbId);
+
+    const body = document.getElementById('cspBody');
+    if (!checklists.length) {
+        body.innerHTML = '<p class="cm-empty-hint">На этой доске нет чек-листов на других карточках</p>';
+        return;
+    }
+    body.innerHTML = `
+        <input class="csp-input" id="copyClSearch" type="text"
+               placeholder="Поиск по названию карточки или чек-листа..."
+               oninput="filterCopyChecklistList(this.value)">
+        <div class="copy-cl-list" id="copyClList"></div>
+    `;
+    _copyClAll = checklists;
+    renderCopyChecklistList(checklists);
+    setTimeout(() => document.getElementById('copyClSearch')?.focus(), 50);
+};
+
+let _copyClAll = [];
+
+function renderCopyChecklistList(items) {
+    const list = document.getElementById('copyClList');
+    if (!list) return;
+    if (!items.length) {
+        list.innerHTML = '<p class="cm-empty-hint">Ничего не найдено</p>';
+        return;
+    }
+    list.innerHTML = items.map(cl => `
+        <button class="copy-cl-item" onclick="copyChecklistFrom(${cl.id})">
+            <span class="copy-cl-title">${escHtml(cl.title)}</span>
+            <span class="copy-cl-meta">${escHtml(cl.card_title)} · ${cl.item_count} пункт(ов)</span>
+        </button>
+    `).join('');
+}
+
+window.filterCopyChecklistList = function(q) {
+    q = q.toLowerCase().trim();
+    const filtered = _copyClAll.filter(cl =>
+        cl.title.toLowerCase().includes(q) || cl.card_title.toLowerCase().includes(q)
+    );
+    renderCopyChecklistList(filtered);
+};
+
+window.copyChecklistFrom = async function(sourceChecklistId) {
+    if (!currentCardDbId) return;
+    const res = await fetch(`/api/cards/${currentCardDbId}/checklists/copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_checklist_id: sourceChecklistId })
+    });
+    if (!res.ok) { showToast('Не удалось скопировать чек-лист', 'error'); return; }
+    const cl = await res.json();
+    document.getElementById('cmChecklistSection').style.display = '';
+    renderChecklistGroup(cl);
+    updateChecklistProgress();
+    closePopover();
+    showToast('Чек-лист скопирован');
 };
 
 function renderChecklists(checklists) {

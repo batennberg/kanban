@@ -2776,6 +2776,32 @@ kbd {
 .csp-input:focus { outline: none; border-color: #4361EE; }
 .csp-input::placeholder { color: #b3bac5; }
 
+.copy-cl-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.copy-cl-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 7px 9px;
+    border-radius: 6px;
+    text-align: left;
+    background: #f4f5f7;
+    transition: background 0.15s;
+}
+
+.copy-cl-item:hover { background: #ebecf0; }
+
+.copy-cl-title { font-size: 12.5px; font-weight: 600; color: #1a2535; }
+.copy-cl-meta  { font-size: 11px; color: #6b778c; }
+
 .pop-colors { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 
 .pop-color {

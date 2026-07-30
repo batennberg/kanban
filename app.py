@@ -156,13 +156,15 @@ def _notify_admins(conn, type_, board_id, board_name, extra, card_id=0):
         )
 
 
-def _sync_overdue_notifications(conn, user_email):
+def _sync_due_date_notifications(conn, user_email):
     """Лениво (при каждом открытии инбокса) проверяет карточки пользователя на просрочку
-    и один раз создаёт уведомление по каждой — без фоновых задач/cron (Must №82)."""
+    и приближение срока — «срок сегодня» — и один раз создаёт уведомление по каждой,
+    без фоновых задач/cron (Must №82, Should №23 «напоминания о сроке»)."""
     today_key = datetime.now().strftime('%Y%m%d')
     rows = conn.execute('''
         SELECT ca.id AS card_id, ca.title AS card_title, ca.due_date,
-               col.board_id, b.name AS board_name
+               col.board_id, b.name AS board_name,
+               (substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)) AS due_key
         FROM cards ca
         JOIN card_members cm ON cm.card_id = ca.id
         JOIN columns col ON col.id = ca.column_id
@@ -171,23 +173,24 @@ def _sync_overdue_notifications(conn, user_email):
           AND (ca.completed = 0 OR ca.completed IS NULL)
           AND (ca.archived = 0 OR ca.archived IS NULL)
           AND TRIM(COALESCE(ca.due_date, '')) != ''
-          AND (substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)) < ?
+          AND (substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)) <= ?
     ''', (user_email, today_key)).fetchall()
 
     for r in rows:
+        type_ = 'card_overdue' if r['due_key'] < today_key else 'card_due_today'
         exists = conn.execute(
-            "SELECT 1 FROM inbox_entries WHERE recipient_email=? AND type='card_overdue' AND card_id=?",
-            (user_email, r['card_id'])
+            "SELECT 1 FROM inbox_entries WHERE recipient_email=? AND type=? AND card_id=?",
+            (user_email, type_, r['card_id'])
         ).fetchone()
         if exists:
             continue
         payload = json.dumps({
-            'type': 'card_overdue', 'card_id': r['card_id'], 'card_title': r['card_title'],
+            'type': type_, 'card_id': r['card_id'], 'card_title': r['card_title'],
             'board_id': r['board_id'], 'board_name': r['board_name'], 'due_date': r['due_date'],
         })
         conn.execute(
             'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
-            (user_email, 'card_overdue', r['card_id'], payload, r['board_id'])
+            (user_email, type_, r['card_id'], payload, r['board_id'])
         )
 
 
@@ -1387,6 +1390,71 @@ def api_create_checklist(card_id):
     cl['items'] = []
     return jsonify(cl), 201
 
+@app.route('/api/boards/<int:board_id>/checklists')
+def api_get_board_checklists(board_id):
+    """Список всех чек-листов на доске (для попапа «Копировать чек-лист с другой карточки», Should №16)."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        rows = conn.execute('''
+            SELECT cl.id, cl.title, cl.card_id, ca.title AS card_title,
+                   (SELECT COUNT(*) FROM checklist_items WHERE checklist_id=cl.id) AS item_count
+            FROM checklists cl
+            JOIN cards ca ON ca.id = cl.card_id
+            JOIN columns co ON co.id = ca.column_id
+            WHERE co.board_id=? AND (ca.archived=0 OR ca.archived IS NULL)
+            ORDER BY ca.title, cl.position
+        ''', (board_id,)).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/cards/<int:card_id>/checklists/copy', methods=['POST'])
+def api_copy_checklist(card_id):
+    """Копирует чек-лист (название + пункты) с другой карточки на текущую (Should №16).
+    Отметки о выполнении, срок и исполнитель пунктов не переносятся — это шаблон, а не перемещение."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    src_checklist_id = request.get_json().get('source_checklist_id')
+    if not src_checklist_id:
+        return jsonify({'error': 'source_checklist_id required'}), 400
+    with get_db() as conn:
+        src_cl = conn.execute('SELECT * FROM checklists WHERE id=?', (src_checklist_id,)).fetchone()
+        if not src_cl:
+            return jsonify({'error': 'not found'}), 404
+
+        src_board = conn.execute('''
+            SELECT co.board_id FROM cards ca JOIN columns co ON co.id=ca.column_id WHERE ca.id=?
+        ''', (src_cl['card_id'],)).fetchone()
+        board_ids = _get_board_ids()
+        if src_board and board_ids is not None and src_board['board_id'] not in board_ids:
+            return jsonify({'error': 'forbidden'}), 403
+
+        pos = conn.execute(
+            'SELECT COALESCE(MAX(position),-1)+1 FROM checklists WHERE card_id=?', (card_id,)
+        ).fetchone()[0]
+        cur = conn.execute(
+            'INSERT INTO checklists (card_id, title, position) VALUES (?,?,?)',
+            (card_id, src_cl['title'], pos)
+        )
+        new_cl_id = cur.lastrowid
+
+        items = []
+        for item in conn.execute(
+            'SELECT * FROM checklist_items WHERE checklist_id=? ORDER BY position', (src_checklist_id,)
+        ):
+            item_cur = conn.execute(
+                'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (?,?,?,?)',
+                (card_id, new_cl_id, item['text'], item['position'])
+            )
+            items.append(dict(conn.execute(
+                'SELECT * FROM checklist_items WHERE id=?', (item_cur.lastrowid,)
+            ).fetchone()))
+
+        _log_activity(conn, card_id, 'checklist_copied', src_cl['title'])
+        new_cl = dict(conn.execute('SELECT * FROM checklists WHERE id=?', (new_cl_id,)).fetchone())
+    new_cl['items'] = items
+    return jsonify(new_cl), 201
+
 @app.route('/api/checklists/<int:checklist_id>', methods=['PUT'])
 def api_update_checklist(checklist_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
@@ -1500,7 +1568,7 @@ def api_get_inbox():
     unread_only = request.args.get('unread_only', '0') == '1'
     board_id = request.args.get('board_id', type=int)
     with get_db() as conn:
-        _sync_overdue_notifications(conn, email)
+        _sync_due_date_notifications(conn, email)
 
         sql = 'SELECT * FROM inbox_entries WHERE recipient_email=?'
         params = [email]
