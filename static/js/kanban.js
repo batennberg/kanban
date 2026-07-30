@@ -1130,11 +1130,12 @@ function renderDescriptionView(text) {
         view.innerHTML = '<span class="cm-description-empty">Добавьте подробное описание задачи...</span>';
         return;
     }
-    view.innerHTML = DOMPurify.sanitize(marked.parse(text));
+    view.innerHTML = DOMPurify.sanitize(marked.parse(text, { breaks: true }));
 }
 
 window.editDescription = function() {
     document.getElementById('cmDescriptionView').style.display = 'none';
+    document.getElementById('cmDescToolbar').style.display = 'flex';
     const ta = document.getElementById('cmDescription');
     ta.style.display = 'block';
     ta.focus();
@@ -1144,7 +1145,72 @@ window.finishDescriptionEdit = function() {
     const ta = document.getElementById('cmDescription');
     renderDescriptionView(ta.value);
     ta.style.display = 'none';
+    document.getElementById('cmDescToolbar').style.display = 'none';
     document.getElementById('cmDescriptionView').style.display = 'block';
+};
+
+
+// --- Панель форматирования Markdown (кнопки, как в Trello) ---
+
+function _mdTextareaSelection(textarea) {
+    return { start: textarea.selectionStart ?? 0, end: textarea.selectionEnd ?? 0 };
+}
+
+function _mdWrapSelection(textarea, before, after, placeholder) {
+    const { start, end } = _mdTextareaSelection(textarea);
+    const value = textarea.value;
+    const selected = value.slice(start, end) || placeholder || '';
+    textarea.value = value.slice(0, start) + before + selected + after + value.slice(end);
+    const selStart = start + before.length;
+    textarea.focus();
+    textarea.setSelectionRange(selStart, selStart + selected.length);
+}
+
+function _mdLineBlockRange(textarea) {
+    const { start, end } = _mdTextareaSelection(textarea);
+    const value = textarea.value;
+    const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+    let lineEnd = value.indexOf('\n', end);
+    if (lineEnd === -1) lineEnd = value.length;
+    return { lineStart, lineEnd, value };
+}
+
+function _mdPrefixLines(textarea, prefixFn) {
+    const { lineStart, lineEnd, value } = _mdLineBlockRange(textarea);
+    const block = value.slice(lineStart, lineEnd);
+    const lines = block.split('\n').map((line, i) => prefixFn(line, i)).join('\n');
+    textarea.value = value.slice(0, lineStart) + lines + value.slice(lineEnd);
+    textarea.focus();
+    textarea.setSelectionRange(lineStart, lineStart + lines.length);
+}
+
+window.formatText = function(btn, action) {
+    const toolbar = btn.closest('.md-toolbar');
+    const targetId = toolbar?.dataset.target;
+    const textarea = targetId && document.getElementById(targetId);
+    if (!textarea) return;
+
+    switch (action) {
+        case 'bold':   _mdWrapSelection(textarea, '**', '**', 'текст'); break;
+        case 'italic': _mdWrapSelection(textarea, '*', '*', 'текст'); break;
+        case 'strike': _mdWrapSelection(textarea, '~~', '~~', 'текст'); break;
+        case 'code':   _mdWrapSelection(textarea, '`', '`', 'код'); break;
+        case 'link': {
+            const url = prompt('Ссылка (URL):', 'https://');
+            if (!url) return;
+            _mdWrapSelection(textarea, '[', `](${url})`, 'текст ссылки');
+            break;
+        }
+        case 'heading': _mdPrefixLines(textarea, line => line.startsWith('### ') ? line : `### ${line}`); break;
+        case 'quote':   _mdPrefixLines(textarea, line => line.startsWith('> ')   ? line : `> ${line}`);   break;
+        case 'ul':      _mdPrefixLines(textarea, line => line.startsWith('- ')   ? line : `- ${line}`);   break;
+        case 'ol':      _mdPrefixLines(textarea, (line, i) => `${i + 1}. ${line.replace(/^\d+\.\s*/, '')}`); break;
+        default: return;
+    }
+
+    // textarea без view/edit-переключения (composer комментария) — событие input
+    // нужно, чтобы сработали уже висящие обработчики (например, показ кнопок отправки)
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
 };
 
 window.closeCardModal = async function() {
@@ -1583,12 +1649,14 @@ window.selectMentionSuggestion = function(index) {
 
 window.showCommentActions = () => {
     document.getElementById('cmCommentActions').style.display = 'flex';
+    document.getElementById('cmCommentToolbar').style.display = 'flex';
 };
 
 window.cancelComment = () => {
     const input = document.getElementById('cmCommentInput');
     input.value = '';
     document.getElementById('cmCommentActions').style.display = 'none';
+    document.getElementById('cmCommentToolbar').style.display = 'none';
     hideMentionSuggestions();
     input.blur();
 };
@@ -1620,18 +1688,51 @@ function escapeRegExp(value) {
     return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function formatCommentText(text, mentions = []) {
-    const escaped = escHtml(text || '').replace(/\n/g, '<br>');
-    const tokens = (mentions || [])
-        .map(m => String(m.mention || '').trim())
-        .filter(Boolean);
-    if (!tokens.length) return escaped;
-    let html = escaped;
-    [...new Set(tokens)].forEach(token => {
-        const pattern = new RegExp(`@${escapeRegExp(token)}`, 'gi');
-        html = html.replace(pattern, '<span class="comment-mention">$&</span>');
+function _highlightMentionsInNode(root, pattern) {
+    // Проходим только по текстовым узлам уже готового (санитизированного) HTML —
+    // не трогаем содержимое <code>/<pre>/<a>, чтобы разметка @упоминаний не
+    // ломала код-спаны и ссылки.
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const textNodes = [];
+    let node;
+    while ((node = walker.nextNode())) {
+        const tag = node.parentElement?.tagName;
+        if (tag === 'CODE' || tag === 'PRE' || tag === 'A') continue;
+        pattern.lastIndex = 0;
+        if (pattern.test(node.textContent)) textNodes.push(node);
+    }
+    textNodes.forEach(textNode => {
+        const text = textNode.textContent;
+        const frag = document.createDocumentFragment();
+        let lastIndex = 0, match;
+        pattern.lastIndex = 0;
+        while ((match = pattern.exec(text))) {
+            if (match.index > lastIndex) frag.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+            const span = document.createElement('span');
+            span.className = 'comment-mention';
+            span.textContent = match[0];
+            frag.appendChild(span);
+            lastIndex = match.index + match[0].length;
+            if (match[0].length === 0) pattern.lastIndex++; // защита от зацикливания
+        }
+        if (lastIndex < text.length) frag.appendChild(document.createTextNode(text.slice(lastIndex)));
+        textNode.parentNode.replaceChild(frag, textNode);
     });
-    return html;
+}
+
+function formatCommentText(text, mentions = []) {
+    const html = DOMPurify.sanitize(marked.parse(text || '', { breaks: true }));
+    const tokens = [...new Set((mentions || [])
+        .map(m => String(m.mention || '').trim())
+        .filter(Boolean))];
+
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    if (tokens.length) {
+        const pattern = new RegExp(`@(?:${tokens.map(escapeRegExp).join('|')})`, 'gi');
+        _highlightMentionsInNode(container, pattern);
+    }
+    return container.innerHTML;
 }
 
 function renderComments(list) {
@@ -1665,7 +1766,7 @@ function appendCommentToDOM(c) {
                 <span class="cm-comment-time">${escHtml(time)}</span>
                 <button class="cm-comment-del" onclick="deleteComment(${c.id})" title="Удалить">✕</button>
             </div>
-            <p class="cm-comment-text">${formatCommentText(c.text, c.mentions || [])}</p>
+            <div class="cm-comment-text">${formatCommentText(c.text, c.mentions || [])}</div>
         </div>
     `;
     document.getElementById('cmCommentsList').prepend(item);

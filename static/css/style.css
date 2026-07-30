@@ -2553,6 +2553,35 @@ kbd {
 .cm-cf-input:focus, .cm-cf-select:focus { outline: none; border-color: #4361EE; background: #fff; }
 .cm-cf-checkbox { width: 18px; height: 18px; align-self: flex-start; }
 
+/* Панель форматирования Markdown (описание + комментарии, как в Trello) */
+.md-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px;
+    background: #f4f5f7;
+    border: 2px solid #dfe1e6;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+}
+.md-tb-btn {
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    color: #5e6c84;
+    font-size: 13px;
+    font-family: Georgia, serif;
+    transition: background 0.15s, color 0.15s;
+}
+.md-tb-btn:hover { background: #ebecf0; color: #1a2535; }
+.md-tb-sep { width: 1px; height: 16px; background: #dfe1e6; margin: 0 4px; flex-shrink: 0; }
+
+.md-toolbar + .cm-description,
+.md-toolbar + .cm-compose-input { border-radius: 0 0 8px 8px; }
+
 /* Description */
 .cm-description {
     width: 100%;
@@ -2988,6 +3017,14 @@ kbd {
     line-height: 1.5;
     word-break: break-word;
 }
+.cm-comment-text p         { margin: 0 0 6px; }
+.cm-comment-text p:last-child        { margin-bottom: 0; }
+.cm-comment-text ul, .cm-comment-text ol { margin: 4px 0; padding-left: 20px; }
+.cm-comment-text code      { background: #f4f5f7; border-radius: 3px; padding: 1px 4px; font-size: 12px; }
+.cm-comment-text pre       { background: #f4f5f7; border-radius: 6px; padding: 8px 10px; overflow-x: auto; }
+.cm-comment-text pre code  { background: none; padding: 0; }
+.cm-comment-text blockquote { border-left: 3px solid #dfe1e6; margin: 4px 0; padding-left: 10px; color: #6b778c; }
+.cm-comment-text a         { color: #4361EE; }
 
 /* Activity (audit) list */
 .cm-activity-list {
