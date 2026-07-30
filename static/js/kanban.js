@@ -100,6 +100,7 @@ function _rgbToHex(rgb) {
 const _BOARD_VIEWS = {
     table:    { elId: 'tableView',    btnId: 'btnTableView',    txtId: 'btnTableViewText',    label: 'Таблица',   onShow: () => tvBuildRows() },
     calendar: { elId: 'calendarView', btnId: 'btnCalendarView', txtId: 'btnCalendarViewText', label: 'Календарь', onShow: () => calRender() },
+    gantt:    { elId: 'ganttView',    btnId: 'btnGanttView',    txtId: 'btnGanttViewText',    label: 'Таймлайн',  onShow: () => ganttRender() },
 };
 
 function _switchBoardView(name) {
@@ -142,6 +143,11 @@ window.toggleCalendarView = function() {
     _switchBoardView(cal && cal.style.display !== 'none' ? 'kanban' : 'calendar');
 };
 
+window.toggleGanttView = function() {
+    const g = document.getElementById('ganttView');
+    _switchBoardView(g && g.style.display !== 'none' ? 'kanban' : 'gantt');
+};
+
 function tvCollectCards() {
     const rows = [];
     document.querySelectorAll('.column:not(.column--add)').forEach(col => {
@@ -163,6 +169,7 @@ function tvCollectCards() {
                 importance: importanceEl ? importanceEl.textContent.trim() : '',
                 importanceColor: importanceEl ? _rgbToHex(importanceEl.style.color) : '',
                 due: dueEl ? dueEl.textContent.trim() : '',
+                start: card.dataset.startDate || '',
                 members,
                 done: card.classList.contains('card--done'),
             });
@@ -387,6 +394,77 @@ function calRender() {
                 </div>
             </div>`;
     }
+
+    grid.innerHTML = html;
+}
+
+
+// ===== ТАЙМЛАЙН / ГАНТ (Should №39) =====
+// Тоже строится из tvCollectCards(). Показываются только карточки со сроком
+// (due_date обязателен, start_date — если есть, иначе полоса рисуется в 1 день на срок).
+
+function _dateFromRu(str) {
+    const p = (str || '').split('.');
+    if (p.length !== 3) return null;
+    const d = new Date(parseInt(p[2], 10), parseInt(p[1], 10) - 1, parseInt(p[0], 10));
+    return isNaN(d.getTime()) ? null : d;
+}
+
+function _daysBetween(a, b) {
+    return Math.round((b - a) / 86400000);
+}
+
+function _isSameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function ganttRender() {
+    const grid = document.getElementById('ganttGrid');
+    if (!grid) return;
+
+    const rows = tvCollectCards()
+        .map(r => ({ ...r, dueDate: _dateFromRu(r.due) }))
+        .filter(r => r.dueDate)
+        .map(r => ({ ...r, startDate: _dateFromRu(r.start) || r.dueDate }))
+        .sort((a, b) => a.startDate - b.startDate);
+
+    if (!rows.length) {
+        grid.style.gridTemplateColumns = '';
+        grid.innerHTML = '<div class="gantt-empty">Нет карточек со сроком — таймлайн строится по датам начала/срока</div>';
+        return;
+    }
+
+    let minDate = rows[0].startDate, maxDate = rows[0].dueDate;
+    rows.forEach(r => {
+        if (r.startDate < minDate) minDate = r.startDate;
+        if (r.dueDate   > maxDate) maxDate = r.dueDate;
+    });
+    minDate = new Date(minDate); minDate.setDate(minDate.getDate() - 1);
+    maxDate = new Date(maxDate); maxDate.setDate(maxDate.getDate() + 1);
+    const totalDays = _daysBetween(minDate, maxDate) + 1;
+    const today = new Date();
+    const todayOffset = _daysBetween(minDate, today);
+
+    grid.style.gridTemplateColumns = `160px repeat(${totalDays}, 32px)`;
+
+    let html = `<div class="gantt-corner" style="grid-column:1; grid-row:1;"></div>`;
+    for (let i = 0; i < totalDays; i++) {
+        const d = new Date(minDate); d.setDate(d.getDate() + i);
+        html += `<div class="gantt-day-cell${_isSameDay(d, today) ? ' gantt-day-cell--today' : ''}" style="grid-column:${i + 2}; grid-row:1;">${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}</div>`;
+    }
+    if (todayOffset >= 0 && todayOffset < totalDays) {
+        html += `<div class="gantt-today-line" style="grid-column:${todayOffset + 2}; grid-row:1 / span ${rows.length + 1};"></div>`;
+    }
+
+    rows.forEach((r, idx) => {
+        const rowNum      = idx + 2;
+        const startOffset = _daysBetween(minDate, r.startDate);
+        const span        = Math.max(1, _daysBetween(r.startDate, r.dueDate) + 1);
+        const barColor    = r.labels[0] ? r.labels[0].color : (r.importanceColor || '#4361EE');
+        html += `<div class="gantt-row-bg${idx % 2 ? ' gantt-row-bg--alt' : ''}" style="grid-column:1 / span ${totalDays + 1}; grid-row:${rowNum};"></div>`;
+        html += `<div class="gantt-row-label" style="grid-column:1; grid-row:${rowNum};" title="${escHtml(r.column)}">${escHtml(r.title)}</div>`;
+        html += `<div class="gantt-bar${r.done ? ' gantt-bar--done' : ''}" style="grid-column:${startOffset + 2} / span ${span}; grid-row:${rowNum}; background:${barColor}" onclick="tvOpenCard('${r.cardId}')" title="${escHtml(r.title)} — ${escHtml(r.column)}"></div>`;
+    });
 
     grid.innerHTML = html;
 }
