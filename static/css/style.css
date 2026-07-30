@@ -1050,6 +1050,111 @@ input { font-family: inherit; }
 
 .tv-empty { padding: 24px; text-align: center; color: #6b778c; font-size: 13px; }
 
+/* ===== КАЛЕНДАРЬ (Should №38) ===== */
+
+.calendar-view {
+    height: calc(100vh - 52px);
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.cal-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.cal-month-label {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-1, #1a1a1a);
+    min-width: 160px;
+}
+
+.cal-nodate-count {
+    margin-left: auto;
+    font-size: 12px;
+    color: #6b778c;
+}
+
+.cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 1px;
+    background: #ebecf0;
+    border: 1px solid #ebecf0;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.cal-weekday {
+    background: #fff;
+    padding: 8px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #6b778c;
+    text-align: center;
+}
+
+.cal-cell {
+    background: rgba(255,255,255,0.72);
+    min-height: 96px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.cal-cell--empty { background: #f4f5f7; }
+.cal-cell--today { background: #eef0ff; }
+
+.cal-cell-date {
+    font-size: 12px;
+    font-weight: 700;
+    color: #1a2535;
+}
+.cal-cell--today .cal-cell-date { color: #4361EE; }
+
+.cal-cell-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow-y: auto;
+}
+
+.cal-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: #f4f5f7;
+    color: #1a2535;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cal-chip:hover { background: #ebecf0; }
+.cal-chip--done { text-decoration: line-through; color: #6b778c; }
+
+.cal-chip-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+@media (max-width: 720px) {
+    .cal-cell { min-height: 64px; }
+    .cal-weekday { padding: 6px 2px; font-size: 9px; }
+    .cal-month-label { min-width: auto; font-size: 13px; }
+}
+
 /* Column — Deep Liquid Glass */
 .column {
     width: 300px;

@@ -95,26 +95,51 @@ function _rgbToHex(rgb) {
     return '#' + [1, 2, 3].map(i => parseInt(m[i]).toString(16).padStart(2, '0')).join('');
 }
 
-window.toggleTableView = function() {
-    const tv   = document.getElementById('tableView');
-    const wrap = document.querySelector('.board-columns-wrap');
-    const btn  = document.getElementById('btnTableView');
-    const txt  = document.getElementById('btnTableViewText');
-    if (!tv || !wrap) return;
+// Единый переключатель альтернативных видов доски (Should №37/№38/...) — скрывает
+// канбан-колонки и показывает ровно один из зарегистрированных видов за раз.
+const _BOARD_VIEWS = {
+    table:    { elId: 'tableView',    btnId: 'btnTableView',    txtId: 'btnTableViewText',    label: 'Таблица',   onShow: () => tvBuildRows() },
+    calendar: { elId: 'calendarView', btnId: 'btnCalendarView', txtId: 'btnCalendarViewText', label: 'Календарь', onShow: () => calRender() },
+};
 
-    const isOpen = tv.style.display !== 'none';
-    if (isOpen) {
-        tv.style.display   = 'none';
+function _switchBoardView(name) {
+    const wrap = document.querySelector('.board-columns-wrap');
+    if (!wrap) return;
+
+    Object.values(_BOARD_VIEWS).forEach(v => {
+        const el  = document.getElementById(v.elId);
+        const btn = document.getElementById(v.btnId);
+        const txt = document.getElementById(v.txtId);
+        if (el)  el.style.display = 'none';
+        if (btn) btn.classList.remove('btn-board-action--active');
+        if (txt) txt.textContent = v.label;
+    });
+
+    if (name === 'kanban') {
         wrap.style.display = '';
-        txt.textContent = 'Таблица';
-        btn.classList.remove('btn-board-action--active');
-    } else {
-        wrap.style.display = 'none';
-        tv.style.display   = '';
-        txt.textContent = 'Доска';
-        btn.classList.add('btn-board-action--active');
-        tvBuildRows();
+        return;
     }
+
+    const v = _BOARD_VIEWS[name];
+    if (!v) return;
+    wrap.style.display = 'none';
+    const el  = document.getElementById(v.elId);
+    const btn = document.getElementById(v.btnId);
+    const txt = document.getElementById(v.txtId);
+    if (el)  el.style.display = '';
+    if (btn) btn.classList.add('btn-board-action--active');
+    if (txt) txt.textContent = 'Доска';
+    if (v.onShow) v.onShow();
+}
+
+window.toggleTableView = function() {
+    const tv = document.getElementById('tableView');
+    _switchBoardView(tv && tv.style.display !== 'none' ? 'kanban' : 'table');
+};
+
+window.toggleCalendarView = function() {
+    const cal = document.getElementById('calendarView');
+    _switchBoardView(cal && cal.style.display !== 'none' ? 'kanban' : 'calendar');
 };
 
 function tvCollectCards() {
@@ -283,6 +308,89 @@ window.tvBulkArchive = async function() {
     tvBuildRows();
     showToast('Отправлены в архив');
 };
+
+
+// ===== КАЛЕНДАРЬ (Should №38) =====
+// Как и табличный вид — строится из уже отрендеренного DOM доски (переиспользует
+// tvCollectCards), группируя карточки по due_date. Карточки без срока в сетку
+// не попадают — просто считаются в сноске.
+
+const _CAL_WEEKDAYS = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+const _CAL_MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+let _calYear  = null;
+let _calMonth = null; // 0-11
+
+window.calNavigate = function(delta) {
+    _calMonth += delta;
+    if (_calMonth < 0)  { _calMonth = 11; _calYear--; }
+    if (_calMonth > 11) { _calMonth = 0;  _calYear++; }
+    calRender();
+};
+
+window.calGoToday = function() {
+    const today = new Date();
+    _calYear  = today.getFullYear();
+    _calMonth = today.getMonth();
+    calRender();
+};
+
+function calRender() {
+    if (_calYear === null) {
+        const today = new Date();
+        _calYear  = today.getFullYear();
+        _calMonth = today.getMonth();
+    }
+
+    const label = document.getElementById('calMonthLabel');
+    if (label) label.textContent = `${_CAL_MONTHS[_calMonth]} ${_calYear}`;
+
+    const rows = tvCollectCards();
+    const cardsByDate = {};
+    let noDateCount = 0;
+    rows.forEach(r => {
+        const parts = (r.due || '').split('.');
+        if (parts.length !== 3) { noDateCount++; return; }
+        const key = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+        (cardsByDate[key] = cardsByDate[key] || []).push(r);
+    });
+
+    const noDateEl = document.getElementById('calNoDateCount');
+    if (noDateEl) noDateEl.textContent = noDateCount
+        ? `${noDateCount} ${_ruPlural(noDateCount, 'карточка', 'карточки', 'карточек')} без срока`
+        : '';
+
+    const grid = document.getElementById('calGrid');
+    if (!grid) return;
+
+    const firstOfMonth = new Date(_calYear, _calMonth, 1);
+    const daysInMonth  = new Date(_calYear, _calMonth + 1, 0).getDate();
+    const startOffset  = (firstOfMonth.getDay() + 6) % 7; // JS: вс=0 -> делаем пн=0
+
+    const t = new Date();
+    const todayKey = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+
+    let html = _CAL_WEEKDAYS.map(w => `<div class="cal-weekday">${w}</div>`).join('');
+    for (let i = 0; i < startOffset; i++) html += '<div class="cal-cell cal-cell--empty"></div>';
+
+    for (let day = 1; day <= daysInMonth; day++) {
+        const key = `${_calYear}-${String(_calMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        const dayCards = cardsByDate[key] || [];
+        html += `
+            <div class="cal-cell${key === todayKey ? ' cal-cell--today' : ''}">
+                <div class="cal-cell-date">${day}</div>
+                <div class="cal-cell-cards">
+                    ${dayCards.map(r => `
+                        <div class="cal-chip${r.done ? ' cal-chip--done' : ''}" onclick="tvOpenCard('${r.cardId}')" title="${escHtml(r.column)}">
+                            ${r.labels[0] ? `<span class="cal-chip-dot" style="background:${r.labels[0].color}"></span>` : ''}${escHtml(r.title)}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>`;
+    }
+
+    grid.innerHTML = html;
+}
+
 
 // ===== СВОРАЧИВАНИЕ КОЛОНОК =====
 
