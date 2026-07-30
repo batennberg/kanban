@@ -1276,14 +1276,31 @@ def api_get_board_members(board_id):
 
 @app.route('/api/columns/<int:col_id>/duplicate', methods=['POST'])
 def api_duplicate_column(col_id):
+    """Дублирует колонку в той же доске, либо (с `target_board_id`) копирует список
+    со всеми карточками на другую доску (Ваша заявка). Кастомные поля карточек
+    при копировании на другую доску не переносятся — они специфичны для схемы
+    исходной доски и не обязаны существовать на целевой; всё остальное (метки,
+    чек-листы, участники, ссылки) переносится как обычно."""
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json(silent=True) or {}
+    target_board_id = d.get('target_board_id')
     with get_db() as conn:
         src = conn.execute('SELECT * FROM columns WHERE id=?', (col_id,)).fetchone()
         if not src: return jsonify({'error': 'not found'}), 404
+        target_board_id = int(target_board_id) if target_board_id else src['board_id']
+        cross_board = target_board_id != src['board_id']
+        if cross_board:
+            board_ids = _get_board_ids()
+            if board_ids is not None and target_board_id not in board_ids:
+                return jsonify({'error': 'forbidden'}), 403
+            if not conn.execute('SELECT 1 FROM boards WHERE id=?', (target_board_id,)).fetchone():
+                return jsonify({'error': 'target board not found'}), 404
+
         pos = conn.execute(
-            'SELECT COALESCE(MAX(position),-1)+1 FROM columns WHERE board_id=?', (src['board_id'],)
+            'SELECT COALESCE(MAX(position),-1)+1 FROM columns WHERE board_id=?', (target_board_id,)
         ).fetchone()[0]
-        new_col_id = _duplicate_column(conn, col_id, src['board_id'], pos, name_suffix=' (копия)')
+        name_suffix = '' if cross_board else ' (копия)'
+        new_col_id = _duplicate_column(conn, col_id, target_board_id, pos, name_suffix=name_suffix)
         new_col = dict(conn.execute('SELECT * FROM columns WHERE id=?', (new_col_id,)).fetchone())
         new_col['cards'] = [dict(c) for c in conn.execute(
             'SELECT * FROM cards WHERE column_id=? ORDER BY position', (new_col_id,)

@@ -2968,16 +2968,59 @@ window.clearFilters = function() {
 
 let colMenuTargetId = null;
 
+let _colMenuDefaultHTML = null;
+
 window.openColumnMenu = function(e, btn) {
     e.stopPropagation();
     const col = btn.closest('.column');
     colMenuTargetId = parseInt(col.dataset.colId);
 
-    const dd   = document.getElementById('colMenuDropdown');
+    const dd = document.getElementById('colMenuDropdown');
+    if (_colMenuDefaultHTML === null) _colMenuDefaultHTML = dd.innerHTML;
+    dd.innerHTML = _colMenuDefaultHTML;
+
     const rect = btn.getBoundingClientRect();
     dd.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
     dd.style.left = rect.left + 'px';
     dd.style.display = 'block';
+};
+
+window.colMenuReopen = function() {
+    document.getElementById('colMenuDropdown').innerHTML = _colMenuDefaultHTML;
+};
+
+window.colMenuCopyToBoard = async function() {
+    const dd = document.getElementById('colMenuDropdown');
+    dd.innerHTML = '<div class="col-menu-item" style="color:#6b778c">Загрузка...</div>';
+
+    const currentBoardId = parseInt(document.getElementById('boardColumns').dataset.boardId);
+    let boards = [];
+    try {
+        const res = await fetch('/api/boards');
+        boards = await res.json();
+    } catch (err) {
+        console.error('colMenuCopyToBoard error:', err);
+    }
+
+    const items = boards
+        .filter(b => b.id !== currentBoardId)
+        .map(b => `<button class="col-menu-item" onclick="colMenuDuplicateToBoard(${b.id}, '${escHtml(b.name)}')">${escHtml(b.name)}</button>`)
+        .join('');
+    const back = `<button class="col-menu-item" onclick="colMenuReopen()">← Назад</button>`;
+    dd.innerHTML = back + (items || '<div class="col-menu-item" style="color:#6b778c">Нет других досок</div>');
+};
+
+window.colMenuDuplicateToBoard = async function(targetBoardId, targetBoardName) {
+    document.getElementById('colMenuDropdown').style.display = 'none';
+    const colId = colMenuTargetId;
+    if (!colId) return;
+    const res = await fetch(`/api/columns/${colId}/duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_board_id: targetBoardId })
+    });
+    if (!res.ok) { showToast('Не удалось скопировать список', 'error'); return; }
+    showToast(`Список скопирован на доску «${targetBoardName}»`);
 };
 
 document.addEventListener('click', function(e) {
