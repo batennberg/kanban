@@ -379,15 +379,18 @@ function tvUpdateBulkBar() {
 
 window.tvBulkMove = async function(colId) {
     if (!colId || !_tvSelected.size) return;
+    const allAutomations = [];
     for (const cardId of [..._tvSelected]) {
-        await fetch(`/api/cards/${cardId}`, {
+        const res = await fetch(`/api/cards/${cardId}`, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ column_id: parseInt(colId), position: 9999 })
         });
         const cardEl     = document.querySelector(`.cards-list .card[data-card-id="${cardId}"]`);
         const targetList = document.getElementById('cards-' + colId);
         if (cardEl && targetList) targetList.appendChild(cardEl);
+        try { allAutomations.push(...((await res.json()).automations || []).map(r => ({ ...r, card_id: cardId }))); } catch {}
     }
+    _handleAutomationResults(null, allAutomations);
     updateColumnCounts();
     _tvSelected.clear();
     document.getElementById('tvBulkMoveSelect').value = '';
@@ -728,7 +731,7 @@ function persistOrder() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ cards })
-        });
+        }).then(r => r.json()).then(data => _handleAutomationResults(null, data.automations)).catch(() => {});
     }
 }
 
@@ -2294,7 +2297,8 @@ window.openMovePopover = function() {
 
 window.moveCardToColumn = async function(targetColId) {
     if (!currentCardDbId) return;
-    await fetch(`/api/cards/${currentCardDbId}`, {
+    const movedCardId = currentCardDbId;
+    const res = await fetch(`/api/cards/${currentCardDbId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ column_id: targetColId, position: 9999 })
     });
@@ -2303,6 +2307,7 @@ window.moveCardToColumn = async function(targetColId) {
     if (cardEl && targetList) { targetList.appendChild(cardEl); updateColumnCounts(); }
     closePopover();
     closeCardModal();
+    try { _handleAutomationResults(movedCardId, (await res.json()).automations); } catch {}
 };
 
 // ===== ЗЕРКАЛЬНЫЕ КАРТОЧКИ (Should №30) =====
@@ -2440,7 +2445,8 @@ window.openMoveColumnPicker = async function(el) {
 
 window.moveCardToBoard = async function(targetBoardId, targetColId) {
     if (!currentCardDbId) return;
-    await fetch(`/api/cards/${currentCardDbId}`, {
+    const movedCardId = currentCardDbId;
+    const res = await fetch(`/api/cards/${currentCardDbId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ column_id: targetColId, position: 9999 })
     });
@@ -2448,6 +2454,12 @@ window.moveCardToBoard = async function(targetBoardId, targetColId) {
     updateColumnCounts();
     closePopover();
     closeCardModal();
+    // Карточка ушла на другую доску — DOM-реакция автоматизации (архив/выполнено)
+    // тут не нужна: карточки больше нет на текущей доске, показываем только тост.
+    try {
+        const data = await res.json();
+        (data.automations || []).forEach(r => showToast(`Сработала автоматизация «${r.rule_name || ''}» на целевой доске`));
+    } catch {}
 };
 
 // ===== MEMBERS PANEL =====
@@ -4464,6 +4476,9 @@ window.openBoardSettings = function(btn) {
     const active = document.querySelector('.bsp-color-swatch--active');
     _boardColor = active ? active.dataset.color
         : (document.getElementById('bspColorCustom')?.value || '#0052cc');
+
+    _populateImportanceSelect();
+    renderAutomationList();
 };
 
 window.closeBoardSettings = function() {
@@ -4529,6 +4544,137 @@ window.saveBoardAsTemplate = async function() {
     input.value = '';
     showBspMsg('Шаблон доски сохранён');
 };
+
+
+// ===== АВТОМАТИЗАЦИЯ ПО ТРИГГЕРУ (Should №52) =====
+
+const _AUTOMATION_ACTION_LABELS = {
+    mark_complete:   'Отметить выполненной',
+    mark_incomplete: 'Снять отметку выполнения',
+    archive_card:    'Отправить в архив',
+    set_importance:  'Установить важность',
+    add_label:       'Добавить метку',
+};
+
+function _populateImportanceSelect() {
+    const sel = document.getElementById('autoImportanceValue');
+    if (!sel || sel.dataset.populated) return;
+    sel.innerHTML = IMPORTANCE_LEVELS.map(l => `<option value="${escHtml(l.name)}">${escHtml(l.name)}</option>`).join('');
+    sel.dataset.populated = '1';
+}
+
+window.onAutoActionTypeChange = function() {
+    const type = document.getElementById('autoActionType').value;
+    document.getElementById('autoImportanceValue').style.display = type === 'set_importance' ? '' : 'none';
+    document.getElementById('autoLabelNameValue').style.display  = type === 'add_label' ? '' : 'none';
+};
+
+function _automationRuleSummary(rule) {
+    let action = _AUTOMATION_ACTION_LABELS[rule.action_type] || rule.action_type;
+    if (rule.action_type === 'set_importance') {
+        action += `: ${rule.action_value}`;
+    } else if (rule.action_type === 'add_label') {
+        try { action += `: «${JSON.parse(rule.action_value).name}»`; } catch { /* старое значение без JSON */ }
+    }
+    return `Когда карточка попадает в «${rule.trigger_column_name}» → ${action}`;
+}
+
+window.renderAutomationList = async function() {
+    const boardId = _getBoardId();
+    const container = document.getElementById('bspAutomationList');
+    if (!boardId || !container) return;
+    container.innerHTML = '<p class="cm-empty-hint">Загрузка...</p>';
+
+    let rules = [];
+    try {
+        const res = await fetch(`/api/boards/${boardId}/automations`);
+        if (res.ok) rules = await res.json();
+    } catch (err) { console.error('renderAutomationList error:', err); }
+
+    if (!rules.length) {
+        container.innerHTML = '<p class="cm-empty-hint">Нет правил автоматизации</p>';
+        return;
+    }
+    container.innerHTML = rules.map(r => `
+        <div class="bsp-automation-item">
+            <label class="bsp-cf-toggle">
+                <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleAutomationRule(${r.id}, this.checked)">
+            </label>
+            <span class="bsp-automation-text">${escHtml(_automationRuleSummary(r))}</span>
+            <button class="bsp-cf-delete" onclick="deleteAutomationRule(${r.id}, this)" title="Удалить">✕</button>
+        </div>
+    `).join('');
+};
+
+window.addAutomationRule = async function() {
+    const boardId = _getBoardId();
+    const triggerColumnId = parseInt(document.getElementById('autoTriggerColumn').value);
+    const actionType = document.getElementById('autoActionType').value;
+    if (!boardId || !triggerColumnId || !actionType) {
+        showBspMsg('Выберите колонку-триггер и действие', true);
+        return;
+    }
+
+    let actionValue = '';
+    if (actionType === 'set_importance') {
+        actionValue = document.getElementById('autoImportanceValue').value;
+    } else if (actionType === 'add_label') {
+        const name = document.getElementById('autoLabelNameValue').value.trim();
+        if (!name) { showBspMsg('Введите название метки', true); return; }
+        actionValue = JSON.stringify({ name, color: '#4361EE' });
+    }
+
+    const res = await fetch(`/api/boards/${boardId}/automations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trigger_column_id: triggerColumnId, action_type: actionType, action_value: actionValue })
+    });
+    if (!res.ok) { showBspMsg('Не удалось создать правило', true); return; }
+    const labelInput = document.getElementById('autoLabelNameValue');
+    if (labelInput) labelInput.value = '';
+    renderAutomationList();
+    showBspMsg('Правило добавлено');
+};
+
+window.toggleAutomationRule = async function(ruleId, enabled) {
+    await fetch(`/api/automations/${ruleId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+    });
+};
+
+window.deleteAutomationRule = async function(ruleId, btn) {
+    if (!confirm('Удалить это правило автоматизации?')) return;
+    await fetch(`/api/automations/${ruleId}`, { method: 'DELETE' });
+    btn.closest('.bsp-automation-item')?.remove();
+};
+
+// Реакция на действия автоматизации, вернувшиеся из ответа API после перемещения
+// карточки — полноценной живой синхронизации DOM для меток/важности нет (см. то же
+// решение для зеркальных карточек), но выполнение/архивацию отражаем сразу, т.к.
+// оставлять архивированную карточку видимой на доске было бы явно вводящим в заблуждение.
+function _applyAutomationResult(cardId, result) {
+    const cardEl = document.querySelector(`.cards-list .card[data-card-id="${cardId}"]`);
+    if (result.action_type === 'archive_card') {
+        cardEl?.remove();
+        showToast(`Автоматизация «${result.rule_name || ''}»: карточка отправлена в архив`);
+    } else if (result.action_type === 'mark_complete') {
+        cardEl?.classList.add('card--done');
+        showToast(`Автоматизация «${result.rule_name || ''}»: карточка отмечена выполненной`);
+    } else if (result.action_type === 'mark_incomplete') {
+        cardEl?.classList.remove('card--done');
+        showToast(`Автоматизация «${result.rule_name || ''}»: отметка выполнения снята`);
+    } else {
+        showToast(`Сработала автоматизация «${result.rule_name || ''}» — изменения будут видны при следующей загрузке доски`);
+    }
+}
+
+function _handleAutomationResults(cardId, automations) {
+    if (!automations || !automations.length) return;
+    automations.forEach(r => _applyAutomationResult(r.card_id || cardId, r));
+    updateColumnCounts();
+}
 
 window.uploadBoardBackground = async function(input) {
     const boardId = _getBoardId();

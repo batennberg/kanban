@@ -291,6 +291,30 @@
                 </div>
             </div>
 
+            <div class="bsp-field-group">
+                <label class="bsp-label">Автоматизация</label>
+                <p class="cm-empty-hint" style="margin:0 0 6px">Когда карточка попадает в колонку-триггер — выполняется действие.</p>
+                <div class="bsp-automation-list" id="bspAutomationList"></div>
+                <div class="bsp-automation-add">
+                    <select class="bsp-input" id="autoTriggerColumn">
+                        <option value="">Колонка-триггер...</option>
+                        {% for col in board.columns %}
+                        <option value="{{ col.id }}">{{ col.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <select class="bsp-input" id="autoActionType" onchange="onAutoActionTypeChange()">
+                        <option value="mark_complete">Отметить выполненной</option>
+                        <option value="mark_incomplete">Снять отметку выполнения</option>
+                        <option value="archive_card">Отправить в архив</option>
+                        <option value="set_importance">Установить важность</option>
+                        <option value="add_label">Добавить метку</option>
+                    </select>
+                    <select class="bsp-input" id="autoImportanceValue" style="display:none"></select>
+                    <input class="bsp-input" id="autoLabelNameValue" type="text" placeholder="Название метки" style="display:none">
+                    <button class="btn-secondary btn-sm" onclick="addAutomationRule()">Добавить правило</button>
+                </div>
+            </div>
+
             <button class="btn-primary bsp-save-btn" onclick="saveBoardSettings()">Сохранить</button>
             <div class="bsp-msg" id="bspMsg"></div>
         </div>

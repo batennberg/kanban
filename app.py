@@ -202,6 +202,48 @@ def _log_activity(conn, card_id, event_type, detail=''):
     )
 
 
+_AUTOMATION_ACTIONS = ('mark_complete', 'mark_incomplete', 'archive_card', 'set_importance', 'add_label')
+
+
+def _apply_automation_action(conn, card_id, rule):
+    """Выполняет одно действие автоматизации над карточкой (Should №52)."""
+    action = rule['action_type']
+    value  = rule['action_value'] or ''
+    tag    = f"автоматизация «{rule['name']}»" if rule['name'] else 'автоматизация'
+
+    if action == 'mark_complete':
+        conn.execute('UPDATE cards SET completed=1 WHERE id=?', (card_id,))
+        _log_activity(conn, card_id, 'completed', tag)
+    elif action == 'mark_incomplete':
+        conn.execute('UPDATE cards SET completed=0 WHERE id=?', (card_id,))
+        _log_activity(conn, card_id, 'reopened', tag)
+    elif action == 'archive_card':
+        conn.execute("UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE id=?", (card_id,))
+        _log_activity(conn, card_id, 'archived', tag)
+    elif action == 'set_importance':
+        conn.execute('UPDATE cards SET importance=? WHERE id=?', (value, card_id))
+        _log_activity(conn, card_id, 'importance_set', value)
+    elif action == 'add_label':
+        try:
+            data = json.loads(value)
+            name, color = (data.get('name') or '').strip(), data.get('color') or '#4361EE'
+        except (ValueError, TypeError, AttributeError):
+            name, color = value.strip(), '#4361EE'
+        if name:
+            conn.execute('INSERT OR IGNORE INTO card_labels (card_id, name, color) VALUES (?,?,?)', (card_id, name, color))
+            _log_activity(conn, card_id, 'label_added', name)
+    return {'rule_id': rule['id'], 'rule_name': rule['name'], 'action_type': action}
+
+
+def _run_column_automations(conn, card_id, column_id):
+    """Триггер «карточка попала в колонку X» — применяет все включённые правила
+    этой колонки к карточке и возвращает список выполненных действий."""
+    rules = conn.execute(
+        'SELECT * FROM automation_rules WHERE trigger_column_id=? AND enabled=1', (column_id,)
+    ).fetchall()
+    return [_apply_automation_action(conn, card_id, rule) for rule in rules]
+
+
 def _log_card_update_activity(conn, card_id, before, d):
     if 'title' in d and d['title'] != before['title']:
         _log_activity(conn, card_id, 'renamed', f"{before['title']} → {d['title']}")
@@ -1405,6 +1447,7 @@ def api_update_card(card_id):
         if f in d:
             fields.append(f'{f}=?')
             values.append(d[f])
+    automations = []
     if fields:
         with get_db() as conn:
             before = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
@@ -1412,7 +1455,9 @@ def api_update_card(card_id):
             conn.execute(f'UPDATE cards SET {",".join(fields)} WHERE id=?', values)
             if before:
                 _log_card_update_activity(conn, card_id, before, d)
-    return jsonify({'ok': True})
+                if 'column_id' in d and before['column_id'] != d['column_id']:
+                    automations = _run_column_automations(conn, card_id, d['column_id'])
+    return jsonify({'ok': True, 'automations': automations})
 
 @app.route('/api/cards/<int:card_id>', methods=['DELETE'])
 def api_delete_card(card_id):
@@ -1489,6 +1534,7 @@ def api_archive():
 @app.route('/api/cards/reorder', methods=['POST'])
 def api_reorder_cards():
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    automations = []
     with get_db() as conn:
         for item in request.get_json().get('cards', []):
             before = conn.execute('SELECT column_id FROM cards WHERE id=?', (item['id'],)).fetchone()
@@ -1501,7 +1547,9 @@ def api_reorder_cards():
                 names = {c['id']: c['name'] for c in cols}
                 _log_activity(conn, item['id'], 'moved_column',
                               f"{names.get(before['column_id'], '?')} → {names.get(item['column_id'], '?')}")
-    return jsonify({'ok': True})
+                for result in _run_column_automations(conn, item['id'], item['column_id']):
+                    automations.append({**result, 'card_id': item['id']})
+    return jsonify({'ok': True, 'automations': automations})
 
 
 # ===== API — CHECKLISTS =====
@@ -2163,6 +2211,64 @@ def api_delete_card_template(template_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         conn.execute('DELETE FROM card_templates WHERE id=?', (template_id,))
+    return jsonify({'ok': True})
+
+
+# ===== API — АВТОМАТИЗАЦИЯ ПО ТРИГГЕРУ (Should №52) =====
+
+@app.route('/api/boards/<int:board_id>/automations', methods=['GET'])
+def api_get_automations(board_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute('''
+            SELECT ar.*, col.name AS trigger_column_name
+            FROM automation_rules ar
+            JOIN columns col ON col.id = ar.trigger_column_id
+            WHERE ar.board_id=? ORDER BY ar.id
+        ''', (board_id,)).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/boards/<int:board_id>/automations', methods=['POST'])
+def api_create_automation(board_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json() or {}
+    trigger_column_id = d.get('trigger_column_id')
+    action_type       = d.get('action_type')
+    action_value      = d.get('action_value', '')
+    name              = (d.get('name') or '').strip()
+    if not trigger_column_id or action_type not in _AUTOMATION_ACTIONS:
+        return jsonify({'error': 'invalid'}), 400
+    with get_db() as conn:
+        col = conn.execute('SELECT board_id FROM columns WHERE id=?', (trigger_column_id,)).fetchone()
+        if not col or col['board_id'] != board_id:
+            return jsonify({'error': 'колонка не принадлежит этой доске'}), 400
+        cur = conn.execute(
+            '''INSERT INTO automation_rules (board_id, name, trigger_column_id, action_type, action_value)
+               VALUES (?,?,?,?,?)''',
+            (board_id, name, trigger_column_id, action_type, action_value)
+        )
+        row = dict(conn.execute('''
+            SELECT ar.*, col.name AS trigger_column_name
+            FROM automation_rules ar JOIN columns col ON col.id = ar.trigger_column_id
+            WHERE ar.id=?
+        ''', (cur.lastrowid,)).fetchone())
+    return jsonify(row), 201
+
+@app.route('/api/automations/<int:rule_id>', methods=['PUT'])
+def api_update_automation(rule_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json() or {}
+    if 'enabled' not in d:
+        return jsonify({'error': 'nothing to update'}), 400
+    with get_db() as conn:
+        conn.execute('UPDATE automation_rules SET enabled=? WHERE id=?', (1 if d['enabled'] else 0, rule_id))
+    return jsonify({'ok': True})
+
+@app.route('/api/automations/<int:rule_id>', methods=['DELETE'])
+def api_delete_automation(rule_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute('DELETE FROM automation_rules WHERE id=?', (rule_id,))
     return jsonify({'ok': True})
 
 
@@ -2844,6 +2950,22 @@ def migrate_db():
                 column_id      INTEGER NOT NULL REFERENCES columns(id) ON DELETE CASCADE,
                 position       INTEGER DEFAULT 0,
                 created_at     TEXT    DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+
+        # ── Автоматизация по триггеру (Should №52) — базовый вид: только
+        # «карточка попала в колонку X» ⇒ одно действие. Без условий/расписания/
+        # межбордовой автоматизации — это отдельные пункты чек-листа (№54-57). ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS automation_rules (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_id          INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                name              TEXT    NOT NULL DEFAULT '',
+                trigger_column_id INTEGER NOT NULL REFERENCES columns(id) ON DELETE CASCADE,
+                action_type       TEXT    NOT NULL,
+                action_value      TEXT    DEFAULT '',
+                enabled           INTEGER DEFAULT 1,
+                created_at        TEXT    DEFAULT (datetime('now','localtime'))
             )
         ''')
 
