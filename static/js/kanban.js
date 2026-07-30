@@ -119,6 +119,7 @@ function _switchBoardView(name) {
 
     if (name === 'kanban') {
         wrap.style.display = '';
+        _syncBoardStateToURL();
         return;
     }
 
@@ -132,6 +133,7 @@ function _switchBoardView(name) {
     if (btn) btn.classList.add('btn-board-action--active');
     if (txt) txt.textContent = 'Доска';
     if (v.onShow) v.onShow();
+    _syncBoardStateToURL();
 }
 
 window.toggleTableView = function() {
@@ -152,6 +154,104 @@ window.toggleGanttView = function() {
 window.toggleDashboardView = function() {
     const d = document.getElementById('dashboardView');
     _switchBoardView(d && d.style.display !== 'none' ? 'kanban' : 'dashboard');
+};
+
+
+// ===== СОХРАНЕНИЕ ФИЛЬТРА+ВИДА В ССЫЛКЕ (Should №45) =====
+// Текущий вид и активные фильтры кодируются в query-параметрах через
+// history.replaceState — обычная ссылка на доску воспроизводит и то, и другое
+// у коллеги, без отдельного механизма «сохранённых представлений».
+
+function _activeViewName() {
+    return Object.keys(_BOARD_VIEWS).find(k => {
+        const el = document.getElementById(_BOARD_VIEWS[k].elId);
+        return el && el.style.display !== 'none';
+    }) || null;
+}
+
+function _syncBoardStateToURL() {
+    const boardId = _getBoardId();
+    if (!boardId) return;
+
+    const params = new URLSearchParams();
+    const view = _activeViewName();
+    if (view) params.set('view', view);
+
+    if (activeFilters.labels.size)       params.set('labels', [...activeFilters.labels].join(','));
+    if (activeFilters.importance.size)   params.set('importance', [...activeFilters.importance].join(','));
+    if (activeFilters.due)               params.set('due', activeFilters.due);
+    if (activeFilters.done)              params.set('done', activeFilters.done);
+    if (activeFilters.members.size)      params.set('members', [...activeFilters.members].join(','));
+    if (activeFilters.customFields.size) params.set('cf', [...activeFilters.customFields].join('|'));
+
+    const cardParam = new URLSearchParams(location.search).get('card');
+    if (cardParam) params.set('card', cardParam);
+
+    const qs = params.toString();
+    history.replaceState(null, '', `/board/${boardId}` + (qs ? `?${qs}` : ''));
+}
+
+function _restoreBoardStateFromURL() {
+    const params = new URLSearchParams(location.search);
+    const view       = params.get('view');
+    const labels     = params.get('labels');
+    const importance = params.get('importance');
+    const due        = params.get('due');
+    const done       = params.get('done');
+    const members    = params.get('members');
+    const cf         = params.get('cf');
+
+    let hasAny = false;
+    if (labels)     { activeFilters.labels       = new Set(labels.split(',').filter(Boolean));     hasAny = true; }
+    if (importance) { activeFilters.importance   = new Set(importance.split(',').filter(Boolean)); hasAny = true; }
+    if (due)        { activeFilters.due          = due;  hasAny = true; }
+    if (done)       { activeFilters.done         = done; hasAny = true; }
+    if (members)    { activeFilters.members      = new Set(members.split(',').filter(Boolean));    hasAny = true; }
+    if (cf)         { activeFilters.customFields = new Set(cf.split('|').filter(Boolean));          hasAny = true; }
+
+    if (hasAny) {
+        const bar = document.getElementById('filterBar');
+        if (bar) {
+            buildLabelChips();
+            buildImportanceChips();
+            buildCustomFieldChips();
+            buildMemberChips();
+            bar.style.display = '';
+            document.getElementById('btnFilters')?.classList.add('btn-board-action--active');
+            if (due)  document.querySelector(`[data-filter-due="${due}"]`)?.classList.add('fb-chip--active');
+            if (done) document.querySelector(`[data-filter-done="${done}"]`)?.classList.add('fb-chip--active');
+        }
+        applyFilters();
+    }
+
+    if (view && _BOARD_VIEWS[view]) _switchBoardView(view);
+}
+
+document.addEventListener('DOMContentLoaded', _restoreBoardStateFromURL);
+
+async function _copyToClipboard(text, successMsg) {
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity  = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+        }
+        showToast(successMsg);
+    } catch (err) {
+        console.error('_copyToClipboard error:', err);
+        showToast('Не удалось скопировать ссылку', 'error');
+    }
+}
+
+window.copyBoardViewLink = function() {
+    _copyToClipboard(location.href, 'Ссылка на этот вид и фильтры скопирована');
 };
 
 function tvCollectCards() {
@@ -1081,24 +1181,7 @@ window.closeCardModal = async function() {
 window.copyCardLink = async function() {
     if (!currentCardDbId) return;
     const link = `${location.origin}/card/${currentCardDbId}`;
-    try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(link);
-        } else {
-            const ta = document.createElement('textarea');
-            ta.value = link;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-        }
-        showToast('Ссылка на карточку скопирована');
-    } catch (err) {
-        console.error('copyCardLink error:', err);
-        showToast('Не удалось скопировать ссылку', 'error');
-    }
+    await _copyToClipboard(link, 'Ссылка на карточку скопирована');
 };
 
 window.handleModalOverlayClick = e => {
@@ -3210,7 +3293,11 @@ document.addEventListener('DOMContentLoaded', function() {
         openCardModal(null, cardEl);
     } else {
         showToast('Карточка не найдена (возможно, в архиве или на другой доске)', 'error');
-        history.replaceState(null, '', location.pathname);
+        // Убираем только card= — вид/фильтры из ссылки (Should №45) не трогаем
+        const params = new URLSearchParams(location.search);
+        params.delete('card');
+        const qs = params.toString();
+        history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
     }
 });
 
@@ -3462,6 +3549,8 @@ function applyFilters() {
             _setColumnCountDisplay(col, counter, visible);
         }
     });
+
+    _syncBoardStateToURL();
 }
 
 window.clearFilters = function() {
@@ -3470,6 +3559,7 @@ window.clearFilters = function() {
     document.querySelectorAll('.card').forEach(c => c.style.display = '');
     document.getElementById('btnFilters')?.classList.remove('btn-board-action--active');
     updateColumnCounts();
+    _syncBoardStateToURL();
 };
 
 
