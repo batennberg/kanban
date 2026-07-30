@@ -69,6 +69,221 @@ function _setColumnCountDisplay(col, counter, count) {
     col.classList.toggle('column--wip-over', !!limit && count > limit);
 }
 
+
+// ===== ТАБЛИЧНЫЙ ВИД (Should №37) =====
+// Строится из уже отрендеренного DOM канбан-доски — без отдельного запроса к серверу;
+// поэтому автоматически учитывает уже применённые фильтры доски (скрытые фильтром
+// карточки в таблицу не попадают).
+
+let _tvSortKey  = null;
+let _tvSortDir  = 1;
+let _tvSelected = new Set();
+let _tvRows     = [];
+
+function _ruPlural(n, one, few, many) {
+    const mod10 = Math.abs(n) % 10;
+    const mod100 = Math.abs(n) % 100;
+    if (mod100 > 10 && mod100 < 20) return many;
+    if (mod10 === 1) return one;
+    if (mod10 >= 2 && mod10 <= 4) return few;
+    return many;
+}
+
+function _rgbToHex(rgb) {
+    const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(rgb || '');
+    if (!m) return rgb || '#6b778c';
+    return '#' + [1, 2, 3].map(i => parseInt(m[i]).toString(16).padStart(2, '0')).join('');
+}
+
+window.toggleTableView = function() {
+    const tv   = document.getElementById('tableView');
+    const wrap = document.querySelector('.board-columns-wrap');
+    const btn  = document.getElementById('btnTableView');
+    const txt  = document.getElementById('btnTableViewText');
+    if (!tv || !wrap) return;
+
+    const isOpen = tv.style.display !== 'none';
+    if (isOpen) {
+        tv.style.display   = 'none';
+        wrap.style.display = '';
+        txt.textContent = 'Таблица';
+        btn.classList.remove('btn-board-action--active');
+    } else {
+        wrap.style.display = 'none';
+        tv.style.display   = '';
+        txt.textContent = 'Доска';
+        btn.classList.add('btn-board-action--active');
+        tvBuildRows();
+    }
+};
+
+function tvCollectCards() {
+    const rows = [];
+    document.querySelectorAll('.column:not(.column--add)').forEach(col => {
+        const colName = col.querySelector('.column-title')?.textContent.trim() || '';
+        col.querySelectorAll(':scope > .cards-list > .card').forEach(card => {
+            if (card.style.display === 'none') return; // уважаем активные фильтры доски
+            const labels = [...card.querySelectorAll('.card-label')].map(el => ({
+                text: el.textContent.trim(), color: _rgbToHex(el.style.color)
+            }));
+            const importanceEl = card.querySelector('.card-importance');
+            const dueEl        = card.querySelector('.card-due');
+            const members = (card.dataset.members || '').split('|').filter(Boolean)
+                .map(p => p.split('::')[1] || p.split('::')[0]);
+            rows.push({
+                cardId: card.dataset.cardId,
+                title: card.querySelector('.card-title')?.textContent.trim() || '',
+                column: colName,
+                labels,
+                importance: importanceEl ? importanceEl.textContent.trim() : '',
+                importanceColor: importanceEl ? _rgbToHex(importanceEl.style.color) : '',
+                due: dueEl ? dueEl.textContent.trim() : '',
+                members,
+                done: card.classList.contains('card--done'),
+            });
+        });
+    });
+    return rows;
+}
+
+window.tvBuildRows = function() {
+    _tvRows = tvCollectCards();
+    tvRender();
+};
+
+function _tvDueKey(due) {
+    const parts = (due || '').split('.');
+    if (parts.length !== 3) return '';
+    return parts[2] + parts[1] + parts[0]; // ГГГГММДД — для сортировки по возрастанию даты
+}
+
+function tvCompare(a, b, key) {
+    let av, bv;
+    switch (key) {
+        case 'title':      av = a.title; bv = b.title; break;
+        case 'column':     av = a.column; bv = b.column; break;
+        case 'labels':     av = a.labels.map(l => l.text).join(','); bv = b.labels.map(l => l.text).join(','); break;
+        case 'importance': av = a.importance; bv = b.importance; break;
+        case 'due':        av = _tvDueKey(a.due); bv = _tvDueKey(b.due); break;
+        case 'members':    av = a.members.join(','); bv = b.members.join(','); break;
+        case 'status':     av = a.done ? 1 : 0; bv = b.done ? 1 : 0; break;
+        default: return 0;
+    }
+    if (av < bv) return -1;
+    if (av > bv) return 1;
+    return 0;
+}
+
+window.tvSort = function(key) {
+    if (_tvSortKey === key) { _tvSortDir *= -1; } else { _tvSortKey = key; _tvSortDir = 1; }
+    document.querySelectorAll('.tv-sort-arrow').forEach(el => el.textContent = '');
+    const arrowEl = document.querySelector(`.tv-sort-arrow[data-sort-key="${key}"]`);
+    if (arrowEl) arrowEl.textContent = _tvSortDir === 1 ? '▲' : '▼';
+    tvRender();
+};
+
+function tvRender() {
+    let rows = [..._tvRows];
+    if (_tvSortKey) rows.sort((a, b) => _tvSortDir * tvCompare(a, b, _tvSortKey));
+
+    const countEl = document.getElementById('tvCount');
+    if (countEl) countEl.textContent = `${rows.length} ${_ruPlural(rows.length, 'карточка', 'карточки', 'карточек')}`;
+
+    const tbody = document.getElementById('tvBody');
+    if (!tbody) return;
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="tv-empty">Нет карточек</td></tr>';
+        tvUpdateBulkBar();
+        return;
+    }
+    tbody.innerHTML = rows.map(r => `
+        <tr class="${r.done ? 'tv-row--done' : ''}">
+            <td><input type="checkbox" class="tv-row-check" data-tv-card-id="${r.cardId}" onchange="tvToggleRow('${r.cardId}', this.checked)" ${_tvSelected.has(String(r.cardId)) ? 'checked' : ''}></td>
+            <td><span class="tv-title" onclick="tvOpenCard('${r.cardId}')">${escHtml(r.title)}</span></td>
+            <td>${escHtml(r.column)}</td>
+            <td><div class="tv-labels">${r.labels.map(l => `<span class="card-label" style="background:${l.color}20;color:${l.color};border:1px solid ${l.color}40">${escHtml(l.text)}</span>`).join('')}</div></td>
+            <td>${r.importance ? `<span class="card-importance" style="background:${r.importanceColor}20;color:${r.importanceColor};border:1px solid ${r.importanceColor}40">${escHtml(r.importance)}</span>` : ''}</td>
+            <td>${escHtml(r.due)}</td>
+            <td>${escHtml(r.members.join(', '))}</td>
+            <td><span class="tv-status-badge tv-status-badge--${r.done ? 'done' : 'active'}">${r.done ? 'Выполнена' : 'Активна'}</span></td>
+        </tr>
+    `).join('');
+    tvUpdateBulkBar();
+}
+
+window.tvOpenCard = function(cardId) {
+    const cardEl = document.querySelector(`.cards-list .card[data-card-id="${cardId}"]`);
+    if (cardEl) openCardModal(null, cardEl);
+};
+
+window.tvToggleRow = function(cardId, checked) {
+    if (checked) _tvSelected.add(String(cardId)); else _tvSelected.delete(String(cardId));
+    tvUpdateBulkBar();
+};
+
+window.tvToggleSelectAll = function(checked) {
+    document.querySelectorAll('.tv-row-check').forEach(cb => {
+        cb.checked = checked;
+        if (checked) _tvSelected.add(cb.dataset.tvCardId); else _tvSelected.delete(cb.dataset.tvCardId);
+    });
+    tvUpdateBulkBar();
+};
+
+function tvUpdateBulkBar() {
+    const bar = document.getElementById('tvBulkActions');
+    const cnt = document.getElementById('tvSelectedCount');
+    const all = document.getElementById('tvSelectAll');
+    if (!bar || !cnt) return;
+    bar.style.display = _tvSelected.size ? 'flex' : 'none';
+    cnt.textContent = `${_tvSelected.size} выбрано`;
+    if (all) all.checked = _tvRows.length > 0 && _tvSelected.size === _tvRows.length;
+}
+
+window.tvBulkMove = async function(colId) {
+    if (!colId || !_tvSelected.size) return;
+    for (const cardId of [..._tvSelected]) {
+        await fetch(`/api/cards/${cardId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ column_id: parseInt(colId), position: 9999 })
+        });
+        const cardEl     = document.querySelector(`.cards-list .card[data-card-id="${cardId}"]`);
+        const targetList = document.getElementById('cards-' + colId);
+        if (cardEl && targetList) targetList.appendChild(cardEl);
+    }
+    updateColumnCounts();
+    _tvSelected.clear();
+    document.getElementById('tvBulkMoveSelect').value = '';
+    tvBuildRows();
+    showToast('Карточки перемещены');
+};
+
+window.tvBulkComplete = async function() {
+    if (!_tvSelected.size) return;
+    for (const cardId of [..._tvSelected]) {
+        await fetch(`/api/cards/${cardId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ completed: 1 })
+        });
+        document.querySelector(`.cards-list .card[data-card-id="${cardId}"]`)?.classList.add('card--done');
+    }
+    _tvSelected.clear();
+    tvBuildRows();
+    showToast('Отмечены как выполненные');
+};
+
+window.tvBulkArchive = async function() {
+    if (!_tvSelected.size) return;
+    if (!confirm(`Отправить ${_tvSelected.size} ${_ruPlural(_tvSelected.size, 'карточку', 'карточки', 'карточек')} в архив?`)) return;
+    for (const cardId of [..._tvSelected]) {
+        await fetch(`/api/cards/${cardId}`, { method: 'DELETE' });
+        document.querySelector(`.cards-list .card[data-card-id="${cardId}"]`)?.remove();
+    }
+    updateColumnCounts();
+    _tvSelected.clear();
+    tvBuildRows();
+    showToast('Отправлены в архив');
+};
+
 // ===== СВОРАЧИВАНИЕ КОЛОНОК =====
 
 function collapsedColsStorageKey() {

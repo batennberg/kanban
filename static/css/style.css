@@ -958,6 +958,98 @@ input { font-family: inherit; }
     padding-bottom: 20px;
 }
 
+/* ===== ТАБЛИЧНЫЙ ВИД (Should №37) ===== */
+
+.table-view {
+    height: calc(100vh - 52px);
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.tv-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.tv-count { font-size: 13px; color: var(--text-2, #6b778c); }
+
+.tv-bulk-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-2, #6b778c);
+}
+
+.tv-bulk-select {
+    font-size: 12px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    border: 1px solid #dfe1e6;
+    background: #fff;
+}
+
+.tv-table-wrap {
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(12px) saturate(160%);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.85);
+    box-shadow: 0 6px 32px rgba(0,0,0,0.07);
+    overflow: auto;
+}
+
+.tv-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.tv-table th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #6b778c;
+    padding: 10px 12px;
+    border-bottom: 2px solid #ebecf0;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+}
+.tv-table th:hover { color: #1a2535; }
+.tv-th-check { width: 32px; cursor: default !important; }
+
+.tv-sort-arrow { font-size: 9px; opacity: 0.6; }
+
+.tv-table td {
+    padding: 9px 12px;
+    border-bottom: 1px solid #f4f5f7;
+    vertical-align: middle;
+}
+
+.tv-table tbody tr:hover { background: rgba(0,0,0,0.02); }
+.tv-table tbody tr.tv-row--done .tv-title { text-decoration: line-through; color: #6b778c; }
+
+.tv-title { font-weight: 500; color: #1a2535; cursor: pointer; }
+.tv-title:hover { text-decoration: underline; }
+
+.tv-labels { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.tv-status-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+.tv-status-badge--done   { background: #e3fcef; color: #00875a; }
+.tv-status-badge--active { background: #f4f5f7; color: #6b778c; }
+
+.tv-empty { padding: 24px; text-align: center; color: #6b778c; font-size: 13px; }
+
 /* Column — Deep Liquid Glass */
 .column {
     width: 300px;
