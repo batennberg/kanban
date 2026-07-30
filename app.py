@@ -359,10 +359,10 @@ def _duplicate_board(conn, src_board_id, name_suffix=' (копия)'):
     ).fetchall()
     for i, col in enumerate(cols):
         _duplicate_column(conn, col['id'], new_board_id, i, field_id_map=field_id_map)
-    for row in conn.execute('SELECT user_id FROM board_access WHERE board_id=?', (src_board_id,)):
+    for row in conn.execute('SELECT user_id, expires_at FROM board_access WHERE board_id=?', (src_board_id,)):
         conn.execute(
-            'INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (?,?)',
-            (row['user_id'], new_board_id)
+            'INSERT OR IGNORE INTO board_access (user_id, board_id, expires_at) VALUES (?,?,?)',
+            (row['user_id'], new_board_id, row['expires_at'])
         )
     return new_board_id
 
@@ -443,9 +443,10 @@ def login():
                     board_ids = None
                 else:
                     with get_db() as conn:
-                        board_ids = [r[0] for r in conn.execute(
-                            'SELECT board_id FROM board_access WHERE user_id=?', (user['id'],)
-                        ).fetchall()]
+                        board_ids = [r[0] for r in conn.execute('''
+                            SELECT board_id FROM board_access
+                            WHERE user_id=? AND (expires_at IS NULL OR expires_at='' OR expires_at >= date('now','localtime'))
+                        ''', (user['id'],)).fetchall()]
                 session['user'] = {
                     'id':           user['id'],
                     'name':         user['name'],
@@ -470,14 +471,30 @@ def logout():
 # ===== СТРАНИЦЫ =====
 
 def _get_board_ids():
-    """Возвращает список доступных board_id для текущего пользователя или None (все)."""
+    """Возвращает список доступных board_id для текущего пользователя или None (все).
+
+    Для SQLite-режима запрашивается свежий board_access при каждом вызове (а не
+    кэш из сессии, выставленный при логине) — иначе отзыв доступа и истечение
+    временного/гостевого приглашения (Must №78) не подействовали бы, пока
+    пользователь не перелогинится."""
     from sheets import is_configured, get_user, get_board_ids
     if is_configured():
         user_rec = get_user(session['user']['email'])
         if not user_rec:
             return []
         return get_board_ids(user_rec)
-    return session['user'].get('board_ids')  # fallback: SQLite-сессия
+
+    if session['user'].get('role') == 'admin':
+        return None
+    user_id = session['user'].get('id')
+    if not user_id:
+        return session['user'].get('board_ids')  # запасной вариант для старых сессий без id
+    with get_db() as conn:
+        rows = conn.execute('''
+            SELECT board_id FROM board_access
+            WHERE user_id=? AND (expires_at IS NULL OR expires_at='' OR expires_at >= date('now','localtime'))
+        ''', (user_id,)).fetchall()
+    return [r[0] for r in rows]
 
 
 @app.route('/boards')
@@ -1138,6 +1155,7 @@ def api_get_board_members(board_id):
                 SELECT DISTINCT u.email, u.name
                 FROM users u
                 LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = ?
+                    AND (ba.expires_at IS NULL OR ba.expires_at='' OR ba.expires_at >= date('now','localtime'))
                 WHERE u.role = 'admin' OR ba.user_id IS NOT NULL
                 ORDER BY u.name
             ''', (board_id,)).fetchall()
@@ -1146,6 +1164,7 @@ def api_get_board_members(board_id):
                 SELECT DISTINCT u.email, u.name
                 FROM users u
                 JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = ?
+                    AND (ba.expires_at IS NULL OR ba.expires_at='' OR ba.expires_at >= date('now','localtime'))
                 WHERE u.role != 'admin'
                 ORDER BY u.name
             ''', (board_id,)).fetchall()
@@ -1857,7 +1876,10 @@ def api_get_board_access(board_id):
     with get_db() as conn:
         rows = conn.execute('''
             SELECT u.id, u.name, u.email,
-                   CASE WHEN ba.user_id IS NOT NULL THEN 1 ELSE 0 END AS has_access
+                   CASE WHEN ba.user_id IS NOT NULL THEN 1 ELSE 0 END AS has_access,
+                   ba.expires_at AS expires_at,
+                   CASE WHEN ba.expires_at IS NOT NULL AND ba.expires_at != '' AND ba.expires_at < date('now','localtime')
+                        THEN 1 ELSE 0 END AS is_expired
             FROM users u
             LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = ?
             WHERE u.role != 'admin'
@@ -1869,11 +1891,16 @@ def api_get_board_access(board_id):
 def api_grant_access(board_id):
     if 'user' not in session or session['user']['role'] != 'admin':
         return jsonify({'error': 'forbidden'}), 403
-    user_id = request.get_json().get('user_id')
+    d = request.get_json()
+    user_id    = d.get('user_id')
+    expires_at = (d.get('expires_at') or '').strip() or None
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
     with get_db() as conn:
-        conn.execute('INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (?,?)', (user_id, board_id))
+        conn.execute('''
+            INSERT INTO board_access (user_id, board_id, expires_at) VALUES (?,?,?)
+            ON CONFLICT(user_id, board_id) DO UPDATE SET expires_at=excluded.expires_at
+        ''', (user_id, board_id, expires_at))
     return jsonify({'ok': True})
 
 @app.route('/api/boards/<int:board_id>/access/<int:user_id>', methods=['DELETE'])
@@ -2321,6 +2348,12 @@ def migrate_db():
         ''')
         try:
             conn.execute('ALTER TABLE inbox_entries ADD COLUMN board_id INTEGER')
+        except sqlite3.OperationalError:
+            pass
+
+        # Временный/гостевой доступ к доске — дата истечения (Must №78)
+        try:
+            conn.execute('ALTER TABLE board_access ADD COLUMN expires_at TEXT')
         except sqlite3.OperationalError:
             pass
 

@@ -2946,6 +2946,31 @@ kbd {
 .access-user-name  { font-size: 13px; font-weight: 600; color: #1a2535; }
 .access-user-email { font-size: 11px; color: #6b778c; }
 
+.access-expiry-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 3px;
+}
+
+.access-expiry-input {
+    font-size: 11px;
+    color: #6b778c;
+    border: 1px solid #dfe1e6;
+    border-radius: 4px;
+    padding: 1px 4px;
+    background: #fff;
+}
+
+.access-expired-badge {
+    font-size: 10px;
+    font-weight: 700;
+    color: #de350b;
+    background: #ffebe6;
+    border-radius: 8px;
+    padding: 1px 6px;
+}
+
 .access-toggle-btn {
     font-size: 12px;
     font-weight: 600;

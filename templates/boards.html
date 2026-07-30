@@ -553,6 +553,13 @@ function renderAccessUsers(users) {
             <div class="access-user-info">
                 <span class="access-user-name">${escHtml(u.name)}</span>
                 <span class="access-user-email">${escHtml(u.email)}</span>
+                ${u.has_access ? `
+                <span class="access-expiry-row">
+                    <input type="date" class="access-expiry-input" value="${u.expires_at || ''}"
+                           title="Гостевой доступ до даты — после неё доступ к доске отзывается автоматически. Пусто — бессрочно."
+                           onchange="setAccessExpiry(${u.id}, this.value)">
+                    ${u.is_expired ? '<span class="access-expired-badge">истёк</span>' : ''}
+                </span>` : ''}
             </div>
             <button class="access-toggle-btn ${u.has_access ? 'active' : ''}"
                     onclick="toggleAccess(${u.id}, ${u.has_access ? 1 : 0}, this)">
@@ -562,24 +569,32 @@ function renderAccessUsers(users) {
     `).join('');
 }
 
+async function setAccessExpiry(userId, expiresAt) {
+    await fetch(`/api/boards/${accessBoardId}/access`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, expires_at: expiresAt })
+    });
+    const badge = document.querySelector(`#access-row-${userId} .access-expired-badge`);
+    if (badge) badge.remove();
+}
+
 async function toggleAccess(userId, hasAccess, btn) {
     btn.disabled = true;
     if (hasAccess) {
         await fetch(`/api/boards/${accessBoardId}/access/${userId}`, { method: 'DELETE' });
-        btn.textContent = 'Нет доступа';
-        btn.classList.remove('active');
-        btn.onclick = () => toggleAccess(userId, 0, btn);
     } else {
         await fetch(`/api/boards/${accessBoardId}/access`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user_id: userId })
         });
-        btn.textContent = 'Есть доступ';
-        btn.classList.add('active');
-        btn.onclick = () => toggleAccess(userId, 1, btn);
     }
-    btn.disabled = false;
+    // Перерисовываем весь список — чтобы у только что выданного доступа
+    // сразу появилось поле «доступ до» (гостевой/временный доступ, Must №78)
+    const res   = await fetch(`/api/boards/${accessBoardId}/access`);
+    const users = await res.json();
+    renderAccessUsers(users);
 }
 
 function closeAccessModal() {
