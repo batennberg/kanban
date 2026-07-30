@@ -2985,11 +2985,17 @@ window.openColumnMenu = function(e, btn) {
     dd.style.display = 'block';
 };
 
-window.colMenuReopen = function() {
+window.colMenuReopen = function(e) {
+    e?.stopPropagation();
     document.getElementById('colMenuDropdown').innerHTML = _colMenuDefaultHTML;
 };
 
-window.colMenuCopyToBoard = async function() {
+window.colMenuCopyToBoard = async function(e) {
+    // Важно: клик на этот пункт переписывает innerHTML того же дропдауна, из-за чего
+    // кликнутая кнопка «отсоединяется» от DOM ещё до того, как событие дойдёт до
+    // document — общий обработчик «клик снаружи» ошибочно считает это кликом снаружи
+    // и закрывает меню. stopPropagation() не даёт этому случиться.
+    e?.stopPropagation();
     const dd = document.getElementById('colMenuDropdown');
     dd.innerHTML = '<div class="col-menu-item" style="color:#6b778c">Загрузка...</div>';
 
@@ -3004,13 +3010,14 @@ window.colMenuCopyToBoard = async function() {
 
     const items = boards
         .filter(b => b.id !== currentBoardId)
-        .map(b => `<button class="col-menu-item" onclick="colMenuDuplicateToBoard(${b.id}, '${escHtml(b.name)}')">${escHtml(b.name)}</button>`)
+        .map(b => `<button class="col-menu-item" onclick="colMenuDuplicateToBoard(${b.id}, '${escHtml(b.name).replace(/'/g, '&#39;')}', event)">${escHtml(b.name)}</button>`)
         .join('');
-    const back = `<button class="col-menu-item" onclick="colMenuReopen()">← Назад</button>`;
+    const back = `<button class="col-menu-item" onclick="colMenuReopen(event)">← Назад</button>`;
     dd.innerHTML = back + (items || '<div class="col-menu-item" style="color:#6b778c">Нет других досок</div>');
 };
 
-window.colMenuDuplicateToBoard = async function(targetBoardId, targetBoardName) {
+window.colMenuDuplicateToBoard = async function(targetBoardId, targetBoardName, e) {
+    e?.stopPropagation();
     document.getElementById('colMenuDropdown').style.display = 'none';
     const colId = colMenuTargetId;
     if (!colId) return;
