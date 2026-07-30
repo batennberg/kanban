@@ -80,25 +80,52 @@
         if (panel) panel.style.display = 'none';
     }
 
-    function renderInboxItem(item) {
+    function _inboxItemParts(item) {
         var payload = item.payload || {};
-        var title = payload.card_title || 'Карточка';
-        var boardName = payload.board_name || '';
         var actorName = payload.actor_name || payload.actor_email || 'кто-то';
-        var excerpt = payload.comment_excerpt || 'Откройте карточку, чтобы посмотреть контекст.';
-        var meta = boardName ? (boardName + ' · ' + title) : title;
+        var boardName = payload.board_name || '';
+        var title, label, detail = '';
+        switch (item.type) {
+            case 'member_added':
+                title = actorName + ' назначил(а) вас ответственным';
+                label = payload.card_title || '';
+                break;
+            case 'card_overdue':
+                title = 'Просрочена задача';
+                label = payload.card_title || '';
+                break;
+            case 'card_archived':
+                title = actorName + ' отправил(а) карточку в архив';
+                label = payload.card_title || '';
+                break;
+            case 'column_archived':
+                title = actorName + ' отправил(а) список в архив';
+                label = payload.column_name || '';
+                break;
+            case 'comment_mention':
+            default:
+                title = actorName + ' упомянул(а) вас';
+                label = payload.card_title || '';
+                detail = payload.comment_excerpt || 'Откройте карточку, чтобы посмотреть контекст.';
+        }
+        var meta = boardName ? (boardName + (label ? ' · ' + label : '')) : label;
+        return { title: title, meta: meta, detail: detail };
+    }
+
+    function renderInboxItem(item) {
+        var parts = _inboxItemParts(item);
         var button = document.createElement('button');
         button.type = 'button';
         button.className = 'inbox-item' + (item.is_read ? '' : ' inbox-item--unread');
         button.innerHTML = [
             '<span class="inbox-item-dot"></span>',
             '<span class="inbox-item-content">',
-            '  <div class="inbox-item-title">' + _escHtml(actorName + ' упомянул(а) вас') + '</div>',
-            '  <div class="inbox-item-meta">' + _escHtml(meta) + '</div>',
-            '  <div class="inbox-item-text">' + _escHtml(excerpt) + '</div>',
+            '  <div class="inbox-item-title">' + _escHtml(parts.title) + '</div>',
+            '  <div class="inbox-item-meta">' + _escHtml(parts.meta) + '</div>',
+            (parts.detail ? '  <div class="inbox-item-text">' + _escHtml(parts.detail) + '</div>' : ''),
             '</span>'
         ].join('');
-        button.onclick = function() { handleInboxEntryClick(item.id, payload); };
+        button.onclick = function() { handleInboxEntryClick(item.id, item.payload || {}); };
         return button;
     }
 
@@ -107,7 +134,11 @@
         var badge = document.getElementById('inboxBadge');
         if (!list || !badge) return;
         try {
-            var res = await fetch('/api/inbox?limit=20');
+            var url = '/api/inbox?limit=20';
+            var scopeEl = document.getElementById('inboxScopeBoard');
+            var boardId = document.getElementById('boardColumns')?.dataset.boardId;
+            if (scopeEl && scopeEl.checked && boardId) url += '&board_id=' + boardId;
+            var res = await fetch(url);
             if (!res.ok) {
                 list.innerHTML = '<div class="inbox-empty">Сначала войдите в систему</div>';
                 badge.textContent = '0';
@@ -144,13 +175,13 @@
 
     function handleInboxEntryClick(entryId, payload) {
         if (entryId) markInboxEntryRead(entryId);
-        if (payload && payload.card_id) {
-            var boardId = payload.board_id || '';
-            var url = '/boards';
-            if (boardId) {
-                url = '/board/' + boardId + '?card=' + payload.card_id;
-            }
-            window.location.href = url;
+        var boardId = payload && payload.board_id;
+        if (payload && payload.card_id && boardId) {
+            window.location.href = '/board/' + boardId + '?card=' + payload.card_id;
+            return;
+        }
+        if (boardId) {
+            window.location.href = '/board/' + boardId;
             return;
         }
         window.location.href = '/boards';

@@ -4646,7 +4646,7 @@ kbd {
 .inbox-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 10px;
     padding: 14px 16px;
     border-bottom: 1px solid rgba(17, 24, 39, 0.06);
 }
@@ -4658,6 +4658,16 @@ kbd {
     color: #111827;
 }
 
+.inbox-scope-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #6b7280;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
 .inbox-close {
     width: 28px;
     height: 28px;
@@ -4666,6 +4676,7 @@ kbd {
     align-items: center;
     justify-content: center;
     color: #6b7280;
+    margin-left: auto;
 }
 
 .inbox-close:hover {

@@ -6,7 +6,7 @@ from models import get_db, init_db
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 import sqlite3, os, uuid, csv, io, shutil, re, json
-from datetime import timedelta
+from datetime import timedelta, datetime
 from urllib.parse import quote as url_quote
 
 UPLOAD_FOLDER   = os.path.join(os.path.dirname(__file__), 'uploads')
@@ -118,11 +118,77 @@ def _create_comment_mentions(conn, card_id, comment_id, text, actor_email, actor
             'comment_excerpt': (text or '')[:180],
         })
         conn.execute(
-            'INSERT INTO inbox_entries (recipient_email, type, card_id, comment_id, payload) VALUES (?,?,?,?,?)',
-            (user['email'], 'comment_mention', card_id, comment_id, payload)
+            'INSERT INTO inbox_entries (recipient_email, type, card_id, comment_id, payload, board_id) VALUES (?,?,?,?,?,?)',
+            (user['email'], 'comment_mention', card_id, comment_id, payload, card_row['board_id'] if card_row else None)
         )
         mentions.append(user)
     return mentions
+
+
+def _admin_emails(conn):
+    """Email-адреса всех admin — для уведомлений «какой пользователь удалил/архивировал» (Must №82)."""
+    from sheets import is_configured, get_all_users
+    if is_configured():
+        return [
+            str(u.get('Email', '')).strip().lower()
+            for u in get_all_users()
+            if str(u.get('Роль', 'user')).strip().lower() == 'admin'
+        ]
+    return [r['email'].strip().lower() for r in conn.execute("SELECT email FROM users WHERE role='admin'").fetchall()]
+
+
+def _notify_admins(conn, type_, board_id, board_name, extra, card_id=0):
+    """Уведомляет всех admin, кроме самого actor-а (Must №82: кто удалил карточку / перенёс в архив)."""
+    actor = session.get('user') or {}
+    actor_email = (actor.get('email') or '').strip().lower()
+    payload = {
+        'type': type_, 'board_id': board_id, 'board_name': board_name,
+        'actor_email': actor.get('email'), 'actor_name': actor.get('name'),
+        **extra,
+    }
+    payload_json = json.dumps(payload)
+    for email in _admin_emails(conn):
+        if email == actor_email:
+            continue
+        conn.execute(
+            'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
+            (email, type_, card_id, payload_json, board_id)
+        )
+
+
+def _sync_overdue_notifications(conn, user_email):
+    """Лениво (при каждом открытии инбокса) проверяет карточки пользователя на просрочку
+    и один раз создаёт уведомление по каждой — без фоновых задач/cron (Must №82)."""
+    today_key = datetime.now().strftime('%Y%m%d')
+    rows = conn.execute('''
+        SELECT ca.id AS card_id, ca.title AS card_title, ca.due_date,
+               col.board_id, b.name AS board_name
+        FROM cards ca
+        JOIN card_members cm ON cm.card_id = ca.id
+        JOIN columns col ON col.id = ca.column_id
+        JOIN boards b ON b.id = col.board_id
+        WHERE cm.user_email = ?
+          AND (ca.completed = 0 OR ca.completed IS NULL)
+          AND (ca.archived = 0 OR ca.archived IS NULL)
+          AND TRIM(COALESCE(ca.due_date, '')) != ''
+          AND (substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)) < ?
+    ''', (user_email, today_key)).fetchall()
+
+    for r in rows:
+        exists = conn.execute(
+            "SELECT 1 FROM inbox_entries WHERE recipient_email=? AND type='card_overdue' AND card_id=?",
+            (user_email, r['card_id'])
+        ).fetchone()
+        if exists:
+            continue
+        payload = json.dumps({
+            'type': 'card_overdue', 'card_id': r['card_id'], 'card_title': r['card_title'],
+            'board_id': r['board_id'], 'board_name': r['board_name'], 'due_date': r['due_date'],
+        })
+        conn.execute(
+            'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
+            (user_email, 'card_overdue', r['card_id'], payload, r['board_id'])
+        )
 
 
 def _log_activity(conn, card_id, event_type, detail=''):
@@ -1208,6 +1274,15 @@ def api_delete_card(card_id):
             (card_id,)
         )
         _log_activity(conn, card_id, 'archived')
+
+        card_row = conn.execute('''
+            SELECT c.title AS card_title, col.board_id, b.name AS board_name
+            FROM cards c JOIN columns col ON col.id=c.column_id JOIN boards b ON b.id=col.board_id
+            WHERE c.id=?
+        ''', (card_id,)).fetchone()
+        if card_row:
+            _notify_admins(conn, 'card_archived', card_row['board_id'], card_row['board_name'],
+                            {'card_title': card_row['card_title']}, card_id=card_id)
     return jsonify({'ok': True})
 
 @app.route('/api/cards/<int:card_id>/restore', methods=['POST'])
@@ -1404,11 +1479,17 @@ def api_get_inbox():
         return jsonify({'items': [], 'unread_count': 0})
     limit = request.args.get('limit', 20, type=int)
     unread_only = request.args.get('unread_only', '0') == '1'
+    board_id = request.args.get('board_id', type=int)
     with get_db() as conn:
+        _sync_overdue_notifications(conn, email)
+
         sql = 'SELECT * FROM inbox_entries WHERE recipient_email=?'
         params = [email]
         if unread_only:
             sql += ' AND is_read=0'
+        if board_id:
+            sql += " AND (board_id=? OR json_extract(payload,'$.board_id')=?)"
+            params += [board_id, board_id]
         sql += ' ORDER BY created_at DESC, id DESC LIMIT ?'
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
@@ -1541,6 +1622,24 @@ def api_assign_card_member(card_id):
             (card_id, email, name)
         )
         _log_activity(conn, card_id, 'member_added', name or email)
+
+        actor = session.get('user') or {}
+        if email.strip().lower() != (actor.get('email') or '').strip().lower():
+            card_row = conn.execute('''
+                SELECT c.title AS card_title, col.board_id, b.name AS board_name
+                FROM cards c JOIN columns col ON col.id=c.column_id JOIN boards b ON b.id=col.board_id
+                WHERE c.id=?
+            ''', (card_id,)).fetchone()
+            if card_row:
+                payload = json.dumps({
+                    'type': 'member_added', 'card_id': card_id, 'card_title': card_row['card_title'],
+                    'board_id': card_row['board_id'], 'board_name': card_row['board_name'],
+                    'actor_email': actor.get('email'), 'actor_name': actor.get('name'),
+                })
+                conn.execute(
+                    'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
+                    (email.strip().lower(), 'member_added', card_id, payload, card_row['board_id'])
+                )
     return jsonify({'ok': True})
 
 @app.route('/api/cards/<int:card_id>/members/<path:email>', methods=['DELETE'])
@@ -1812,10 +1911,15 @@ def api_update_column(col_id):
 def api_delete_column(col_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
+        col = conn.execute('SELECT name, board_id FROM columns WHERE id=?', (col_id,)).fetchone()
         conn.execute(
             "UPDATE columns SET archived=1, archived_at=datetime('now','localtime') WHERE id=?",
             (col_id,)
         )
+        if col:
+            board = conn.execute('SELECT name FROM boards WHERE id=?', (col['board_id'],)).fetchone()
+            _notify_admins(conn, 'column_archived', col['board_id'], board['name'] if board else '',
+                            {'column_name': col['name']})
     return jsonify({'ok': True})
 
 @app.route('/api/columns/<int:col_id>/restore', methods=['POST'])
@@ -2215,6 +2319,10 @@ def migrate_db():
                 created_at     TEXT    DEFAULT (datetime('now','localtime'))
             )
         ''')
+        try:
+            conn.execute('ALTER TABLE inbox_entries ADD COLUMN board_id INTEGER')
+        except sqlite3.OperationalError:
+            pass
 
         # ── История активности карточки (audit) ──
         conn.execute('''

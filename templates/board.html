@@ -63,6 +63,9 @@
                 <div class="inbox-panel" id="inboxPanel" style="display:none">
                     <div class="inbox-header">
                         <span class="inbox-title">Уведомления</span>
+                        <label class="inbox-scope-toggle">
+                            <input type="checkbox" id="inboxScopeBoard" onchange="refreshInbox()"> только эта доска
+                        </label>
                         <button class="inbox-close" onclick="closeInboxPanel()" type="button" title="Закрыть">✕</button>
                     </div>
                     <div class="inbox-list" id="inboxList">
