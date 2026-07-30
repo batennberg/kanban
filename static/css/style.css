@@ -1070,6 +1070,52 @@ input { font-family: inherit; }
 .cards-list::-webkit-scrollbar-track { background: transparent; }
 .cards-list::-webkit-scrollbar-thumb { background: #c1c7d0; border-radius: 2px; }
 
+/* Зеркальные карточки (Should №30) — отдельный список под обычными карточками колонки,
+   не участвует в drag-and-drop реордеринга обычных карточек */
+.cards-mirror-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 6px 4px 2px;
+    margin-top: 4px;
+    border-top: 1px dashed rgba(0,0,0,0.12);
+}
+
+.card--mirror {
+    cursor: pointer;
+    border-style: dashed;
+    position: relative;
+}
+
+.card-mirror-badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: #6b778c;
+    margin-bottom: 2px;
+}
+
+.card-mirror-remove {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.9);
+    border: 1px solid #dfe1e6;
+    color: #6b778c;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+    line-height: 1;
+    padding: 0;
+}
+.card--mirror:hover .card-mirror-remove { opacity: 1; }
+.card-mirror-remove:hover { background: #ffebe6; color: #de350b; border-color: #de350b; }
+
 /* Card — Frosted Glass (high-end-visual-design) */
 .card {
     background: rgba(255, 255, 255, 0.72);
@@ -2272,6 +2318,77 @@ kbd {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+.cm-relation-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid #ebecf0;
+    border-radius: 8px;
+    transition: background 0.15s;
+    margin-bottom: 6px;
+}
+.cm-relation-item:hover { background: #f4f5f7; }
+.cm-relation-item--done .cm-relation-title { text-decoration: line-through; color: #6b778c; }
+
+.cm-relation-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.cm-relation-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    text-decoration: none;
+}
+
+.cm-relation-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: #1a2535;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cm-relation-meta {
+    font-size: 11px;
+    color: #6b778c;
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cm-relation-form { margin-top: 10px; }
+
+.cm-relation-results {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.cm-relation-candidate {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 7px 9px;
+    border-radius: 6px;
+    background: #f4f5f7;
+    text-align: left;
+    transition: background 0.15s;
+}
+.cm-relation-candidate:hover { background: #ebecf0; }
+.cm-relation-candidate .cm-relation-title { font-size: 12.5px; }
+.cm-relation-candidate .cm-relation-meta  { font-size: 11px; }
 
 .cm-link-form { margin-top: 10px; }
 

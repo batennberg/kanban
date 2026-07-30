@@ -365,6 +365,40 @@
                     </div>
                     {% endfor %}
                 </div>
+                {% if col.mirrors %}
+                <div class="cards-mirror-list" id="mirrors-{{ col.id }}">
+                    {% for m in col.mirrors %}
+                    <div class="card card--mirror{% if m.completed %} card--done{% endif %}"
+                         id="card-mirror-{{ m.mirror_id }}"
+                         data-card-id="{{ m.source_id }}"
+                         draggable="false"
+                         onclick="openCardModal(event, this)">
+                        <button class="card-mirror-remove" onclick="removeMirror(event, {{ m.mirror_id }})" title="Убрать зеркало из этой колонки">✕</button>
+                        <div class="card-mirror-badge" title="Зеркало — оригинал в другом месте, изменения видны везде">
+                            🪞 {{ m.source_board_name }} · {{ m.source_column_name }}
+                        </div>
+                        {% if m.labels %}
+                        <div class="card-labels">
+                            {% for lbl in m.labels %}
+                            <span class="card-label" style="background:{{ lbl.color }}20;color:{{ lbl.color }};border:1px solid {{ lbl.color }}40">{{ lbl.name }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        {% if m.importance %}
+                        <div class="card-importance-row">
+                            <span class="card-importance" style="background:{{ m.importance_color }}20;color:{{ m.importance_color }};border:1px solid {{ m.importance_color }}40">{{ m.importance }}</span>
+                        </div>
+                        {% endif %}
+                        <p class="card-title">{{ m.title }}</p>
+                        {% if m.due_date %}
+                        <div class="card-due">
+                            <span class="due-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> {{ m.due_date }}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
                 <div class="inline-add-card" id="inline-add-{{ col.id }}" style="display:none">
                     <textarea class="inline-card-input" id="inline-input-{{ col.id }}"
                               placeholder="Название карточки..."
@@ -476,6 +510,23 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="cm-section">
+                    <div class="cm-section-head">
+                        <span class="cm-sec-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+                        <h3 class="cm-sec-title">Связанные карточки</h3>
+                        <button type="button" class="btn-attach-inline" onclick="showAddRelationForm()">+ Добавить</button>
+                    </div>
+                    <div class="cm-relations" id="cmRelations">
+                        <p class="cm-empty-hint" id="cmRelationsEmpty">Нет связанных карточек</p>
+                    </div>
+                    <div class="cm-relation-form" id="cmRelationForm" style="display:none">
+                        <input class="csp-input" id="cmRelationSearchInput" type="text"
+                               placeholder="Поиск карточки по названию..." oninput="searchRelationCandidates(this.value)">
+                        <div class="cm-relation-results" id="cmRelationResults"></div>
+                        <button class="btn-secondary btn-sm" style="margin-top:6px" onclick="hideAddRelationForm()">Отмена</button>
+                    </div>
+                </div>
             </div>
 
             <div class="cm-comments-col">
@@ -531,6 +582,9 @@
                     </button>
                     <button class="cm-sidebar-btn" onclick="openBoardLinkPopover()">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> Связать доску
+                    </button>
+                    <button class="cm-sidebar-btn" onclick="openMirrorPopover()">
+                        <span>🪞</span> Зеркало в другую колонку
                     </button>
                     <button class="cm-sidebar-btn" onclick="openLabelPopover()">
                         <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span> Метки

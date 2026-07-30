@@ -601,6 +601,33 @@ def board(board_id):
             ''', [board_id] + field_ids):
                 cf_values_by_card.setdefault(v['card_id'], {})[v['field_id']] = v['value']
 
+        mirror_rows = conn.execute('''
+            SELECT cmi.id AS mirror_id, cmi.column_id AS mirror_column_id, cmi.position AS mirror_position,
+                   c.id AS source_id, c.title, c.due_date, c.completed, c.importance,
+                   src_col.name AS source_column_name, src_b.id AS source_board_id, src_b.name AS source_board_name
+            FROM card_mirrors cmi
+            JOIN cards c ON c.id = cmi.source_card_id
+            JOIN columns src_col ON src_col.id = c.column_id
+            JOIN boards src_b ON src_b.id = src_col.board_id
+            JOIN columns target_col ON target_col.id = cmi.column_id
+            WHERE target_col.board_id=? AND (c.archived=0 OR c.archived IS NULL)
+            ORDER BY cmi.position
+        ''', (board_id,)).fetchall()
+        mirror_source_ids = [r['source_id'] for r in mirror_rows]
+        mirror_labels_by_card = {}
+        if mirror_source_ids:
+            ph = ','.join('?' * len(mirror_source_ids))
+            for l in conn.execute(
+                f'SELECT * FROM card_labels WHERE card_id IN ({ph}) ORDER BY position, id', mirror_source_ids
+            ):
+                mirror_labels_by_card.setdefault(l['card_id'], []).append(dict(l))
+        mirrors_by_column = {}
+        for r in mirror_rows:
+            m = dict(r)
+            m['labels'] = mirror_labels_by_card.get(m['source_id'], [])
+            m['importance_color'] = IMPORTANCE_COLORS.get(m.get('importance') or '', '')
+            mirrors_by_column.setdefault(m['mirror_column_id'], []).append(m)
+
         for col in conn.execute(
             'SELECT * FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
             (board_id,)
@@ -620,6 +647,7 @@ def board(board_id):
                     for f in visible_fields if card_cf_values.get(f['id'])
                 ]
                 col_dict['cards'].append(card_dict)
+            col_dict['mirrors'] = mirrors_by_column.get(col['id'], [])
             board_data['columns'].append(col_dict)
     return render_template('board.html', board=board_data, board_id=board_id, user=session['user'])
 
@@ -1325,6 +1353,16 @@ def api_get_card(card_id):
         links = [dict(l) for l in conn.execute(
             'SELECT * FROM card_links WHERE card_id=? ORDER BY position, id', (card_id,)
         )]
+        relations = [dict(r) for r in conn.execute('''
+            SELECT c.id, c.title, c.completed, col.name AS column_name,
+                   b.id AS board_id, b.name AS board_name, b.color AS board_color
+            FROM card_relations rel
+            JOIN cards c ON c.id = (CASE WHEN rel.card_a_id=? THEN rel.card_b_id ELSE rel.card_a_id END)
+            JOIN columns col ON col.id = c.column_id
+            JOIN boards b ON b.id = col.board_id
+            WHERE rel.card_a_id=? OR rel.card_b_id=?
+            ORDER BY b.name, col.name, c.title
+        ''', (card_id, card_id, card_id))]
         activity = [dict(a) for a in conn.execute(
             'SELECT * FROM card_activity WHERE card_id=? ORDER BY created_at DESC, id DESC', (card_id,)
         )]
@@ -1338,7 +1376,7 @@ def api_get_card(card_id):
         card_dict['importance_color'] = IMPORTANCE_COLORS.get(card_dict.get('importance') or '', '')
     return jsonify({**card_dict, 'comments': comments, 'attachments': attachments,
                     'checklists': checklists, 'members': members, 'labels': labels, 'links': links,
-                    'activity': activity, 'custom_fields': custom_fields})
+                    'relations': relations, 'activity': activity, 'custom_fields': custom_fields})
 
 @app.route('/api/cards/<int:card_id>', methods=['PUT'])
 def api_update_card(card_id):
@@ -2154,6 +2192,91 @@ def api_remove_card_link(card_id, link_id):
     return jsonify({'ok': True})
 
 
+# ===== API — ЗЕРКАЛЬНЫЕ КАРТОЧКИ (Should №30) =====
+
+@app.route('/api/cards/<int:card_id>/mirror', methods=['POST'])
+def api_create_card_mirror(card_id):
+    """Размещает «зеркало» карточки в другой колонке (той же или другой доски).
+    Это не копия — данные всегда читаются из исходной карточки при рендере доски."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    column_id = (request.get_json() or {}).get('column_id')
+    if not column_id: return jsonify({'error': 'column_id required'}), 400
+    with get_db() as conn:
+        src = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+        if not src: return jsonify({'error': 'not found'}), 404
+        col = conn.execute('SELECT board_id FROM columns WHERE id=?', (column_id,)).fetchone()
+        if not col: return jsonify({'error': 'column not found'}), 404
+        board_ids = _get_board_ids()
+        if board_ids is not None and col['board_id'] not in board_ids:
+            return jsonify({'error': 'forbidden'}), 403
+
+        pos = conn.execute(
+            'SELECT COALESCE(MAX(position),-1)+1 FROM card_mirrors WHERE column_id=?', (column_id,)
+        ).fetchone()[0]
+        cur = conn.execute(
+            'INSERT INTO card_mirrors (source_card_id, column_id, position) VALUES (?,?,?)',
+            (card_id, column_id, pos)
+        )
+        mirror_id = cur.lastrowid
+        _log_activity(conn, card_id, 'mirror_added', '')
+    return jsonify({'mirror_id': mirror_id}), 201
+
+@app.route('/api/card-mirrors/<int:mirror_id>', methods=['DELETE'])
+def api_delete_card_mirror(mirror_id):
+    """Убирает зеркало из колонки — исходная карточка не затрагивается."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute('DELETE FROM card_mirrors WHERE id=?', (mirror_id,))
+    return jsonify({'ok': True})
+
+
+# ===== API — CARD RELATIONS (двусторонняя связь карточка↔карточка, Should №31) =====
+
+@app.route('/api/cards/<int:card_id>/relations', methods=['GET'])
+def api_get_card_relations(card_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute('''
+            SELECT c.id, c.title, c.completed, col.name AS column_name,
+                   b.id AS board_id, b.name AS board_name, b.color AS board_color
+            FROM card_relations r
+            JOIN cards c ON c.id = (CASE WHEN r.card_a_id=? THEN r.card_b_id ELSE r.card_a_id END)
+            JOIN columns col ON col.id = c.column_id
+            JOIN boards b ON b.id = col.board_id
+            WHERE r.card_a_id=? OR r.card_b_id=?
+            ORDER BY b.name, col.name, c.title
+        ''', (card_id, card_id, card_id)).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/cards/<int:card_id>/relations', methods=['POST'])
+def api_add_card_relation(card_id):
+    """Двусторонняя связь: хранится одной строкой в каноническом порядке (a<b),
+    видна и находится с обеих сторон одинаково."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    other_id = (request.get_json() or {}).get('other_card_id')
+    if not other_id: return jsonify({'error': 'other_card_id required'}), 400
+    other_id = int(other_id)
+    if other_id == card_id: return jsonify({'error': 'cannot relate a card to itself'}), 400
+    a, b = min(card_id, other_id), max(card_id, other_id)
+    with get_db() as conn:
+        other = conn.execute('SELECT title FROM cards WHERE id=?', (other_id,)).fetchone()
+        if not other: return jsonify({'error': 'not found'}), 404
+        conn.execute('INSERT OR IGNORE INTO card_relations (card_a_id, card_b_id) VALUES (?,?)', (a, b))
+        _log_activity(conn, card_id, 'relation_added', other['title'])
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/cards/<int:card_id>/relations/<int:other_id>', methods=['DELETE'])
+def api_remove_card_relation(card_id, other_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    a, b = min(card_id, other_id), max(card_id, other_id)
+    with get_db() as conn:
+        other = conn.execute('SELECT title FROM cards WHERE id=?', (other_id,)).fetchone()
+        conn.execute('DELETE FROM card_relations WHERE card_a_id=? AND card_b_id=?', (a, b))
+        if other:
+            _log_activity(conn, card_id, 'relation_removed', other['title'])
+    return jsonify({'ok': True})
+
+
 # ===== API — ACCESS MANAGEMENT =====
 
 @app.route('/api/boards/<int:board_id>/access', methods=['GET'])
@@ -2675,6 +2798,30 @@ def migrate_db():
                 field_id INTEGER NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
                 value    TEXT    NOT NULL DEFAULT '',
                 UNIQUE(card_id, field_id)
+            )
+        ''')
+
+        # ── Зеркальные карточки (Should №30) — не копия, а «окно» в исходную карточку:
+        # ссылка на column_id/position, где показывается; данные всегда читаются из
+        # исходной карточки, поэтому изменения видны сразу везде при следующей загрузке доски ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_mirrors (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                column_id      INTEGER NOT NULL REFERENCES columns(id) ON DELETE CASCADE,
+                position       INTEGER DEFAULT 0,
+                created_at     TEXT    DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+
+        # ── Двусторонняя связь карточка↔карточка (Should №31) ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_relations (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_a_id  INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                card_b_id  INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                created_at TEXT    DEFAULT (datetime('now','localtime')),
+                UNIQUE(card_a_id, card_b_id)
             )
         ''')
 

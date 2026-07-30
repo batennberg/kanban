@@ -381,6 +381,7 @@ async function loadCardData(dbId) {
         renderActivity(data.activity || []);
         renderAttachments(data.attachments || []);
         renderLinks(data.links || []);
+        renderCardRelations(data.relations || []);
         renderChecklists(data.checklists || []);
         renderCustomFields(data.custom_fields || []);
         // Показываем cover в modal-header если есть
@@ -755,6 +756,97 @@ window.deleteCardLink = async function(id) {
 };
 
 
+// ===== СВЯЗАННЫЕ КАРТОЧКИ (двусторонняя связь карточка↔карточка, Should №31) =====
+
+function renderCardRelations(list) {
+    const container = document.getElementById('cmRelations');
+    const empty      = document.getElementById('cmRelationsEmpty');
+    if (!container || !empty) return;
+    container.querySelectorAll('.cm-relation-item').forEach(el => el.remove());
+    if (!list || !list.length) { empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    list.forEach(appendRelationToDOM);
+}
+
+function appendRelationToDOM(rel) {
+    const container = document.getElementById('cmRelations');
+    document.getElementById('cmRelationsEmpty').style.display = 'none';
+
+    const item = document.createElement('div');
+    item.className = 'cm-relation-item' + (rel.completed ? ' cm-relation-item--done' : '');
+    item.dataset.relationCardId = rel.id;
+    item.innerHTML = `
+        <span class="cm-relation-dot" style="background:${escHtml(rel.board_color || '#4361EE')}"></span>
+        <a href="/card/${rel.id}" class="cm-relation-info">
+            <span class="cm-relation-title">${escHtml(rel.title)}</span>
+            <span class="cm-relation-meta">${escHtml(rel.board_name)} · ${escHtml(rel.column_name)}</span>
+        </a>
+        <button class="cm-attach-del" onclick="removeCardRelation(${rel.id})" title="Убрать связь">✕</button>
+    `;
+    container.appendChild(item);
+}
+
+window.showAddRelationForm = function() {
+    document.getElementById('cmRelationForm').style.display = 'block';
+    document.getElementById('cmRelationResults').innerHTML = '';
+    document.getElementById('cmRelationSearchInput').value = '';
+    document.getElementById('cmRelationSearchInput')?.focus();
+};
+
+window.hideAddRelationForm = function() {
+    document.getElementById('cmRelationForm').style.display = 'none';
+};
+
+let _relationSearchTimer = null;
+
+window.searchRelationCandidates = function(q) {
+    clearTimeout(_relationSearchTimer);
+    const results = document.getElementById('cmRelationResults');
+    q = q.trim();
+    if (q.length < 2) { results.innerHTML = ''; return; }
+    _relationSearchTimer = setTimeout(async () => {
+        let cards = [];
+        try {
+            const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+            if (res.ok) cards = await res.json();
+        } catch (err) { console.error('searchRelationCandidates error:', err); }
+
+        cards = cards.filter(c => c.id !== currentCardDbId);
+        if (!cards.length) {
+            results.innerHTML = '<p class="bl-empty">Ничего не найдено</p>';
+            return;
+        }
+        results.innerHTML = cards.map(c => `
+            <button class="cm-relation-candidate" onclick="addCardRelation(${c.id})">
+                <span class="cm-relation-title">${escHtml(c.title)}</span>
+                <span class="cm-relation-meta">${escHtml(c.board_name)} · ${escHtml(c.column_name)}</span>
+            </button>
+        `).join('');
+    }, 250);
+};
+
+window.addCardRelation = async function(otherCardId) {
+    if (!currentCardDbId) return;
+    const res = await fetch(`/api/cards/${currentCardDbId}/relations`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ other_card_id: otherCardId })
+    });
+    if (!res.ok) { showToast('Не удалось добавить связь', 'error'); return; }
+    hideAddRelationForm();
+    const listRes = await fetch(`/api/cards/${currentCardDbId}/relations`);
+    if (listRes.ok) renderCardRelations(await listRes.json());
+};
+
+window.removeCardRelation = async function(otherCardId) {
+    if (!currentCardDbId) return;
+    await fetch(`/api/cards/${currentCardDbId}/relations/${otherCardId}`, { method: 'DELETE' });
+    document.querySelector(`[data-relation-card-id="${otherCardId}"]`)?.remove();
+    if (!document.querySelector('.cm-relation-item')) {
+        document.getElementById('cmRelationsEmpty').style.display = 'block';
+    }
+};
+
+
 // ===== COMMENTS =====
 
 let mentionCandidates = [];
@@ -1000,6 +1092,9 @@ const ACTIVITY_LABELS = {
     checklist_item_checked:   (d) => `отметил(а) пункт чек-листа: «${d}»`,
     checklist_item_unchecked: (d) => `снял(а) отметку с пункта чек-листа: «${d}»`,
     checklist_copied:         (d) => `скопировал(а) чек-лист «${d}» с другой карточки`,
+    relation_added:           (d) => `связал(а) с карточкой «${d}»`,
+    relation_removed:         (d) => `убрал(а) связь с карточкой «${d}»`,
+    mirror_added:             () => `создал(а) зеркало карточки в другой колонке`,
     attachment_added:         (d) => `добавил(а) вложение: ${d}`,
     attachment_removed:       (d) => `удалил(а) вложение: ${d}`,
     link_added:               (d) => `добавил(а) ссылку: ${d}`,
@@ -1506,6 +1601,90 @@ window.moveCardToColumn = async function(targetColId) {
     if (cardEl && targetList) { targetList.appendChild(cardEl); updateColumnCounts(); }
     closePopover();
     closeCardModal();
+};
+
+// ===== ЗЕРКАЛЬНЫЕ КАРТОЧКИ (Should №30) =====
+
+window.openMirrorPopover = function() {
+    const cols  = [...document.querySelectorAll('.column:not(.column--add)')];
+    const items = cols.map(col => {
+        const colId   = parseInt(col.dataset.colId);
+        const colName = col.querySelector('.column-title')?.textContent.trim() || '';
+        return `<div class="move-col-item" onclick="createMirror(${colId})">${escHtml(colName)}</div>`;
+    }).join('');
+
+    const otherBoardBtn = `<div class="move-col-item" onclick="openMirrorBoardPicker()">→ На другую доску</div>`;
+
+    openPopover('Зеркало в колонку', `
+        <p class="cm-empty-hint" style="margin-bottom:6px">Карточка появится ещё и в выбранной колонке — это не копия: изменения видны везде.</p>
+        <div>${items}${otherBoardBtn}</div>
+    `);
+};
+
+window.openMirrorBoardPicker = async function() {
+    const currentBoardId = parseInt(document.getElementById('boardColumns').dataset.boardId);
+
+    if (!_blBoards) {
+        try {
+            const res = await fetch('/api/boards');
+            _blBoards = await res.json();
+        } catch {
+            openPopover('Другая доска', '<div class="mp-note">Ошибка загрузки</div>');
+            return;
+        }
+    }
+
+    const items = _blBoards
+        .filter(b => b.id !== currentBoardId)
+        .map(b => `
+            <div class="move-col-item" data-mirror-board-id="${b.id}" data-mirror-board-name="${escHtml(b.name)}"
+                 onclick="openMirrorColumnPicker(this)">
+                <span class="bl-dot" style="background:${escHtml(b.color)}"></span>
+                ${escHtml(b.name)}
+            </div>`).join('');
+
+    const back = `<div class="move-col-item" onclick="openMirrorPopover()">← Назад</div>`;
+    openPopover('Другая доска', `<div>${back}${items || '<p class="bl-empty">Нет других досок</p>'}</div>`);
+};
+
+window.openMirrorColumnPicker = async function(el) {
+    const boardId   = parseInt(el.dataset.mirrorBoardId);
+    const boardName = el.dataset.mirrorBoardName;
+    openPopover(boardName, '<div class="mp-loading">Загрузка...</div>');
+
+    let cols = [];
+    try {
+        const res = await fetch(`/api/boards/${boardId}/columns`);
+        cols = await res.json();
+    } catch {
+        openPopover(boardName, '<div class="mp-note">Ошибка загрузки</div>');
+        return;
+    }
+
+    const items = cols.map(c =>
+        `<div class="move-col-item" onclick="createMirror(${c.id})">${escHtml(c.name)}</div>`
+    ).join('');
+    const back = `<div class="move-col-item" onclick="openMirrorBoardPicker()">← Назад к доскам</div>`;
+
+    openPopover(boardName, `<div>${back}${items || '<p class="bl-empty">Нет колонок</p>'}</div>`);
+};
+
+window.createMirror = async function(targetColId) {
+    if (!currentCardDbId) return;
+    const res = await fetch(`/api/cards/${currentCardDbId}/mirror`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ column_id: targetColId })
+    });
+    if (!res.ok) { showToast('Не удалось создать зеркало', 'error'); closePopover(); return; }
+    closePopover();
+    showToast('Зеркало создано — появится в выбранной колонке при следующей загрузке доски');
+};
+
+window.removeMirror = async function(e, mirrorId) {
+    e.stopPropagation();
+    if (!confirm('Убрать зеркало из этой колонки? Исходная карточка не удалится.')) return;
+    await fetch(`/api/card-mirrors/${mirrorId}`, { method: 'DELETE' });
+    document.getElementById('card-mirror-' + mirrorId)?.remove();
 };
 
 window.openMoveBoardPicker = async function() {
