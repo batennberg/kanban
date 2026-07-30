@@ -1874,6 +1874,11 @@ def serve_avatar(filename):
 def export_board(board_id):
     if 'user' not in session:
         return redirect(url_for('login'))
+    if session['user'].get('role') != 'admin':
+        return jsonify({'error': 'forbidden'}), 403
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
         board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
         if not board:
@@ -1931,6 +1936,8 @@ def export_board(board_id):
 def export_workspace(ws_id):
     if 'user' not in session:
         return redirect(url_for('login'))
+    if session['user'].get('role') != 'admin':
+        return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
         ws = conn.execute('SELECT * FROM workspaces WHERE id=?', (ws_id,)).fetchone()
         if not ws:

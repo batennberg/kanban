@@ -93,9 +93,11 @@
             <button class="btn-board-action" onclick="openArchivePanel()" title="Архив карточек">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12v6M14 12v6"/></svg><span class="btn-act-text">Архив</span>
             </button>
+            {% if user.role == 'admin' %}
             <a href="/api/boards/{{ board.id }}/export" class="btn-board-action" title="Экспорт в CSV">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span class="btn-act-text">Экспорт</span>
             </a>
+            {% endif %}
             <button class="user-avatar-btn" id="userAvatarBtn"
                     onclick="toggleProfileDropdown(event)"
                     data-color="{{ user.avatar_color or '#4361EE' }}">
