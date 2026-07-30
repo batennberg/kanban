@@ -98,9 +98,10 @@ function _rgbToHex(rgb) {
 // Единый переключатель альтернативных видов доски (Should №37/№38/...) — скрывает
 // канбан-колонки и показывает ровно один из зарегистрированных видов за раз.
 const _BOARD_VIEWS = {
-    table:    { elId: 'tableView',    btnId: 'btnTableView',    txtId: 'btnTableViewText',    label: 'Таблица',   onShow: () => tvBuildRows() },
-    calendar: { elId: 'calendarView', btnId: 'btnCalendarView', txtId: 'btnCalendarViewText', label: 'Календарь', onShow: () => calRender() },
-    gantt:    { elId: 'ganttView',    btnId: 'btnGanttView',    txtId: 'btnGanttViewText',    label: 'Таймлайн',  onShow: () => ganttRender() },
+    table:     { elId: 'tableView',     btnId: 'btnTableView',     txtId: 'btnTableViewText',     label: 'Таблица',   onShow: () => tvBuildRows() },
+    calendar:  { elId: 'calendarView',  btnId: 'btnCalendarView',  txtId: 'btnCalendarViewText',  label: 'Календарь', onShow: () => calRender() },
+    gantt:     { elId: 'ganttView',     btnId: 'btnGanttView',     txtId: 'btnGanttViewText',     label: 'Таймлайн',  onShow: () => ganttRender() },
+    dashboard: { elId: 'dashboardView', btnId: 'btnDashboardView', txtId: 'btnDashboardViewText', label: 'Дашборд',   onShow: () => dashRender() },
 };
 
 function _switchBoardView(name) {
@@ -146,6 +147,11 @@ window.toggleCalendarView = function() {
 window.toggleGanttView = function() {
     const g = document.getElementById('ganttView');
     _switchBoardView(g && g.style.display !== 'none' ? 'kanban' : 'gantt');
+};
+
+window.toggleDashboardView = function() {
+    const d = document.getElementById('dashboardView');
+    _switchBoardView(d && d.style.display !== 'none' ? 'kanban' : 'dashboard');
 };
 
 function tvCollectCards() {
@@ -467,6 +473,108 @@ function ganttRender() {
     });
 
     grid.innerHTML = html;
+}
+
+
+// ===== ДАШБОРД (Should №40) =====
+// Снова строится из tvCollectCards() — без отдельного запроса к серверу.
+
+const _DASH_STATUS_META = [
+    { key: 'overdue', label: 'Просрочено', color: '#de350b' },
+    { key: 'soon',    label: 'Скоро',      color: '#ff8b00' },
+    { key: 'ontrack', label: 'В работе',   color: '#4361EE' },
+    { key: 'done',    label: 'Выполнено',  color: '#00875a' },
+    { key: 'nodate',  label: 'Без срока',  color: '#97a0af' },
+];
+
+function _dashDueStatus(r) {
+    if (r.done) return 'done';
+    const d = _dateFromRu(r.due);
+    if (!d) return 'nodate';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diff = _daysBetween(today, d);
+    if (diff < 0) return 'overdue';
+    if (diff <= 1) return 'soon';
+    return 'ontrack';
+}
+
+function dashRenderBars(containerId, entries, colorFn, emptyText) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    if (!entries.length) {
+        container.innerHTML = `<div class="dash-empty">${escHtml(emptyText)}</div>`;
+        return;
+    }
+    const maxVal = entries[0][1] || 1;
+    const shown  = entries.slice(0, 8);
+    let html = shown.map(([label, count]) => {
+        const pct = Math.round((count / maxVal) * 100);
+        return `
+            <div class="dash-bar-row">
+                <span class="dash-bar-label" title="${escHtml(label)}">${escHtml(label)}</span>
+                <div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pct}%;background:${colorFn(label)}"></div></div>
+                <span class="dash-bar-value">${count}</span>
+            </div>`;
+    }).join('');
+    if (entries.length > shown.length) {
+        html += `<div class="dash-more-note">ещё ${entries.length - shown.length}</div>`;
+    }
+    container.innerHTML = html;
+}
+
+function dashRenderStatus(statuses) {
+    const container = document.getElementById('dashByStatus');
+    if (!container) return;
+    const counts = {};
+    _DASH_STATUS_META.forEach(s => { counts[s.key] = 0; });
+    statuses.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
+    const maxVal = Math.max(1, ..._DASH_STATUS_META.map(s => counts[s.key]));
+    container.innerHTML = _DASH_STATUS_META.map(s => {
+        const count = counts[s.key];
+        const pct = Math.round((count / maxVal) * 100);
+        return `
+            <div class="dash-bar-row">
+                <span class="dash-bar-label">${s.label}</span>
+                <div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pct}%;background:${s.color}"></div></div>
+                <span class="dash-bar-value">${count}</span>
+            </div>`;
+    }).join('');
+}
+
+function dashRender() {
+    const rows  = tvCollectCards();
+    const total = rows.length;
+    const statuses    = rows.map(_dashDueStatus);
+    const doneCount    = statuses.filter(s => s === 'done').length;
+    const overdueCount = statuses.filter(s => s === 'overdue').length;
+    const rate = total ? Math.round((doneCount / total) * 100) : 0;
+
+    const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setText('dashKpiTotal',   total);
+    setText('dashKpiOverdue', overdueCount);
+    setText('dashKpiDone',    doneCount);
+    setText('dashKpiRate',    `${rate}%`);
+
+    const byMember = new Map();
+    rows.forEach(r => r.members.forEach(name => byMember.set(name, (byMember.get(name) || 0) + 1)));
+    dashRenderBars('dashByMember',
+        [...byMember.entries()].sort((a, b) => b[1] - a[1]),
+        () => '#4361EE',
+        'Нет назначенных участников');
+
+    const byLabel = new Map(); // text -> { count, color }
+    rows.forEach(r => r.labels.forEach(l => {
+        const cur = byLabel.get(l.text) || { count: 0, color: l.color };
+        cur.count++;
+        byLabel.set(l.text, cur);
+    }));
+    dashRenderBars('dashByLabel',
+        [...byLabel.entries()].map(([text, v]) => [text, v.count]).sort((a, b) => b[1] - a[1]),
+        (label) => byLabel.get(label)?.color || '#4361EE',
+        'На доске нет меток');
+
+    dashRenderStatus(statuses);
 }
 
 

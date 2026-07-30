@@ -99,6 +99,9 @@
             <button class="btn-board-action" id="btnGanttView" onclick="toggleGanttView()" title="Таймлайн / Гант">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><line x1="3" y1="6" x2="14" y2="6"/><line x1="3" y1="12" x2="20" y2="12"/><line x1="3" y1="18" x2="10" y2="18"/></svg><span class="btn-act-text" id="btnGanttViewText">Таймлайн</span>
             </button>
+            <button class="btn-board-action" id="btnDashboardView" onclick="toggleDashboardView()" title="Дашборд">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="btn-act-text" id="btnDashboardViewText">Дашборд</span>
+            </button>
             <button class="btn-board-action" id="btnBoardSettings" onclick="openBoardSettings(this)" title="Настройки доски">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="btn-act-text">Настройки</span>
             </button>
@@ -497,6 +500,42 @@
     <div class="gantt-view" id="ganttView" style="display:none">
         <div class="gantt-wrap">
             <div class="gantt-grid" id="ganttGrid"></div>
+        </div>
+    </div>
+
+    <!-- ===== ДАШБОРД (Should №40) ===== -->
+    <div class="dashboard-view" id="dashboardView" style="display:none">
+        <div class="dash-kpi-row">
+            <div class="dash-kpi-tile">
+                <div class="dash-kpi-label">Всего карточек</div>
+                <div class="dash-kpi-value" id="dashKpiTotal">0</div>
+            </div>
+            <div class="dash-kpi-tile">
+                <div class="dash-kpi-label">Просрочено</div>
+                <div class="dash-kpi-value dash-kpi-value--critical" id="dashKpiOverdue">0</div>
+            </div>
+            <div class="dash-kpi-tile">
+                <div class="dash-kpi-label">Выполнено</div>
+                <div class="dash-kpi-value dash-kpi-value--good" id="dashKpiDone">0</div>
+            </div>
+            <div class="dash-kpi-tile">
+                <div class="dash-kpi-label">% выполнения</div>
+                <div class="dash-kpi-value" id="dashKpiRate">0%</div>
+            </div>
+        </div>
+        <div class="dash-charts">
+            <div class="dash-panel">
+                <div class="dash-panel-title">По исполнителям</div>
+                <div class="dash-bars" id="dashByMember"></div>
+            </div>
+            <div class="dash-panel">
+                <div class="dash-panel-title">По меткам</div>
+                <div class="dash-bars" id="dashByLabel"></div>
+            </div>
+            <div class="dash-panel">
+                <div class="dash-panel-title">По срокам</div>
+                <div class="dash-bars" id="dashByStatus"></div>
+            </div>
         </div>
     </div>
 </div>
