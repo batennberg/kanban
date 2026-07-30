@@ -333,6 +333,7 @@
                         <label>Роль</label>
                         <select id="nuRole" class="form-select" onchange="toggleBoardsField()">
                             <option value="user">Пользователь</option>
+                            <option value="viewer">Наблюдатель (только просмотр)</option>
                             <option value="admin">Администратор</option>
                         </select>
                     </div>
@@ -1080,7 +1081,7 @@ async function loadUsers() {
                         <td class="ut-email">${escHtml(u.email)}</td>
                         <td>
                             <span class="ut-role-badge ${u.role === 'admin' ? 'ut-role-admin' : ''}">
-                                ${u.role === 'admin' ? 'Администратор' : 'Пользователь'}
+                                ${u.role === 'admin' ? 'Администратор' : (u.role === 'viewer' ? 'Наблюдатель' : 'Пользователь')}
                             </span>
                         </td>
                         <td class="ut-boards">${escHtml(u.boards || (u.role === 'admin' ? '* все' : '—'))}</td>

@@ -4,7 +4,7 @@ load_dotenv()
 from flask import Flask, render_template, redirect, url_for, session, request, jsonify, send_file
 from models import get_db, init_db
 from werkzeug.utils import secure_filename
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 import sqlite3, os, uuid, csv, io, shutil, re, json
 from datetime import timedelta
 from urllib.parse import quote as url_quote
@@ -312,6 +312,24 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
 @app.errorhandler(413)
 def _too_large(e):
     return jsonify({'error': 'file_too_large', 'message': 'Файл слишком большой. Максимальный размер — 16 МБ.'}), 413
+
+
+# Роль «наблюдатель» (viewer) — read-only доступ (Must №76). Блокируем централизованно
+# любые изменяющие запросы, а не патчим каждый роут по отдельности — так гарантированно
+# не остаётся забытых дыр. Чтение (GET) разрешено — доступ к конкретным доскам
+# по-прежнему ограничивается через _get_board_ids() в каждом роуте, как и для role='user'.
+_VIEWER_ALLOWED_MUTATION = re.compile(r'^/api/inbox/\d+/read$')
+
+@app.before_request
+def _enforce_viewer_readonly():
+    if request.method in ('GET', 'HEAD', 'OPTIONS'):
+        return
+    user = session.get('user')
+    if not user or user.get('role') != 'viewer':
+        return
+    if _VIEWER_ALLOWED_MUTATION.match(request.path):
+        return
+    return jsonify({'error': 'Роль «наблюдатель» — только просмотр, действие недоступно'}), 403
 
 
 # ===== AUTH =====
@@ -904,6 +922,8 @@ def api_get_users():
     } for u in users])
 
 
+_VALID_ROLES = ('admin', 'user', 'viewer')
+
 @app.route('/api/users', methods=['POST'])
 def api_create_user():
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
@@ -916,12 +936,28 @@ def api_create_user():
     boards   = d.get('boards', '').strip()
     if not email or not name or not password:
         return jsonify({'error': 'email, name и password обязательны'}), 400
+    if role not in _VALID_ROLES:
+        return jsonify({'error': 'недопустимая роль'}), 400
+
     from sheets import is_configured, create_user, get_user
-    if not is_configured():
-        return jsonify({'error': 'Google Sheets не настроен'}), 503
-    if get_user(email):
-        return jsonify({'error': 'Пользователь с таким email уже существует'}), 409
-    create_user(email, name, password, role, boards)
+    if is_configured():
+        if get_user(email):
+            return jsonify({'error': 'Пользователь с таким email уже существует'}), 409
+        create_user(email, name, password, role, boards)
+        return jsonify({'email': email, 'name': name, 'role': role, 'boards': boards}), 201
+
+    with get_db() as conn:
+        if conn.execute('SELECT 1 FROM users WHERE email=?', (email,)).fetchone():
+            return jsonify({'error': 'Пользователь с таким email уже существует'}), 409
+        cur = conn.execute(
+            'INSERT INTO users (email, name, password_hash, role) VALUES (?,?,?,?)',
+            (email, name, generate_password_hash(password), role)
+        )
+        user_id = cur.lastrowid
+        if role != 'admin' and boards:
+            for bid in (b.strip() for b in boards.split(',')):
+                if bid.isdigit():
+                    conn.execute('INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (?,?)', (user_id, int(bid)))
     return jsonify({'email': email, 'name': name, 'role': role, 'boards': boards}), 201
 
 
@@ -936,11 +972,30 @@ def api_update_user(email):
     boards   = d.get('boards')  # может быть пустой строкой — это валидно
     if isinstance(boards, str):
         boards = boards.strip()
+    if role is not None and role not in _VALID_ROLES:
+        return jsonify({'error': 'недопустимая роль'}), 400
+
     from sheets import is_configured, update_user
-    if not is_configured():
-        return jsonify({'error': 'Google Sheets не настроен'}), 503
-    ok = update_user(email, name=name, password=password, role=role, boards=boards)
-    return jsonify({'ok': ok}) if ok else (jsonify({'error': 'не найден'}), 404)
+    if is_configured():
+        ok = update_user(email, name=name, password=password, role=role, boards=boards)
+        return jsonify({'ok': ok}) if ok else (jsonify({'error': 'не найден'}), 404)
+
+    with get_db() as conn:
+        user = conn.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+        if not user:
+            return jsonify({'error': 'не найден'}), 404
+        if name is not None:
+            conn.execute('UPDATE users SET name=? WHERE email=?', (name, email))
+        if password is not None:
+            conn.execute('UPDATE users SET password_hash=? WHERE email=?', (generate_password_hash(password), email))
+        if role is not None:
+            conn.execute('UPDATE users SET role=? WHERE email=?', (role, email))
+        if boards is not None:
+            conn.execute('DELETE FROM board_access WHERE user_id=?', (user['id'],))
+            for bid in (b.strip() for b in boards.split(',')):
+                if bid.isdigit():
+                    conn.execute('INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (?,?)', (user['id'], int(bid)))
+    return jsonify({'ok': True})
 
 
 @app.route('/api/users/<path:email>', methods=['DELETE'])

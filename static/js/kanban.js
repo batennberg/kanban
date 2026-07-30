@@ -1,29 +1,42 @@
+// ===== РОЛЬ «НАБЛЮДАТЕЛЬ» (read-only, Must №76) =====
+
+const _boardIsReadonly = document.getElementById('boardColumns')?.dataset.userRole === 'viewer';
+if (_boardIsReadonly) {
+    document.body.classList.add('is-readonly-viewer');
+    document.querySelectorAll('.card').forEach(el => { el.draggable = false; });
+}
+
+
 // ===== DRAG-AND-DROP (карточки) =====
 
-document.querySelectorAll('.cards-list').forEach(list => {
-    new Sortable(list, {
-        group: 'cards',
-        animation: 150,
-        ghostClass: 'sortable-ghost',
-        dragClass: 'sortable-drag',
-        delay: 300,
-        delayOnTouchOnly: true,
-        touchStartThreshold: 8,
-        onEnd: () => { updateColumnCounts(); persistOrder(); }
+if (!_boardIsReadonly) {
+    document.querySelectorAll('.cards-list').forEach(list => {
+        new Sortable(list, {
+            group: 'cards',
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            dragClass: 'sortable-drag',
+            delay: 300,
+            delayOnTouchOnly: true,
+            touchStartThreshold: 8,
+            onEnd: () => { updateColumnCounts(); persistOrder(); }
+        });
     });
-});
+}
 
 
 // ===== DRAG-AND-DROP (колонки) =====
 
-new Sortable(document.getElementById('boardColumns'), {
-    animation: 200,
-    handle: '.column-header',
-    draggable: '.column:not(.column--add)',
-    ghostClass: 'column-ghost',
-    dragClass: 'column-dragging',
-    onEnd: persistColumnOrder,
-});
+if (!_boardIsReadonly) {
+    new Sortable(document.getElementById('boardColumns'), {
+        animation: 200,
+        handle: '.column-header',
+        draggable: '.column:not(.column--add)',
+        ghostClass: 'column-ghost',
+        dragClass: 'column-dragging',
+        onEnd: persistColumnOrder,
+    });
+}
 
 function persistColumnOrder() {
     const columns = [];

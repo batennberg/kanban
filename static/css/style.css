@@ -4838,3 +4838,30 @@ kbd {
 @media (max-width: 600px) {
     .wt-grid { grid-template-columns: 1fr; }
 }
+
+/* ===== РОЛЬ «НАБЛЮДАТЕЛЬ» — read-only (Must №76) ===== */
+
+.is-readonly-viewer .btn-add-card,
+.is-readonly-viewer .column--add,
+.is-readonly-viewer .inline-add-card,
+.is-readonly-viewer .card-edit-btn,
+.is-readonly-viewer .card-check-btn,
+.is-readonly-viewer .column-menu-btn,
+.is-readonly-viewer #cmSidebarDefault,
+.is-readonly-viewer .cm-compose,
+.is-readonly-viewer .btn-attach-inline,
+.is-readonly-viewer #btnBoardSettings {
+    display: none !important;
+}
+
+.is-readonly-viewer .card,
+.is-readonly-viewer .column-header,
+.is-readonly-viewer .column-title {
+    cursor: default;
+}
+
+.is-readonly-viewer .cm-title,
+.is-readonly-viewer .cm-description-view,
+.is-readonly-viewer .column-title {
+    pointer-events: none;
+}
