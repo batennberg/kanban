@@ -3318,6 +3318,7 @@ window.toggleFiltersPanel = function() {
         buildImportanceChips();
         buildCustomFieldChips();
         buildMemberChips();
+        renderSavedFilterChips();
         bar.style.display = '';
         document.getElementById('btnFilters')?.classList.add('btn-board-action--active');
     }
@@ -3560,6 +3561,93 @@ window.clearFilters = function() {
     document.getElementById('btnFilters')?.classList.remove('btn-board-action--active');
     updateColumnCounts();
     _syncBoardStateToURL();
+};
+
+
+// ===== СОХРАНЁННЫЕ ФИЛЬТРЫ / УМНЫЕ СПИСКИ (Should №50) =====
+// Хранятся в localStorage на доску — так же, как избранные доски (№12).
+// В отличие от №45 (ссылка) — это именованные, локальные для пользователя пресеты,
+// быстро доступные из панели фильтров без необходимости кому-то что-то присылать.
+
+function _savedFiltersKey() {
+    return `kanban_saved_filters_${_getBoardId()}`;
+}
+
+function _getSavedFilters() {
+    try { return JSON.parse(localStorage.getItem(_savedFiltersKey()) || '[]'); }
+    catch { return []; }
+}
+
+function _setSavedFilters(list) {
+    localStorage.setItem(_savedFiltersKey(), JSON.stringify(list));
+}
+
+function renderSavedFilterChips() {
+    const container = document.getElementById('fbSavedFilters');
+    if (!container) return;
+    const list = _getSavedFilters();
+    if (!list.length) {
+        container.innerHTML = '<span class="fb-no-labels">Нет сохранённых</span>';
+        return;
+    }
+    container.innerHTML = list.map((preset, i) => `
+        <span class="fb-chip fb-chip--preset" onclick="applySavedFilter(${i})">
+            ${escHtml(preset.name)}
+            <button class="fb-chip-del" onclick="deleteSavedFilter(event, ${i})" title="Удалить">✕</button>
+        </span>
+    `).join('');
+}
+
+window.saveCurrentFilterAsPreset = function() {
+    const name = prompt('Название для этого набора фильтров и вида:');
+    if (!name) return;
+    const list = _getSavedFilters();
+    list.push({
+        name,
+        view: _activeViewName() || 'kanban',
+        labels: [...activeFilters.labels],
+        importance: [...activeFilters.importance],
+        due: activeFilters.due,
+        done: activeFilters.done,
+        members: [...activeFilters.members],
+        customFields: [...activeFilters.customFields],
+    });
+    _setSavedFilters(list);
+    renderSavedFilterChips();
+    showToast('Фильтр сохранён');
+};
+
+window.applySavedFilter = function(idx) {
+    const preset = _getSavedFilters()[idx];
+    if (!preset) return;
+
+    activeFilters = {
+        labels: new Set(preset.labels || []),
+        importance: new Set(preset.importance || []),
+        due: preset.due || null,
+        done: preset.done || null,
+        members: new Set(preset.members || []),
+        customFields: new Set(preset.customFields || []),
+    };
+    buildLabelChips();
+    buildImportanceChips();
+    buildCustomFieldChips();
+    buildMemberChips();
+    document.querySelectorAll('[data-filter-due]').forEach(b =>
+        b.classList.toggle('fb-chip--active', b.dataset.filterDue === activeFilters.due));
+    document.querySelectorAll('[data-filter-done]').forEach(b =>
+        b.classList.toggle('fb-chip--active', b.dataset.filterDone === activeFilters.done));
+    applyFilters();
+    _switchBoardView(preset.view && _BOARD_VIEWS[preset.view] ? preset.view : 'kanban');
+    showToast(`Применён фильтр «${preset.name}»`);
+};
+
+window.deleteSavedFilter = function(e, idx) {
+    e.stopPropagation();
+    const list = _getSavedFilters();
+    list.splice(idx, 1);
+    _setSavedFilters(list);
+    renderSavedFilterChips();
 };
 
 

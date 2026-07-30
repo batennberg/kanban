@@ -41,6 +41,7 @@
                 <input id="searchInput" class="search-input" type="text" placeholder="Поиск карточек..." autocomplete="off">
                 <kbd class="search-esc-kbd">Esc</kbd>
             </div>
+            <div class="search-hint">Операторы: <code>board:</code> <code>member:</code> <code>due:overdue</code> <code>is:done</code></div>
             <div id="searchResults" class="search-results"></div>
         </div>
     </div>
@@ -281,7 +282,7 @@
         }
         container.innerHTML = data.map(function(r, i) {
             var color = _escHtml(r.board_color || '#4361EE');
-            return '<a class="search-result-item" href="/board/' + r.board_id + '" data-index="' + i + '">' +
+            return '<a class="search-result-item" href="/card/' + r.id + '" data-index="' + i + '">' +
                 '<span class="sr-dot" style="background:' + color + '"></span>' +
                 '<span class="sr-body">' +
                     '<span class="sr-title">' + _escHtml(r.title) + '</span>' +

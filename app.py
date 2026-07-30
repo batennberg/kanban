@@ -2952,28 +2952,100 @@ def migrate_db():
         )
 
 
+def _search_text_variants(q):
+    """Для одиночного слова ≥5 букв добавляет 1-2 варианта с обрезанным концом —
+    грубое (без словаря) приближение к морфологии: запрос «договора» находит
+    карточки с «договор» и наоборот (Should №51). Многословные фразы не трогаем —
+    там точное совпадение уже достаточно специфично."""
+    q = q.strip()
+    variants = [q]
+    if q and ' ' not in q and len(q) >= 5:
+        variants.append(q[:-1])
+        if len(q) >= 6:
+            variants.append(q[:-2])
+    return variants
+
+
 @app.route('/api/search')
 def api_search():
+    """Поддерживает операторы board:/member:/due:/is: вперемешку со свободным
+    текстом (Should №49), например: `board:Маркетинг is:open due:overdue отчёт`."""
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
-    q = request.args.get('q', '').strip()
-    if len(q) < 2: return jsonify([])
+    raw_q = request.args.get('q', '').strip()
+    if len(raw_q) < 2: return jsonify([])
     board_ids = _get_board_ids()
-    like = f'%{q}%'
+    if board_ids is not None and len(board_ids) == 0:
+        return jsonify([])
+
+    op_board = op_member = op_due = op_is = None
+    free_words = []
+    for token in raw_q.split():
+        if ':' in token:
+            key, _, val = token.partition(':')
+            key = key.lower().strip()
+            val = val.strip()
+            if key == 'board' and val:
+                op_board = val
+            elif key == 'member' and val:
+                op_member = val
+            elif key == 'due' and val:
+                op_due = val.lower()
+            elif key == 'is' and val:
+                op_is = val.lower()
+            elif val:
+                free_words.append(token)
+        else:
+            free_words.append(token)
+    free_text = ' '.join(free_words).strip()
+
     with get_db() as conn:
         sql = '''
-            SELECT c.id, c.title, col.name AS column_name,
+            SELECT DISTINCT c.id, c.title, col.name AS column_name,
                    b.id AS board_id, b.name AS board_name, b.color AS board_color
             FROM cards c
             JOIN columns col ON col.id = c.column_id
             JOIN boards b ON b.id = col.board_id
-            WHERE (c.title LIKE ? OR c.description LIKE ?)
         '''
-        params = [like, like]
+        wheres = ['(c.archived=0 OR c.archived IS NULL)']
+        params = []
+
+        if op_member:
+            sql += ' JOIN card_members cm ON cm.card_id = c.id'
+            wheres.append('(LOWER(cm.user_email) LIKE ? OR LOWER(cm.user_name) LIKE ?)')
+            like_m = f'%{op_member.lower()}%'
+            params += [like_m, like_m]
+
+        if free_text:
+            variants = _search_text_variants(free_text)
+            ors = ' OR '.join(['c.title LIKE ? OR c.description LIKE ?'] * len(variants))
+            wheres.append(f'({ors})')
+            for v in variants:
+                params += [f'%{v}%', f'%{v}%']
+
+        if op_board:
+            wheres.append('LOWER(b.name) LIKE ?')
+            params.append(f'%{op_board.lower()}%')
+
+        if op_due == 'overdue':
+            wheres.append("TRIM(COALESCE(c.due_date,'')) != '' AND (substr(c.due_date,7,4)||substr(c.due_date,4,2)||substr(c.due_date,1,2)) < ?")
+            params.append(datetime.now().strftime('%Y%m%d'))
+        elif op_due in ('today', 'soon'):
+            today_key = datetime.now().strftime('%Y%m%d')
+            tomorrow_key = (datetime.now() + timedelta(days=1)).strftime('%Y%m%d')
+            wheres.append("TRIM(COALESCE(c.due_date,'')) != '' AND (substr(c.due_date,7,4)||substr(c.due_date,4,2)||substr(c.due_date,1,2)) IN (?,?)")
+            params += [today_key, tomorrow_key]
+
+        if op_is in ('done', 'complete', 'completed'):
+            wheres.append('c.completed=1')
+        elif op_is in ('open', 'active'):
+            wheres.append('(c.completed=0 OR c.completed IS NULL)')
+
         if board_ids is not None:
-            if len(board_ids) == 0: return jsonify([])
             ph = ','.join('?' * len(board_ids))
-            sql += f' AND b.id IN ({ph})'
+            wheres.append(f'b.id IN ({ph})')
             params += board_ids
+
+        sql += ' WHERE ' + ' AND '.join(wheres)
         sql += ' ORDER BY b.name, col.name LIMIT 20'
         rows = conn.execute(sql, params).fetchall()
     return jsonify([dict(r) for r in rows])
