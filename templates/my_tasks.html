@@ -196,12 +196,21 @@ function filterTasks(query) {
     });
 }
 
-// ===== DUE DATE HIGHLIGHTING (формат дд.мм.гггг) =====
+// ===== DUE DATE HIGHLIGHTING (формат дд.мм.гггг или дд.мм.гггг чч:мм) =====
 function dueDateClass(dateStr) {
     if (!dateStr) return '';
-    const parts = dateStr.trim().split('.');
+    const [datePart, timePart] = dateStr.trim().split(' ');
+    const parts = (datePart || '').split('.');
     if (parts.length !== 3) return '';
     const [d, m, y] = parts.map(Number);
+    if (timePart) {
+        const [hh, mi] = timePart.split(':').map(Number);
+        const due = new Date(y, m - 1, d, hh || 0, mi || 0);
+        const diffMs = due - new Date();
+        if (diffMs < 0)          return 'due--overdue';
+        if (diffMs <= 86400000) return 'due--soon';
+        return '';
+    }
     const due   = new Date(y, m - 1, d);
     const today = new Date();
     today.setHours(0, 0, 0, 0);

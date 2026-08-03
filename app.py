@@ -159,8 +159,11 @@ def _notify_admins(conn, type_, board_id, board_name, extra, card_id=0):
 def _sync_due_date_notifications(conn, user_email):
     """Лениво (при каждом открытии инбокса) проверяет карточки пользователя на просрочку
     и приближение срока — «срок сегодня» — и один раз создаёт уведомление по каждой,
-    без фоновых задач/cron (Must №82, Should №23 «напоминания о сроке»)."""
-    today_key = datetime.now().strftime('%Y%m%d')
+    без фоновых задач/cron (Must №82, Should №23 «напоминания о сроке»).
+    Срок может содержать точное время («ДД.ММ.ГГГГ ЧЧ:ММ») — если срок сегодня и время уже
+    прошло, карточка сразу считается просроченной, а не только «срок сегодня»."""
+    now = datetime.now()
+    today_key = now.strftime('%Y%m%d')
     rows = conn.execute('''
         SELECT ca.id AS card_id, ca.title AS card_title, ca.due_date,
                col.board_id, b.name AS board_name,
@@ -177,7 +180,18 @@ def _sync_due_date_notifications(conn, user_email):
     ''', (user_email, today_key)).fetchall()
 
     for r in rows:
-        type_ = 'card_overdue' if r['due_key'] < today_key else 'card_due_today'
+        overdue = r['due_key'] < today_key
+        if not overdue and r['due_key'] == today_key and ' ' in (r['due_date'] or ''):
+            time_part = r['due_date'].split(' ', 1)[1]
+            try:
+                due_dt = now.replace(
+                    hour=int(time_part.split(':')[0]), minute=int(time_part.split(':')[1]),
+                    second=0, microsecond=0
+                )
+                overdue = now > due_dt
+            except (ValueError, IndexError):
+                pass
+        type_ = 'card_overdue' if overdue else 'card_due_today'
         exists = conn.execute(
             "SELECT 1 FROM inbox_entries WHERE recipient_email=? AND type=? AND card_id=?",
             (user_email, type_, r['card_id'])
@@ -772,6 +786,7 @@ def workspace_tasks(ws_id):
                 WHERE b.id IN ({ph}) AND (ca.archived=0 OR ca.archived IS NULL)
                 ORDER BY (ca.due_date IS NULL OR ca.due_date=''), ca.completed,
                          substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)
+                            || substr(ca.due_date,12,5)
             ''', ws_board_ids).fetchall()
             cards = _attach_card_extras(conn, rows)
 
@@ -810,6 +825,7 @@ def my_tasks():
             sql += '''
                 ORDER BY (ca.due_date IS NULL OR ca.due_date=''), ca.completed,
                          substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)
+                            || substr(ca.due_date,12,5)
             '''
             rows  = conn.execute(sql, params).fetchall()
             cards = _attach_card_extras(conn, rows)

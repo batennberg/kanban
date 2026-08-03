@@ -290,9 +290,11 @@ window.tvBuildRows = function() {
 };
 
 function _tvDueKey(due) {
-    const parts = (due || '').split('.');
+    const [datePart, timePart] = (due || '').split(' ');
+    const parts = (datePart || '').split('.');
     if (parts.length !== 3) return '';
-    return parts[2] + parts[1] + parts[0]; // ГГГГММДД — для сортировки по возрастанию даты
+    // ГГГГММДДччмм — для сортировки по возрастанию даты и времени; без времени сортируется первым в тот же день
+    return parts[2] + parts[1] + parts[0] + (timePart ? timePart.replace(':', '') : '');
 }
 
 function tvCompare(a, b, key) {
@@ -464,7 +466,8 @@ function calRender() {
     const cardsByDate = {};
     let noDateCount = 0;
     rows.forEach(r => {
-        const parts = (r.due || '').split('.');
+        const datePart = (r.due || '').split(' ')[0];
+        const parts = datePart.split('.');
         if (parts.length !== 3) { noDateCount++; return; }
         const key = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
         (cardsByDate[key] = cardsByDate[key] || []).push(r);
@@ -490,16 +493,19 @@ function calRender() {
 
     for (let day = 1; day <= daysInMonth; day++) {
         const key = `${_calYear}-${String(_calMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-        const dayCards = cardsByDate[key] || [];
+        const dayCards = (cardsByDate[key] || []).slice().sort((a, b) =>
+            (a.due.split(' ')[1] || '').localeCompare(b.due.split(' ')[1] || ''));
         html += `
             <div class="cal-cell${key === todayKey ? ' cal-cell--today' : ''}">
                 <div class="cal-cell-date">${day}</div>
                 <div class="cal-cell-cards">
-                    ${dayCards.map(r => `
+                    ${dayCards.map(r => {
+                        const time = r.due.split(' ')[1] || '';
+                        return `
                         <div class="cal-chip${r.done ? ' cal-chip--done' : ''}" onclick="tvOpenCard('${r.cardId}')" title="${escHtml(r.column)}">
-                            ${r.labels[0] ? `<span class="cal-chip-dot" style="background:${r.labels[0].color}"></span>` : ''}${escHtml(r.title)}
-                        </div>
-                    `).join('')}
+                            ${r.labels[0] ? `<span class="cal-chip-dot" style="background:${r.labels[0].color}"></span>` : ''}${time ? `<span class="cal-chip-time">${escHtml(time)}</span>` : ''}${escHtml(r.title)}
+                        </div>`;
+                    }).join('')}
                 </div>
             </div>`;
     }
@@ -2110,16 +2116,31 @@ const _RU_MONTHS = ['Январь','Февраль','Март','Апрель','�
                     'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 const _CAL_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
 
+// Срок хранится как "ДД.ММ.ГГГГ" (без времени) или "ДД.ММ.ГГГГ ЧЧ:ММ" (с точным временем).
+// Позиции даты внутри строки фиксированы, поэтому весь substr-код в app.py,
+// читающий день/месяц/год по фиксированным индексам, не ломается от добавленного времени.
+function _calSplitDue(value) {
+    if (!value) return { date: '', time: '' };
+    const [date, time] = value.split(' ');
+    return { date: date || '', time: time || '' };
+}
+
+function _calJoinDue(date, time) {
+    if (!date) return '';
+    return time ? `${date} ${time}` : date;
+}
+
 function _calBuild() {
     const { year, month, selected } = _cal;
+    const { date: selDateStr, time: selTime } = _calSplitDue(selected);
     const today = new Date(); today.setHours(0,0,0,0);
     const first  = new Date(year, month, 1);
     let   startDow = first.getDay();
     startDow = startDow === 0 ? 6 : startDow - 1;
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     let selDate = null;
-    if (selected) {
-        const [dd, mm, yy] = selected.split('.').map(Number);
+    if (selDateStr) {
+        const [dd, mm, yy] = selDateStr.split('.').map(Number);
         selDate = new Date(yy, mm-1, dd); selDate.setHours(0,0,0,0);
     }
     let cells = '';
@@ -2135,6 +2156,12 @@ function _calBuild() {
         if (isPast)  cls += ' cal-day--past';
         cells += `<button class="${cls}" onclick="calSelectDay(${d},${month+1},${year})">${d}</button>`;
     }
+    const timeRow = selDateStr ? `
+        <div class="cal-time-row">
+            <input type="time" class="cal-time-input" value="${selTime}"
+                   onchange="calSetTime(this.value)" title="Точное время (необязательно)">
+            ${selTime ? `<button class="cal-time-clear" onclick="calSetTime('')" title="Убрать время">✕</button>` : ''}
+        </div>` : '';
     return `<div class="cal-wrap">
         <div class="cal-hdr">
             <button class="cal-nav" onclick="calPrevMonth()">‹</button>
@@ -2147,7 +2174,8 @@ function _calBuild() {
             <span class="cal-dow cal-dow--we">Сб</span><span class="cal-dow cal-dow--we">Вс</span>
             ${cells}
         </div>
-        ${selected ? `<button class="csp-btn csp-btn--secondary" style="margin-top:10px" onclick="clearDueDate()">${_cal.clearLabel}</button>` : ''}
+        ${timeRow}
+        ${selDateStr ? `<button class="csp-btn csp-btn--secondary" style="margin-top:10px" onclick="clearDueDate()">${_cal.clearLabel}</button>` : ''}
     </div>`;
 }
 
@@ -2159,8 +2187,9 @@ function _calRefresh() {
 function _calOpenForDate(currentDue, title = 'Срок', clearLabel = 'Убрать срок') {
     const now = new Date();
     let iy = now.getFullYear(), im = now.getMonth();
-    if (currentDue) {
-        const [, mm, yy] = currentDue.split('.').map(Number);
+    const { date: currentDate } = _calSplitDue(currentDue);
+    if (currentDate) {
+        const [, mm, yy] = currentDate.split('.').map(Number);
         if (!isNaN(yy)) { iy = yy; im = mm - 1; }
     }
     _cal.year = iy; _cal.month = im; _cal.selected = currentDue; _cal.clearLabel = clearLabel;
@@ -2202,11 +2231,22 @@ window.calNextMonth = function() {
 };
 
 window.calSelectDay = async function(d, m, y) {
-    const due = String(d).padStart(2,'0') + '.' + String(m).padStart(2,'0') + '.' + y;
+    const date = String(d).padStart(2,'0') + '.' + String(m).padStart(2,'0') + '.' + y;
+    const { time } = _calSplitDue(_cal.selected);
+    const due = _calJoinDue(date, time);
     _cal.selected = due;
     _calRefresh();
     if (_cal.onSelect) await _cal.onSelect(due);
-    setTimeout(closePopover, 260);
+    // Не закрываем поповер — после выбора дня можно ещё уточнить время (см. calSetTime).
+};
+
+window.calSetTime = async function(value) {
+    const { date } = _calSplitDue(_cal.selected);
+    if (!date) return;
+    const due = _calJoinDue(date, value);
+    _cal.selected = due;
+    _calRefresh();
+    if (_cal.onSelect) await _cal.onSelect(due);
 };
 
 window.clearDueDate = async function() {
@@ -3372,10 +3412,19 @@ function updateCardCoverDOM(cardDomId, color) {
 
 function dueDateClass(dateStr) {
     if (!dateStr) return '';
-    // Формат дд.мм.гггг
-    const parts = dateStr.trim().split('.');
+    // Формат "дд.мм.гггг" или "дд.мм.гггг чч:мм" (точное время — до минуты)
+    const [datePart, timePart] = dateStr.trim().split(' ');
+    const parts = (datePart || '').split('.');
     if (parts.length !== 3) return '';
     const [d, m, y] = parts.map(Number);
+    if (timePart) {
+        const [hh, mi] = timePart.split(':').map(Number);
+        const due = new Date(y, m - 1, d, hh || 0, mi || 0);
+        const diffMs = due - new Date();
+        if (diffMs < 0)          return 'due--overdue';
+        if (diffMs <= 86400000) return 'due--soon';
+        return '';
+    }
     const due   = new Date(y, m - 1, d);
     const today = new Date();
     today.setHours(0, 0, 0, 0);

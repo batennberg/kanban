@@ -1167,6 +1167,12 @@ input { font-family: inherit; }
     flex-shrink: 0;
 }
 
+.cal-chip-time {
+    flex-shrink: 0;
+    font-weight: 600;
+    color: #6b778c;
+}
+
 @media (max-width: 720px) {
     .cal-cell { min-height: 64px; }
     .cal-weekday { padding: 6px 2px; font-size: 9px; }
@@ -4613,6 +4619,39 @@ kbd {
     font-weight: 600;
 }
 .cal-day--selected:hover { background: #3755E8; }
+
+.cal-time-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #ebecf0;
+}
+
+.cal-time-input {
+    flex: 1;
+    border: 1px solid #dfe1e6;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12.5px;
+    color: var(--text-1, #1a1a1a);
+    background: #fff;
+}
+.cal-time-input:focus { outline: none; border-color: #4361EE; }
+
+.cal-time-clear {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 6px;
+    color: var(--text-2, #6b6b68);
+    font-size: 12px;
+    line-height: 1;
+    transition: background 0.12s, color 0.12s;
+}
+.cal-time-clear:hover { background: #f0f0ee; color: var(--text-1, #1a1a1a); }
 
 .cal-clear {
     display: block;

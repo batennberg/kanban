@@ -58,12 +58,13 @@ def _file_type(filename):
 
 
 def parse_due(due_str):
-    """ISO 8601 → ДД.ММ.ГГГГ (формат, который использует фронт для срока), или пустая строка."""
+    """ISO 8601 → «ДД.ММ.ГГГГ ЧЧ:ММ» (формат, который использует фронт для срока), или пустая строка.
+    Trello всегда хранит точный момент времени в due — переносим его целиком, а не только дату."""
     if not due_str:
         return ''
     try:
         dt = datetime.fromisoformat(due_str.replace('Z', '+00:00'))
-        return dt.astimezone().strftime('%d.%m.%Y')
+        return dt.astimezone().strftime('%d.%m.%Y %H:%M')
     except Exception:
         return ''
 
