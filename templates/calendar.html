@@ -124,5 +124,18 @@ calInit();
 .cal-card--critical { border-left-color: #de350b; background: #ffebe6; }
 .cal-card-title { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-card-meta { display: block; font-size: 10px; color: #5e6c84; margin-top: 1px; }
+@media (max-width: 768px) {
+    .calendar-page { padding: 16px 12px; }
+    .calendar-title { font-size: 18px; }
+    .cal-month-label { font-size: 14px; min-width: 120px; }
+    .cal-day { min-height: 60px; padding: 3px 4px; }
+    .cal-day-num { font-size: 11px; }
+    .cal-card { font-size: 10px; padding: 3px 4px; }
+    .cal-card-meta { display: none; }
+}
+@media (max-width: 480px) {
+    .cal-weekday { font-size: 10px; padding: 6px 0; }
+    .cal-day { min-height: 48px; }
+}
 </style>
 {% endblock %}

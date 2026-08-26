@@ -1,6 +1,22 @@
 /* ===== Reset & Base ===== */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+.skip-to-content {
+    position: absolute;
+    top: -100px;
+    left: 16px;
+    background: #1e40af;
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    z-index: 9999;
+    transition: top 0.2s;
+    text-decoration: none;
+}
+.skip-to-content:focus { top: 16px; }
+
 body {
     font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 14px;
@@ -163,6 +179,20 @@ input { font-family: inherit; }
     border-color: #1a1a1a;
     box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.07);
 }
+
+.lf-toggle-pw {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    transition: background 0.15s;
+}
+.lf-toggle-pw:hover { background: rgba(0,0,0,0.06); }
 
 .lf-remember {
     display: flex;

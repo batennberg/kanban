@@ -1,3 +1,92 @@
+// ===== CUSTOM CONFIRM / PROMPT (replace native dialogs) =====
+
+function _ensureModalStyles() {
+    if (document.getElementById('_modalStyles')) return;
+    const s = document.createElement('style');
+    s.id = '_modalStyles';
+    s.textContent = `
+        ._modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:10000;opacity:0;transition:opacity .18s}
+        ._modal-overlay._show{opacity:1}
+        ._modal-box{background:#fff;border-radius:16px;padding:28px 28px 20px;max-width:400px;width:90%;box-shadow:0 12px 40px rgba(0,0,0,.18);transform:translateY(8px);transition:transform .18s}
+        ._modal-overlay._show ._modal-box{transform:translateY(0)}
+        ._modal-title{font-size:16px;font-weight:700;color:#1a2535;margin-bottom:8px}
+        ._modal-msg{font-size:14px;color:#5e6c84;margin-bottom:20px;line-height:1.45}
+        ._modal-input{width:100%;padding:9px 12px;border:1.5px solid #d0d5dd;border-radius:8px;font-size:14px;font-family:inherit;margin-bottom:20px;outline:none;transition:border .15s}
+        ._modal-input:focus{border-color:#3b82f6}
+        ._modal-btns{display:flex;justify-content:flex-end;gap:8px}
+        ._modal-btn{padding:8px 18px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s}
+        ._modal-btn--cancel{background:#f1f3f5;color:#495057}
+        ._modal-btn--cancel:hover{background:#e2e6ea}
+        ._modal-btn--ok{background:#2563eb;color:#fff}
+        ._modal-btn--ok:hover{background:#1d4ed8}
+        ._modal-btn--danger{background:#dc2626;color:#fff}
+        ._modal-btn--danger:hover{background:#b91c1c}
+    `;
+    document.head.appendChild(s);
+}
+
+function showConfirm(title, message, opts) {
+    _ensureModalStyles();
+    opts = opts || {};
+    return new Promise(function(resolve) {
+        const overlay = document.createElement('div');
+        overlay.className = '_modal-overlay';
+        overlay.innerHTML = `
+            <div class="_modal-box" role="dialog" aria-modal="true" aria-label="${title}">
+                <div class="_modal-title">${title}</div>
+                <div class="_modal-msg">${message}</div>
+                <div class="_modal-btns">
+                    <button class="_modal-btn _modal-btn--cancel" data-action="cancel">Отмена</button>
+                    <button class="_modal-btn ${opts.danger ? '_modal-btn--danger' : '_modal-btn--ok'}" data-action="ok">${opts.confirmText || 'Удалить'}</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(function() { overlay.classList.add('_show'); });
+        const okBtn = overlay.querySelector('[data-action="ok"]');
+        const cancelBtn = overlay.querySelector('[data-action="cancel"]');
+        function close(val) { overlay.classList.remove('_show'); setTimeout(function() { overlay.remove(); }, 180); resolve(val); }
+        okBtn.onclick = function() { close(true); };
+        cancelBtn.onclick = function() { close(false); };
+        overlay.onclick = function(e) { if (e.target === overlay) close(false); };
+        document.addEventListener('keydown', function handler(e) {
+            if (e.key === 'Escape') { close(false); document.removeEventListener('keydown', handler); }
+        });
+        okBtn.focus();
+    });
+}
+
+function showPrompt(title, message, defaultVal) {
+    _ensureModalStyles();
+    return new Promise(function(resolve) {
+        const overlay = document.createElement('div');
+        overlay.className = '_modal-overlay';
+        overlay.innerHTML = `
+            <div class="_modal-box" role="dialog" aria-modal="true" aria-label="${title}">
+                <div class="_modal-title">${title}</div>
+                <div class="_modal-msg">${message}</div>
+                <input class="_modal-input" type="text" value="${(defaultVal || '').replace(/"/g, '&quot;')}">
+                <div class="_modal-btns">
+                    <button class="_modal-btn _modal-btn--cancel" data-action="cancel">Отмена</button>
+                    <button class="_modal-btn _modal-btn--ok" data-action="ok">OK</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(function() { overlay.classList.add('_show'); });
+        const input = overlay.querySelector('._modal-input');
+        const okBtn = overlay.querySelector('[data-action="ok"]');
+        const cancelBtn = overlay.querySelector('[data-action="cancel"]');
+        function close(val) { overlay.classList.remove('_show'); setTimeout(function() { overlay.remove(); }, 180); resolve(val); }
+        okBtn.onclick = function() { close(input.value); };
+        cancelBtn.onclick = function() { close(null); };
+        overlay.onclick = function(e) { if (e.target === overlay) close(null); };
+        input.addEventListener('keydown', function(e) { if (e.key === 'Enter') close(input.value); });
+        document.addEventListener('keydown', function handler(e) {
+            if (e.key === 'Escape') { close(null); document.removeEventListener('keydown', handler); }
+        });
+        setTimeout(function() { input.focus(); input.select(); }, 50);
+    });
+}
+
 // ===== РОЛЬ «НАБЛЮДАТЕЛЬ» (read-only, Must №76) =====
 
 const _boardIsReadonly = document.getElementById('boardColumns')?.dataset.userRole === 'viewer';
@@ -413,7 +502,7 @@ window.tvBulkComplete = async function() {
 
 window.tvBulkArchive = async function() {
     if (!_tvSelected.size) return;
-    if (!confirm(`Отправить ${_tvSelected.size} ${_ruPlural(_tvSelected.size, 'карточку', 'карточки', 'карточек')} в архив?`)) return;
+    if (!await showConfirm('Архивировать', `Отправить ${_tvSelected.size} ${_ruPlural(_tvSelected.size, 'карточку', 'карточки', 'карточек')} в архив?`, { confirmText: 'Архивировать' })) return;
     for (const cardId of [..._tvSelected]) {
         await fetch(`/api/cards/${cardId}`, { method: 'DELETE' });
         document.querySelector(`.cards-list .card[data-card-id="${cardId}"]`)?.remove();
@@ -705,6 +794,7 @@ window.toggleColumnCollapse = function(e, btn) {
     const collapsed = col.classList.toggle('column--collapsed');
     btn.textContent = collapsed ? '›' : '‹';
     btn.title = collapsed ? 'Развернуть список' : 'Свернуть список';
+    btn.setAttribute('aria-expanded', String(!collapsed));
     saveColumnCollapseState(col.dataset.colId, collapsed);
 };
 
@@ -862,7 +952,7 @@ window.inlineColSave = async function() {
     col.dataset.wipLimit  = 0;
     col.innerHTML = `
         <div class="column-header">
-            <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список">‹</button>
+            <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список" aria-expanded="true">‹</button>
             <h3 class="column-title" onclick="startRenameColumn(this)"
                 title="Нажмите для переименования">${escHtml(name)}</h3>
             <span class="column-count">0</span>
@@ -906,6 +996,26 @@ window.inlineColSave = async function() {
 let currentCardId   = null;  // "card-5" — DOM id
 let currentCardDbId = null;  // 5 — DB id
 let isDragging      = false;
+let _cmTriggerEl    = null;
+let _focusTrapCleanup = null;
+
+function _enableFocusTrap(container) {
+    _disableFocusTrap();
+    function handler(e) {
+        if (e.key !== 'Tab') return;
+        const focusable = container.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last  = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    container.addEventListener('keydown', handler);
+    _focusTrapCleanup = () => container.removeEventListener('keydown', handler);
+}
+function _disableFocusTrap() {
+    if (_focusTrapCleanup) { _focusTrapCleanup(); _focusTrapCleanup = null; }
+}
 
 document.addEventListener('dragstart', () => { isDragging = true; });
 document.addEventListener('dragend',   () => { setTimeout(() => { isDragging = false; }, 100); });
@@ -1001,8 +1111,12 @@ window.openCardModal = function(e, cardEl) {
     closePopover();
     currentBoardId = document.getElementById('boardColumns')?.dataset.boardId || null;
     hideMentionSuggestions();
+    _cmTriggerEl = document.activeElement;
     document.getElementById('cardDetailModal').style.display = 'flex';
     document.body.style.overflow = 'hidden';
+    const modal = document.querySelector('.card-modal');
+    if (modal) { modal.focus(); }
+    _enableFocusTrap(document.getElementById('cardDetailModal'));
 
     // Загружаем описание + комментарии из API
     loadCardData(dbId);
@@ -1220,7 +1334,7 @@ function _mdPrefixLines(textarea, prefixFn) {
     textarea.setSelectionRange(lineStart, lineStart + lines.length);
 }
 
-window.formatText = function(btn, action) {
+window.formatText = async function(btn, action) {
     const toolbar = btn.closest('.md-toolbar');
     const targetId = toolbar?.dataset.target;
     const textarea = targetId && document.getElementById(targetId);
@@ -1232,7 +1346,7 @@ window.formatText = function(btn, action) {
         case 'strike': _mdWrapSelection(textarea, '~~', '~~', 'текст'); break;
         case 'code':   _mdWrapSelection(textarea, '`', '`', 'код'); break;
         case 'link': {
-            const url = prompt('Ссылка (URL):', 'https://');
+            const url = await showPrompt('Вставка ссылки', 'Введите URL:', 'https://');
             if (!url) return;
             _mdWrapSelection(textarea, '[', `](${url})`, 'текст ссылки');
             break;
@@ -1272,6 +1386,9 @@ window.closeCardModal = async function() {
 
     document.getElementById('cardDetailModal').style.display = 'none';
     document.body.style.overflow = '';
+    _disableFocusTrap();
+    if (_cmTriggerEl && _cmTriggerEl.isConnected) _cmTriggerEl.focus();
+    _cmTriggerEl = null;
     currentCardId   = null;
     currentCardDbId = null;
     currentBoardId  = null;
@@ -1467,7 +1584,7 @@ function appendAttachmentToDOM(att) {
 }
 
 window.deleteAttachment = async function(id) {
-    if (!confirm('Удалить вложение?')) return;
+    if (!await showConfirm('Удалить вложение?', 'Вложение будет удалено безвозвратно.', { confirmText: 'Удалить', danger: true })) return;
     const res = await fetch(`/api/attachments/${id}`, { method: 'DELETE' });
     if (res.ok) {
         document.querySelector(`[data-attach-id="${id}"]`)?.remove();
@@ -1535,7 +1652,7 @@ window.addCardLink = async function() {
 };
 
 window.deleteCardLink = async function(id) {
-    if (!confirm('Удалить ссылку?')) return;
+    if (!await showConfirm('Удалить ссылку?', 'Ссылка будет удалена.', { confirmText: 'Удалить', danger: true })) return;
     const res = await fetch(`/api/cards/${currentCardDbId}/links/${id}`, { method: 'DELETE' });
     if (res.ok) {
         document.querySelector(`[data-link-id="${id}"]`)?.remove();
@@ -2703,7 +2820,7 @@ window.createMirror = async function(targetColId) {
 
 window.removeMirror = async function(e, mirrorId) {
     e.stopPropagation();
-    if (!confirm('Убрать зеркало из этой колонки? Исходная карточка не удалится.')) return;
+    if (!await showConfirm('Убрать зеркало?', 'Исходная карточка не удалится.', { confirmText: 'Убрать' })) return;
     await fetch(`/api/card-mirrors/${mirrorId}`, { method: 'DELETE' });
     document.getElementById('card-mirror-' + mirrorId)?.remove();
 };
@@ -2874,7 +2991,7 @@ window.mpAddMember = async function(boardId, userId) {
 };
 
 window.mpDeleteUser = async function(email) {
-    if (!confirm(`Удалить пользователя ${email} из системы?\n\nОн потеряет доступ ко всем доскам. Действие необратимо.`)) return;
+    if (!await showConfirm('Удалить пользователя', `Удалить ${email} из системы? Он потеряет доступ ко всем доскам. Действие необратимо.`, { confirmText: 'Удалить', danger: true })) return;
     await fetch('/api/users/' + encodeURIComponent(email), { method: 'DELETE' });
     renderMembersPanel();
 };
@@ -3327,7 +3444,7 @@ window.createCardFromTemplate = async function(templateId) {
 
 window.deleteCardTemplate = async function(e, templateId) {
     e.stopPropagation();
-    if (!confirm('Удалить этот шаблон карточки? Уже созданные из него карточки не пострадают.')) return;
+    if (!await showConfirm('Удалить шаблон?', 'Уже созданные из него карточки не пострадают.', { confirmText: 'Удалить', danger: true })) return;
     await fetch(`/api/card-templates/${templateId}`, { method: 'DELETE' });
     _refreshCardTemplateDropdown();
 };
@@ -3564,7 +3681,7 @@ window.startRenameChecklist = function(el) {
 };
 
 window.deleteChecklistGroup = async function(checklistId) {
-    if (!confirm('Удалить чек-лист со всеми пунктами?')) return;
+    if (!await showConfirm('Удалить чек-лист?', 'Все пункты будут удалены.', { confirmText: 'Удалить', danger: true })) return;
     const group = document.querySelector(`.cm-checklist-group[data-checklist-id="${checklistId}"]`);
     group?.remove();
     await fetch(`/api/checklists/${checklistId}`, { method: 'DELETE' });
@@ -4075,8 +4192,8 @@ function renderSavedFilterChips() {
     `).join('');
 }
 
-window.saveCurrentFilterAsPreset = function() {
-    const name = prompt('Название для этого набора фильтров и вида:');
+window.saveCurrentFilterAsPreset = async function() {
+    const name = await showPrompt('Сохранить фильтр', 'Введите название:', '');
     if (!name) return;
     const list = _getSavedFilters();
     list.push({
@@ -4244,7 +4361,7 @@ window.colMenuSetWipLimit = async function() {
     if (!col) return;
 
     const current = parseInt(col.dataset.wipLimit || '0');
-    const input = prompt('WIP-лимит для этой колонки (0 — без лимита):', current || '');
+    const input = await showPrompt('WIP-лимит', 'Лимит карточек в колонке (0 — без лимита):', current || '');
     if (input === null) return;
     const limit = Math.max(0, parseInt(input) || 0);
 
@@ -4277,7 +4394,7 @@ window.colMenuDuplicate = async function() {
     col.dataset.wipLimit  = data.wip_limit || 0;
     col.innerHTML = `
         <div class="column-header">
-            <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список">‹</button>
+            <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список" aria-expanded="true">‹</button>
             <h3 class="column-title" onclick="startRenameColumn(this)"
                 title="Нажмите для переименования">${escHtml(data.name)}</h3>
             <span class="column-count">0</span>
@@ -4328,7 +4445,7 @@ window.colMenuDelete = function() {
     const colId   = colMenuTargetId;
     const col     = document.querySelector(`.column[data-col-id="${colId}"]`);
     const name    = col?.querySelector('.column-title')?.textContent.trim() || 'список';
-    if (!confirm(`Удалить список «${name}» со всеми карточками?`)) return;
+    if (!await showConfirm('Удалить список?', `Список «${name}» и все карточки будут удалены.`, { confirmText: 'Удалить', danger: true })) return;
     const parent  = col?.parentNode;
     const nextSib = col?.nextSibling;
     if (col) col.remove();
@@ -5289,7 +5406,7 @@ window.toggleAutomationRule = async function(ruleId, enabled) {
 };
 
 window.deleteAutomationRule = async function(ruleId, btn) {
-    if (!confirm('Удалить это правило автоматизации?')) return;
+    if (!await showConfirm('Удалить правило?', 'Правило автоматизации будет удалено.', { confirmText: 'Удалить', danger: true })) return;
     await fetch(`/api/automations/${ruleId}`, { method: 'DELETE' });
     btn.closest('.bsp-automation-item')?.remove();
 };
@@ -5379,7 +5496,7 @@ window.toggleScheduledRule = async function(id, enabled) {
 };
 
 window.deleteScheduledRule = async function(id, btn) {
-    if (!confirm('Удалить расписание?')) return;
+    if (!await showConfirm('Удалить расписание?', 'Расписание будет удалено.', { confirmText: 'Удалить', danger: true })) return;
     await fetch(`/api/scheduled/${id}`, { method: 'DELETE' });
     btn.closest('.bsp-automation-item')?.remove();
 };
@@ -5662,7 +5779,7 @@ window.toggleCustomFieldShowOnCard = async function(fieldId, checked) {
 };
 
 window.deleteCustomField = async function(fieldId, btn) {
-    if (!confirm('Удалить это поле? Значения на всех карточках доски будут потеряны.')) return;
+    if (!await showConfirm('Удалить поле?', 'Значения на всех карточках доски будут потеряны.', { confirmText: 'Удалить', danger: true })) return;
     await fetch(`/api/custom-fields/${fieldId}`, { method: 'DELETE' });
     btn.closest('.bsp-cf-item')?.remove();
     showToast('Поле удалено');

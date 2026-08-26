@@ -11,8 +11,9 @@
     {% block head %}{% endblock %}
 </head>
 <body>
+    <a href="#main-content" class="skip-to-content">Перейти к содержимому</a>
     {% block body %}{% endblock %}
-    <div id="toastContainer"></div>
+    <div id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
     <!-- ===== SHORTCUTS MODAL ===== -->
     <div id="shortcutsModal" class="shortcuts-overlay" style="display:none" onclick="if(event.target===this)closeShortcuts()">

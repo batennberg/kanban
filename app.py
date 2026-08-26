@@ -568,9 +568,15 @@ def _duplicate_board(conn, src_board_id, name_suffix=' (копия)'):
 
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY') or 'dev-stub-key-change-in-prod'
+_secret = os.environ.get('SECRET_KEY')
+if not _secret:
+    import warnings
+    warnings.warn('SECRET_KEY env var not set — using insecure dev key. Set SECRET_KEY in production!')
+    _secret = 'dev-stub-key-change-in-prod'
+app.secret_key = _secret
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = bool(os.environ.get('SECRET_KEY'))
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 МБ
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
 

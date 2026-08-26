@@ -36,7 +36,7 @@
 
 {% block body %}
 <div class="board-page">
-    <nav class="navbar navbar--board" style="background: {{ board.color }}cc; backdrop-filter: blur(8px);">
+    <nav class="navbar navbar--board" style="background: {{ board.color }}cc; backdrop-filter: blur(8px);" aria-label="Навигация доски">
         <div class="navbar-left">
             <a href="/boards" class="btn-back" title="К доскам">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -447,13 +447,13 @@
     <!-- ===== CARD TEMPLATE PICKER DROPDOWN (Should №10) ===== -->
     <div id="cardTemplateDropdown" class="col-menu-dd" style="display:none"></div>
 
-    <div class="board-columns-wrap">
+    <div class="board-columns-wrap" id="main-content">
         <div class="board-columns" id="boardColumns" data-board-id="{{ board_id }}" data-user-role="{{ user.role }}">
             {% for col in board.columns %}
             <div class="column{% if col.wip_limit and col.cards | length > col.wip_limit %} column--wip-over{% endif %}"
                  id="column-{{ col.id }}" data-col-id="{{ col.id }}" data-wip-limit="{{ col.wip_limit or 0 }}">
                 <div class="column-header">
-                    <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список">‹</button>
+                    <button class="column-collapse-btn" onclick="toggleColumnCollapse(event, this)" title="Свернуть список" aria-expanded="true">‹</button>
                     <h3 class="column-title"
                         onclick="startRenameColumn(this)"
                         title="Нажмите для переименования">{{ col.name }}</h3>
@@ -694,7 +694,7 @@
 
 <!-- ===== CARD DETAIL MODAL ===== -->
 <div class="card-modal-overlay" id="cardDetailModal" style="display:none" onclick="handleModalOverlayClick(event)">
-    <div class="card-modal">
+    <div class="card-modal" role="dialog" aria-modal="true" aria-labelledby="cmTitle">
         <div class="cm-header">
             <div class="cm-breadcrumb">
                 <span class="cm-breadcrumb-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
@@ -958,7 +958,7 @@
 </div>
 
 <!-- Quick Edit Popup -->
-<div id="quickEditPopup" style="display:none">
+<div id="quickEditPopup" style="display:none" role="dialog" aria-modal="true" aria-label="Быстрое редактирование">
     <textarea id="qeTitle" class="qe-title" rows="3"></textarea>
     <div class="qe-actions">
         <button class="btn-primary btn-sm" onclick="saveQuickEdit()">Сохранить</button>
