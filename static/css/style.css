@@ -3065,6 +3065,41 @@ kbd {
 .cm-comment-text blockquote { border-left: 3px solid #dfe1e6; margin: 4px 0; padding-left: 10px; color: #6b778c; }
 .cm-comment-text a         { color: #4361EE; }
 
+/* Comment reactions (Nice №26) */
+.cm-comment-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.cm-reaction {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 8px; border-radius: 12px; font-size: 13px;
+    background: #f4f5f7; border: 1px solid #dfe1e6; cursor: pointer;
+    transition: background .15s, border-color .15s;
+}
+.cm-reaction:hover { background: #e4e6ea; }
+.cm-reaction--active { background: #deebff; border-color: #4361EE; }
+.cm-comment-react-btn {
+    background: none; border: none; cursor: pointer; font-size: 14px;
+    opacity: 0; transition: opacity .15s; padding: 2px 4px; margin-top: 4px;
+}
+.cm-comment-item:hover .cm-comment-react-btn { opacity: .6; }
+.cm-comment-react-btn:hover { opacity: 1 !important; }
+.reaction-picker {
+    display: flex; gap: 4px; padding: 4px 8px; background: #fff;
+    border: 1px solid #dfe1e6; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.12);
+    position: absolute; z-index: 100; margin-top: 4px;
+}
+.reaction-pick-btn {
+    background: none; border: none; font-size: 18px; cursor: pointer;
+    padding: 4px 6px; border-radius: 6px; transition: background .1s;
+}
+.reaction-pick-btn:hover { background: #f4f5f7; }
+
+/* Cycle time (Nice №101) */
+.cm-cycle-time { margin-top: 12px; padding: 10px 12px; background: #f4f5f7; border-radius: 8px; }
+.ct-title { font-size: 12px; font-weight: 600; color: #5e6c84; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.ct-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 13px; }
+.ct-col { color: #172b4d; }
+.ct-val { font-weight: 500; color: #5e6c84; }
+.ct-total { border-top: 1px solid #dfe1e6; margin-top: 4px; padding-top: 6px; font-weight: 600; }
+
 /* Activity (audit) list */
 .cm-activity-list {
     display: flex;
@@ -5667,4 +5702,32 @@ kbd {
 .is-readonly-viewer .cm-description-view,
 .is-readonly-viewer .column-title {
     pointer-events: none;
+}
+
+/* ===== Печать / PDF (Nice №99) ===== */
+@media print {
+    body * { visibility: hidden; }
+    .board-columns-wrap, .board-columns-wrap * { visibility: visible; }
+    .board-columns-wrap {
+        position: absolute; left: 0; top: 0;
+        width: 100%; overflow: visible;
+    }
+    .board-columns {
+        display: flex !important; flex-wrap: wrap !important;
+        gap: 12px !important; padding: 10px !important;
+    }
+    .column {
+        break-inside: avoid; page-break-inside: avoid;
+        width: 280px !important; min-width: 280px !important;
+        max-width: 280px !important; border: 1px solid #dfe1e6 !important;
+        background: #fff !important; box-shadow: none !important;
+    }
+    .card { break-inside: avoid; page-break-inside: avoid; }
+    .card-edit-btn, .card-check-btn, .column-collapse-btn,
+    .column-menu-btn, .add-card-form, .card-form-toggle,
+    .board-header, .nav, .bsp, .inbox-shell,
+    .cm-sidebar-btn, #quickEditPopup, #quickEditOverlay,
+    .export-dropdown-wrap, .user-avatar-btn,
+    .card-modal-overlay, .card-modal { display: none !important; visibility: hidden !important; }
+    .board-title { font-size: 18px !important; margin-bottom: 8px !important; }
 }

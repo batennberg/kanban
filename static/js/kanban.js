@@ -1026,6 +1026,7 @@ async function loadCardData(dbId) {
         renderCardRelations(data.relations || []);
         renderChecklists(data.checklists || []);
         renderCustomFields(data.custom_fields || []);
+        loadCycleTime(dbId);
         // Показываем cover в modal-header если есть
         const coverColor = data.cover_color || '';
         const modalEl    = document.querySelector('.card-modal');
@@ -1823,9 +1824,49 @@ function appendCommentToDOM(c) {
                 <button class="cm-comment-del" onclick="deleteComment(${c.id})" title="Удалить">✕</button>
             </div>
             <div class="cm-comment-text">${formatCommentText(c.text, c.mentions || [])}</div>
+            <div class="cm-comment-reactions" id="reactions-${c.id}"></div>
+            <button class="cm-comment-react-btn" onclick="toggleReactionPicker(event, ${c.id})">😊</button>
         </div>
     `;
     document.getElementById('cmCommentsList').prepend(item);
+    loadReactions(c.id);
+}
+
+const QUICK_EMOJIS = ['👍','❤️','😂','😮','😢','🔥','✅','👏'];
+
+window.toggleReactionPicker = function(e, commentId) {
+    e.stopPropagation();
+    const existing = document.getElementById('rp-' + commentId);
+    if (existing) { existing.remove(); return; }
+    const picker = document.createElement('div');
+    picker.id = 'rp-' + commentId;
+    picker.className = 'reaction-picker';
+    picker.innerHTML = QUICK_EMOJIS.map(em => `<button class="reaction-pick-btn" onclick="addReaction(${commentId}, '${em}')">${em}</button>`).join('');
+    e.target.parentElement.appendChild(picker);
+};
+
+window.addReaction = async function(commentId, emoji) {
+    const res = await fetch(`/api/comments/${commentId}/reactions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emoji })
+    });
+    document.getElementById('rp-' + commentId)?.remove();
+    loadReactions(commentId);
+};
+
+async function loadReactions(commentId) {
+    const container = document.getElementById('reactions-' + commentId);
+    if (!container) return;
+    try {
+        const res = await fetch(`/api/comments/${commentId}/reactions`);
+        if (!res.ok) return;
+        const groups = await res.json();
+        container.innerHTML = groups.map(g => {
+            const me = (window.__userEmail || '').toLowerCase();
+            const isActive = g.users.some(u => u.toLowerCase() === me || u.includes(me));
+            return `<span class="cm-reaction${isActive ? ' cm-reaction--active' : ''}" onclick="addReaction(${commentId}, '${g.emoji}')" title="${g.users.join(', ')}">${g.emoji} ${g.count > 1 ? g.count : ''}</span>`;
+        }).join('');
+    } catch {}
 }
 
 const ACTIVITY_LABELS = {
@@ -1859,6 +1900,29 @@ const ACTIVITY_LABELS = {
     link_removed:             (d) => `удалил(а) ссылку: ${d}`,
     custom_field_changed:     (d) => `изменил(а) поле: ${d}`,
 };
+
+// ===== Cycle time (Nice №101) =====
+
+async function loadCycleTime(cardId) {
+    const container = document.getElementById('cmCycleTime');
+    if (!container) return;
+    try {
+        const res = await fetch(`/api/cards/${cardId}/cycle-time`);
+        if (!res.ok) { container.style.display = 'none'; return; }
+        const data = await res.json();
+        if (!data.length) { container.style.display = 'none'; return; }
+        container.style.display = 'block';
+        let totalHours = 0;
+        const rows = data.map(d => {
+            totalHours += d.hours;
+            const h = d.hours;
+            const label = h >= 24 ? `${Math.floor(h/24)}д ${Math.round(h%24)}ч` : `${h}ч`;
+            return `<div class="ct-row"><span class="ct-col">${escHtml(d.column_name)}</span><span class="ct-val">${label}</span></div>`;
+        }).join('');
+        const totalLabel = totalHours >= 24 ? `${Math.floor(totalHours/24)}д ${Math.round(totalHours%24)}ч` : `${Math.round(totalHours)}ч`;
+        container.innerHTML = `<div class="ct-title">Cycle Time</div>${rows}<div class="ct-row ct-total"><span class="ct-col">Итого</span><span class="ct-val">${totalLabel}</span></div>`;
+    } catch { container.style.display = 'none'; }
+}
 
 function renderActivity(list) {
     const container = document.getElementById('cmActivityList');
@@ -5374,3 +5438,34 @@ function showBspMsg(text, isError) {
     el.className = 'bsp-msg' + (isError ? ' error' : '');
     setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 3000);
 }
+
+// ===== Workload (Nice №43) =====
+
+window.openWorkloadPanel = async function() {
+    const panel = document.getElementById('archivePanel');
+    panel.style.display = 'flex';
+    const list = document.getElementById('archiveList');
+    list.innerHTML = '<div class="ap-loading">Загрузка...</div>';
+    const boardId = _getBoardId();
+    try {
+        const res = await fetch(`/api/boards/${boardId}/workload`);
+        if (!res.ok) { list.innerHTML = '<p class="ap-empty">Ошибка загрузки</p>'; return; }
+        const data = await res.json();
+        if (!data.length) { list.innerHTML = '<p class="ap-empty">Нет участников с карточками</p>'; return; }
+        list.innerHTML = data.map(d => {
+            const barWidth = Math.min(100, (d.total / Math.max(1, ...data.map(x=>x.total))) * 100);
+            const overdueStr = d.overdue > 0 ? `<span style="color:#de350b;margin-left:8px">${d.overdue} просроч.</span>` : '';
+            return `<div class="ap-item">
+                <div class="ap-item-info">
+                    <div class="ap-item-text" style="flex:1">
+                        <span class="ap-item-title">${escHtml(d.user_name || d.user_email)}</span>
+                        <span class="ap-item-meta">${d.total} карточек · ${d.done} выполнено${overdueStr}</span>
+                        <div style="background:#e4e6ea;border-radius:4px;height:6px;margin-top:4px;overflow:hidden">
+                            <div style="background:#4361EE;height:100%;width:${barWidth}%;border-radius:4px"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch { list.innerHTML = '<p class="ap-empty">Ошибка</p>'; }
+};

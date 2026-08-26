@@ -108,6 +108,9 @@
             <button class="btn-board-action" onclick="openArchivePanel()" title="Архив карточек">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12v6M14 12v6"/></svg><span class="btn-act-text">Архив</span>
             </button>
+            <button class="btn-board-action" onclick="openWorkloadPanel()" title="Загрузка участников">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="btn-act-text">Workload</span>
+            </button>
             {% if user.role == 'admin' %}
             <div class="export-dropdown-wrap">
                 <button class="btn-board-action" onclick="toggleExportMenu(event)" title="Экспорт доски">
@@ -117,6 +120,7 @@
                     <a href="/api/boards/{{ board.id }}/export" class="export-dropdown-item">CSV (только данные)</a>
                     <a href="/api/boards/{{ board.id }}/export/zip" class="export-dropdown-item">ZIP (данные + вложения)</a>
                     <a href="/api/boards/{{ board.id }}/ical" class="export-dropdown-item">iCal-фид (подписка в календаре)</a>
+                    <a href="javascript:void(0)" class="export-dropdown-item" onclick="window.print()">Печать / PDF</a>
                 </div>
             </div>
             {% endif %}
@@ -800,6 +804,7 @@
                     <div class="cm-activity-list" id="cmActivityList">
                         <p class="cm-empty-hint" id="cmActivityEmpty">Пока нет событий</p>
                     </div>
+                    <div class="cm-cycle-time" id="cmCycleTime" style="display:none"></div>
                 </div>
             </div>
 

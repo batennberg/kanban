@@ -217,6 +217,22 @@ def _log_activity(conn, card_id, event_type, detail=''):
     )
 
 
+def _log_column_entry(conn, card_id, column_id):
+    """Фиксирует вход карточки в колонку (Nice №101 — cycle time)."""
+    conn.execute(
+        "INSERT INTO card_column_history (card_id, column_id) VALUES (?,?)",
+        (card_id, column_id)
+    )
+
+
+def _log_column_exit(conn, card_id):
+    """Фиксирует выход карточки из текущей колонки."""
+    conn.execute(
+        "UPDATE card_column_history SET left_at=datetime('now','localtime') WHERE card_id=? AND left_at IS NULL",
+        (card_id,)
+    )
+
+
 _AUTOMATION_ACTIONS = ('mark_complete', 'mark_incomplete', 'archive_card', 'set_importance', 'add_label', 'create_card_on_board')
 
 
@@ -2105,6 +2121,7 @@ def api_create_card():
         )
         card_id = cur.lastrowid
         _log_activity(conn, card_id, 'created')
+        _log_column_entry(conn, card_id, col_id)
         card = dict(conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone())
     return jsonify(card)
 
@@ -2199,6 +2216,8 @@ def api_update_card(card_id):
                 _fire_webhooks(conn, 'card.updated', {'card_id': card_id, 'changes': d, 'actor': session['user']['email']})
                 _fire_slack(conn, 'card.updated', {'card_id': card_id, 'changes': d, 'actor': session['user']['email']})
                 if 'column_id' in d and before['column_id'] != d['column_id']:
+                    _log_column_exit(conn, card_id)
+                    _log_column_entry(conn, card_id, d['column_id'])
                     automations = _run_column_automations(conn, card_id, d['column_id'])
                 # Повторяющиеся карточки (Should №60) — при завершении создаём копию
                 if 'completed' in d and d['completed'] and not before['completed']:
@@ -2483,6 +2502,106 @@ def api_delete_comment(comment_id):
     with get_db() as conn:
         conn.execute('DELETE FROM comments WHERE id=?', (comment_id,))
     return jsonify({'ok': True})
+
+
+# ===== Реакции на комментариях (Nice №26) =====
+
+@app.route('/api/comments/<int:comment_id>/reactions', methods=['GET'])
+def api_get_reactions(comment_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT emoji, user_email, user_name FROM comment_reactions cr LEFT JOIN users u ON u.email = cr.user_email WHERE cr.comment_id=? ORDER BY cr.id',
+            (comment_id,)
+        ).fetchall()
+    # Группируем по эмодзи
+    grouped = {}
+    for r in rows:
+        e = r['emoji']
+        if e not in grouped:
+            grouped[e] = {'emoji': e, 'users': [], 'count': 0}
+        grouped[e]['users'].append(r['user_name'] or r['user_email'])
+        grouped[e]['count'] += 1
+    return jsonify(list(grouped.values()))
+
+@app.route('/api/comments/<int:comment_id>/reactions', methods=['POST'])
+def api_add_reaction(comment_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json() or {}
+    emoji = (d.get('emoji') or '').strip()
+    if not emoji:
+        return jsonify({'error': 'no emoji'}), 400
+    email = session['user'].get('email', '')
+    with get_db() as conn:
+        existing = conn.execute(
+            'SELECT id FROM comment_reactions WHERE comment_id=? AND user_email=? AND emoji=?',
+            (comment_id, email, emoji)
+        ).fetchone()
+        if existing:
+            conn.execute('DELETE FROM comment_reactions WHERE id=?', (existing['id'],))
+            return jsonify({'removed': True})
+        conn.execute(
+            'INSERT INTO comment_reactions (comment_id, user_email, emoji) VALUES (?,?,?)',
+            (comment_id, email, emoji)
+        )
+    return jsonify({'added': True})
+
+
+@app.route('/api/cards/<int:card_id>/cycle-time')
+def api_card_cycle_time(card_id):
+    """Cycle time карточки (Nice №101) — время в каждой колонке."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute('''
+            SELECT cch.column_id, col.name AS column_name, cch.entered_at, cch.left_at
+            FROM card_column_history cch
+            JOIN columns col ON col.id = cch.column_id
+            WHERE cch.card_id=? ORDER BY cch.entered_at
+        ''', (card_id,)).fetchall()
+    result = []
+    now = datetime.now()
+    for r in rows:
+        entered = r['entered_at'] or ''
+        left = r['left_at'] or ''
+        try:
+            t_enter = datetime.strptime(entered, '%Y-%m-%d %H:%M:%S') if entered else now
+        except ValueError:
+            t_enter = now
+        try:
+            t_left = datetime.strptime(left, '%Y-%m-%d %H:%M:%S') if left else now
+        except ValueError:
+            t_left = now
+        hours = max(0, (t_left - t_enter).total_seconds() / 3600)
+        result.append({
+            'column_name': r['column_name'],
+            'entered_at': entered,
+            'left_at': left,
+            'hours': round(hours, 1)
+        })
+    return jsonify(result)
+
+
+@app.route('/api/boards/<int:board_id>/workload')
+def api_board_workload(board_id):
+    """Загрузка участников доски (Nice №43)."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute('''
+            SELECT cm.user_email, cm.user_name,
+                   COUNT(c.id) AS total,
+                   SUM(CASE WHEN c.completed=1 THEN 1 ELSE 0 END) AS done,
+                   SUM(CASE WHEN c.due_date != '' AND c.due_date IS NOT NULL
+                       AND (substr(c.due_date,7,4)||substr(c.due_date,4,2)||substr(c.due_date,1,2))
+                       < strftime('%Y%m%d','now','localtime')
+                       AND (c.completed=0 OR c.completed IS NULL) THEN 1 ELSE 0 END) AS overdue
+            FROM card_members cm
+            JOIN cards c ON c.id = cm.card_id
+            JOIN columns col ON col.id = c.column_id
+            WHERE col.board_id=? AND (c.archived=0 OR c.archived IS NULL)
+            GROUP BY cm.user_email
+            ORDER BY total DESC
+        ''', (board_id,)).fetchall()
+    return jsonify([dict(r) for r in rows])
 
 
 @app.route('/api/inbox')
@@ -4031,6 +4150,29 @@ def migrate_db():
             conn.execute("ALTER TABLE automation_rules ADD COLUMN target_board_id INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass
+
+        # ── Реакции на комментариях (Nice №26) ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS comment_reactions (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                comment_id INTEGER NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+                user_email TEXT    NOT NULL,
+                emoji      TEXT    NOT NULL,
+                created_at TEXT    DEFAULT (datetime('now','localtime')),
+                UNIQUE(comment_id, user_email, emoji)
+            )
+        ''')
+
+        # ── Cycle time — история колонок (Nice №101) ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_column_history (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                column_id  INTEGER NOT NULL,
+                entered_at TEXT    DEFAULT (datetime('now','localtime')),
+                left_at    TEXT
+            )
+        ''')
 
         # ── Журнал автоматизаций (Should №59) ──
         conn.execute('''
