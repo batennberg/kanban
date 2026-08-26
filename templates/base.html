@@ -27,8 +27,11 @@
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>Esc</kbd></span><span>Закрыть модал / dropdown / снять фокус</span></div>
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>?</kbd></span><span>Эта подсказка</span></div>
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>n</kbd></span><span>Новая карточка (первая колонка)</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>c</kbd></span><span>Новая карточка (фокусная колонка)</span></div>
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>j</kbd> / <kbd>k</kbd></span><span>Навигация вниз / вверх по карточкам</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>h</kbd> / <kbd>l</kbd></span><span>Навигация влево / вправо по колонкам</span></div>
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>Enter</kbd></span><span>Открыть фокусную карточку</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>x</kbd></span><span>Отметить все чек-листы фокусной карточки</span></div>
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>/</kbd></span><span>Глобальный поиск</span></div>
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>K</kbd></span><span>Глобальный поиск (альт.)</span></div>
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>b</kbd></span><span>Переключатель досок</span></div>
@@ -177,6 +180,12 @@
             data.items.forEach(function(item) {
                 list.appendChild(renderInboxItem(item));
             });
+            /* Помечаем все непрочитанные как прочитанные при открытии панели */
+            data.items.forEach(function(item) {
+                if (!item.is_read) markInboxEntryRead(item.id);
+            });
+            badge.textContent = '0';
+            badge.style.display = 'none';
         } catch (err) {
             list.innerHTML = '<div class="inbox-empty">Не удалось загрузить уведомления</div>';
             badge.textContent = '0';

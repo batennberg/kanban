@@ -57,7 +57,12 @@ function updateColumnCounts() {
     document.querySelectorAll('.column').forEach(col => {
         const counter = col.querySelector('.column-count');
         const list    = col.querySelector('.cards-list');
-        if (counter && list) _setColumnCountDisplay(col, counter, list.querySelectorAll('.card').length);
+        if (counter && list) {
+            const count = list.querySelectorAll('.card').length;
+            _setColumnCountDisplay(col, counter, count);
+            const empty = list.querySelector('.column-empty-state');
+            if (empty) empty.style.display = count === 0 ? 'flex' : 'none';
+        }
     });
 }
 
@@ -1011,6 +1016,9 @@ async function loadCardData(dbId) {
 
         document.getElementById('cmDescription').value = data.description || '';
         renderDescriptionView(data.description || '');
+        _lastSavedTitle = data.title || document.getElementById('cmTitle').textContent;
+        _lastSavedDesc = data.description || '';
+        _initAutosaveTracking();
         renderComments(data.comments || []);
         renderActivity(data.activity || []);
         renderAttachments(data.attachments || []);
@@ -1244,22 +1252,23 @@ window.formatText = function(btn, action) {
 window.closeCardModal = async function() {
     if (!currentCardId || !currentCardDbId) return;
 
+    _clearAutosaveTimer();
+    // Final save — ensure latest state is persisted
     const newTitle = document.getElementById('cmTitle').textContent.trim();
     const newDesc  = document.getElementById('cmDescription').value;
+    if (newTitle !== _lastSavedTitle || newDesc !== _lastSavedDesc) {
+        fetch(`/api/cards/${currentCardDbId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: newTitle, description: newDesc })
+        });
+    }
 
-    // Сохраняем в DOM
     const cardEl = document.getElementById(currentCardId);
     if (cardEl && newTitle) {
         const t = cardEl.querySelector('.card-title');
         if (t) t.textContent = newTitle;
     }
-
-    // Сохраняем в БД
-    fetch(`/api/cards/${currentCardDbId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTitle, description: newDesc })
-    });
 
     document.getElementById('cardDetailModal').style.display = 'none';
     document.body.style.overflow = '';
@@ -1271,6 +1280,69 @@ window.closeCardModal = async function() {
     const boardId = document.getElementById('boardColumns')?.dataset.boardId;
     if (boardId) history.replaceState(null, '', `/board/${boardId}`);
 };
+
+// ===== AUTOSAVE (title + description) =====
+
+let _autosaveTimer = null;
+let _lastSavedTitle = '';
+let _lastSavedDesc = '';
+
+function _clearAutosaveTimer() {
+    if (_autosaveTimer) { clearTimeout(_autosaveTimer); _autosaveTimer = null; }
+}
+
+function _showSaveStatus(text) {
+    const el = document.getElementById('cmSaveStatus');
+    if (el) { el.textContent = text; el.style.opacity = '1'; }
+}
+
+function _hideSaveStatus() {
+    const el = document.getElementById('cmSaveStatus');
+    if (el) el.style.opacity = '0';
+}
+
+function _triggerAutosave() {
+    _clearAutosaveTimer();
+    _showSaveStatus('Сохраняю...');
+    _autosaveTimer = setTimeout(async () => {
+        if (!currentCardDbId) { _hideSaveStatus(); return; }
+        const newTitle = document.getElementById('cmTitle').textContent.trim();
+        const newDesc  = document.getElementById('cmDescription')?.value || '';
+        if (newTitle === _lastSavedTitle && newDesc === _lastSavedDesc) { _hideSaveStatus(); return; }
+        try {
+            await fetch(`/api/cards/${currentCardDbId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: newTitle, description: newDesc })
+            });
+            _lastSavedTitle = newTitle;
+            _lastSavedDesc = newDesc;
+            // Update card in DOM
+            const cardEl = document.getElementById(currentCardId);
+            if (cardEl && newTitle) {
+                const t = cardEl.querySelector('.card-title');
+                if (t) t.textContent = newTitle;
+            }
+            _showSaveStatus('Сохранено');
+            setTimeout(_hideSaveStatus, 1500);
+        } catch {
+            _showSaveStatus('Ошибка сохранения');
+        }
+    }, 800);
+}
+
+function _initAutosaveTracking() {
+    const titleEl = document.getElementById('cmTitle');
+    const descEl  = document.getElementById('cmDescription');
+    if (titleEl) {
+        titleEl.addEventListener('input', _triggerAutosave);
+        titleEl.addEventListener('blur', _triggerAutosave);
+    }
+    if (descEl) {
+        descEl.addEventListener('input', _triggerAutosave);
+        descEl.addEventListener('blur', _triggerAutosave);
+    }
+}
 
 // ===== WATCH TOGGLE (Should №81) =====
 
@@ -4211,7 +4283,12 @@ window.colMenuDuplicate = async function() {
             <span class="column-count">0</span>
             <button class="column-menu-btn" onclick="openColumnMenu(event, this)" title="Меню">⋯</button>
         </div>
-        <div class="cards-list" id="cards-${data.id}" data-col-id="${data.id}"></div>
+        <div class="cards-list" id="cards-${data.id}" data-col-id="${data.id}">
+            <div class="column-empty-state">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.35"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/></svg>
+                <span>Нет карточек</span>
+            </div>
+        </div>
         <div class="inline-add-card" id="inline-add-${data.id}" style="display:none">
             <textarea class="inline-card-input" id="inline-input-${data.id}"
                       placeholder="Название карточки..."
@@ -4490,6 +4567,29 @@ document.addEventListener('keydown', e => {
 
 // ===== KEYBOARD NAVIGATION (Should №108) =====
 {
+    function _toggleQuickComplete(cardDbId) {
+        fetch(`/api/cards/${cardDbId}`)
+            .then(r => r.json())
+            .then(data => {
+                const checklists = data.checklists || [];
+                if (!checklists.length) return;
+                const cl = checklists[0];
+                if (!cl.items || !cl.items.length) return;
+                const allChecked = cl.items.every(i => i.checked);
+                cl.items.forEach(item => {
+                    fetch(`/api/checklist-items/${item.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ checked: !allChecked })
+                    });
+                });
+                setTimeout(() => {
+                    if (typeof refreshBoard === 'function') refreshBoard();
+                    if (currentCardDbId === cardDbId) loadCardData(cardDbId);
+                }, 200);
+            });
+    }
+
     let _focusedCard = null;   // currently focused .card element
 
     function _isInputFocused() {
@@ -4592,6 +4692,51 @@ document.addEventListener('keydown', e => {
         if (e.key === '/') {
             e.preventDefault();
             if (typeof openSearch === 'function') openSearch();
+            return;
+        }
+
+        // ? — show shortcuts modal
+        if (e.key === '?') {
+            e.preventDefault();
+            const m = document.getElementById('shortcutsModal');
+            if (m) m.style.display = m.style.display === 'none' ? 'flex' : 'none';
+            return;
+        }
+
+        // h/l — navigate left/right between columns
+        if (e.key === 'h' || e.key === 'l') {
+            e.preventDefault();
+            const cols = _boardColumns();
+            if (!cols.length || !_focusedCard) return;
+            const curCol = _focusedCard.closest('.column');
+            const colIdx = cols.indexOf(curCol);
+            if (colIdx === -1) return;
+            const targetCol = e.key === 'h' ? cols[colIdx - 1] : cols[colIdx + 1];
+            if (!targetCol) return;
+            const targetCards = targetCol.querySelectorAll('.card:not(.archived)');
+            _focusCard(targetCards.length ? targetCards[Math.min(targetCards.length - 1, cols.indexOf(curCol) === colIdx ? 0 : targetCards.length - 1)] : null);
+            return;
+        }
+
+        // x/Space — toggle complete on focused card (checklist)
+        if ((e.key === 'x' || e.key === ' ') && _focusedCard) {
+            e.preventDefault();
+            const cardId = _focusedCard.dataset.cardId;
+            if (cardId) _toggleQuickComplete(parseInt(cardId));
+            return;
+        }
+
+        // c — create card in focused card's column
+        if (e.key === 'c') {
+            e.preventDefault();
+            if (_focusedCard) {
+                const col = _focusedCard.closest('.column');
+                const colId = col?.dataset.colId;
+                if (colId && typeof addCard === 'function') addCard(parseInt(colId));
+            } else {
+                const firstCol = _boardColumns()[0];
+                if (firstCol?.dataset.colId && typeof addCard === 'function') addCard(parseInt(firstCol.dataset.colId));
+            }
             return;
         }
 
