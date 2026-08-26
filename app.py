@@ -102,6 +102,8 @@ def _create_comment_mentions(conn, card_id, comment_id, text, actor_email, actor
     for user in _find_mentioned_users(conn, text):
         if user['email'] == (actor_email or '').strip().lower():
             continue
+        if not _user_notif_enabled(conn, user['email'], 'comment_mention'):
+            continue
         conn.execute(
             'INSERT OR IGNORE INTO comment_mentions (comment_id, mentioned_email, mentioned_name) VALUES (?,?,?)',
             (comment_id, user['email'], user['name'])
@@ -138,6 +140,18 @@ def _admin_emails(conn):
     return [r['email'].strip().lower() for r in conn.execute("SELECT email FROM users WHERE role='admin'").fetchall()]
 
 
+def _user_notif_enabled(conn, email, notif_type):
+    """Проверяет, включены ли уведомления типа notif_type для пользователя email."""
+    row = conn.execute('SELECT settings FROM notification_settings WHERE user_email=?', (email,)).fetchone()
+    if not row or not row['settings']:
+        return True  # по умолчанию всё включено
+    try:
+        settings = json.loads(row['settings'])
+        return settings.get(notif_type, True)
+    except (json.JSONDecodeError, TypeError):
+        return True
+
+
 def _notify_admins(conn, type_, board_id, board_name, extra, card_id=0):
     """Уведомляет всех admin, кроме самого actor-а (Must №82: кто удалил карточку / перенёс в архив)."""
     actor = session.get('user') or {}
@@ -150,6 +164,8 @@ def _notify_admins(conn, type_, board_id, board_name, extra, card_id=0):
     payload_json = json.dumps(payload)
     for email in _admin_emails(conn):
         if email == actor_email:
+            continue
+        if not _user_notif_enabled(conn, email, type_):
             continue
         conn.execute(
             'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
@@ -193,6 +209,8 @@ def _sync_due_date_notifications(conn, user_email):
             except (ValueError, IndexError):
                 pass
         type_ = 'card_overdue' if overdue else 'card_due_today'
+        if not _user_notif_enabled(conn, user_email, type_):
+            continue
         exists = conn.execute(
             "SELECT 1 FROM inbox_entries WHERE recipient_email=? AND type=? AND card_id=?",
             (user_email, type_, r['card_id'])
@@ -1582,9 +1600,12 @@ def _notify_watchers(conn, card_id, actor_email, actor_name, change_type, extra_
     for email in emails:
         if email == actor_email:
             continue
+        notif_type = f'watch_{change_type}'
+        if not _user_notif_enabled(conn, email, notif_type):
+            continue
         conn.execute(
             'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
-            (email, f'watch_{change_type}', card_id, payload, board_id)
+            (email, notif_type, card_id, payload, board_id)
         )
 
 
@@ -2747,6 +2768,45 @@ def api_mark_inbox_entry_read(entry_id):
     return jsonify({'ok': True})
 
 
+@app.route('/api/notification-settings', methods=['GET'])
+def api_get_notification_settings():
+    """Получить персональные настройки уведомлений."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    email = (session['user'].get('email') or '').strip().lower()
+    with get_db() as conn:
+        row = conn.execute('SELECT settings FROM notification_settings WHERE user_email=?', (email,)).fetchone()
+    defaults = {
+        'member_added': True, 'card_overdue': True, 'card_due_today': True,
+        'card_archived': True, 'column_archived': True,
+        'watch_card_updated': True, 'watch_card_commented': True, 'comment_mention': True
+    }
+    if row and row['settings']:
+        try:
+            saved = json.loads(row['settings'])
+            defaults.update(saved)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return jsonify(defaults)
+
+
+@app.route('/api/notification-settings', methods=['PUT'])
+def api_update_notification_settings():
+    """Обновить персональные настройки уведомлений."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    email = (session['user'].get('email') or '').strip().lower()
+    data = request.get_json(force=True) or {}
+    allowed_keys = {'member_added', 'card_overdue', 'card_due_today', 'card_archived',
+                    'column_archived', 'watch_card_updated', 'watch_card_commented', 'comment_mention'}
+    settings = {k: bool(data.get(k, True)) for k in allowed_keys if k in data}
+    with get_db() as conn:
+        conn.execute('''
+            INSERT INTO notification_settings (user_email, settings, updated_at)
+            VALUES (?, ?, datetime('now','localtime'))
+            ON CONFLICT(user_email) DO UPDATE SET settings=?, updated_at=datetime('now','localtime')
+        ''', (email, json.dumps(settings), json.dumps(settings)))
+    return jsonify({'ok': True})
+
+
 @app.route('/api/cards/<int:card_id>/duplicate', methods=['POST'])
 def api_duplicate_card(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
@@ -2852,21 +2912,23 @@ def api_assign_card_member(card_id):
 
         actor = session.get('user') or {}
         if email.strip().lower() != (actor.get('email') or '').strip().lower():
-            card_row = conn.execute('''
-                SELECT c.title AS card_title, col.board_id, b.name AS board_name
-                FROM cards c JOIN columns col ON col.id=c.column_id JOIN boards b ON b.id=col.board_id
-                WHERE c.id=?
-            ''', (card_id,)).fetchone()
-            if card_row:
-                payload = json.dumps({
-                    'type': 'member_added', 'card_id': card_id, 'card_title': card_row['card_title'],
-                    'board_id': card_row['board_id'], 'board_name': card_row['board_name'],
-                    'actor_email': actor.get('email'), 'actor_name': actor.get('name'),
-                })
-                conn.execute(
-                    'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
-                    (email.strip().lower(), 'member_added', card_id, payload, card_row['board_id'])
-                )
+            recipient_email = email.strip().lower()
+            if _user_notif_enabled(conn, recipient_email, 'member_added'):
+                card_row = conn.execute('''
+                    SELECT c.title AS card_title, col.board_id, b.name AS board_name
+                    FROM cards c JOIN columns col ON col.id=c.column_id JOIN boards b ON b.id=col.board_id
+                    WHERE c.id=?
+                ''', (card_id,)).fetchone()
+                if card_row:
+                    payload = json.dumps({
+                        'type': 'member_added', 'card_id': card_id, 'card_title': card_row['card_title'],
+                        'board_id': card_row['board_id'], 'board_name': card_row['board_name'],
+                        'actor_email': actor.get('email'), 'actor_name': actor.get('name'),
+                    })
+                    conn.execute(
+                        'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
+                        (recipient_email, 'member_added', card_id, payload, card_row['board_id'])
+                    )
     return jsonify({'ok': True})
 
 @app.route('/api/cards/<int:card_id>/members/<path:email>', methods=['DELETE'])
@@ -4334,6 +4396,15 @@ def migrate_db():
             conn.execute("ALTER TABLE cards ADD COLUMN ai_summary TEXT")
         except sqlite3.OperationalError:
             pass
+
+        # ── Персональные настройки уведомлений ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS notification_settings (
+                user_email TEXT PRIMARY KEY,
+                settings   TEXT DEFAULT '{}',
+                updated_at TEXT DEFAULT (datetime('now','localtime'))
+            )
+        ''')
 
         # ── Журнал автоматизаций (Should №59) ──
         conn.execute('''

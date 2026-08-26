@@ -3113,6 +3113,11 @@ kbd {
 /* AI Summary (Nice №75) */
 .cm-ai-summary { font-size: 13px; line-height: 1.5; color: #172b4d; background: #f4f5f7; padding: 10px 12px; border-radius: 8px; border-left: 3px solid #6554C0; margin-top: 8px; }
 
+/* Notification Settings */
+.bsp-notif-settings { display: flex; flex-direction: column; gap: 6px; }
+.bsp-notif-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #172b4d; cursor: pointer; padding: 4px 0; }
+.bsp-notif-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: #4361EE; cursor: pointer; }
+
 /* Activity (audit) list */
 .cm-activity-list {
     display: flex;

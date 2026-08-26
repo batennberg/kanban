@@ -4926,6 +4926,7 @@ window.openBoardSettings = function(btn) {
     _populateImportanceSelect();
     renderAutomationList();
     renderScheduledList();
+    loadNotificationSettings();
 };
 
 window.closeBoardSettings = function() {
@@ -4960,6 +4961,7 @@ window.saveBoardSettings = function() {
             return;
         }
         showBspMsg('Сохранено');
+        saveNotificationSettings();
         // Обновляем название в breadcrumb
         const bcName = document.querySelector('.board-bc-name');
         if (bcName && data.name) bcName.textContent = data.name;
@@ -5500,6 +5502,35 @@ function showBspMsg(text, isError) {
     el.textContent = text;
     el.className = 'bsp-msg' + (isError ? ' error' : '');
     setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 3000);
+}
+
+// ===== Notification Settings =====
+
+async function loadNotificationSettings() {
+    try {
+        const res = await fetch('/api/notification-settings');
+        if (!res.ok) return;
+        const data = await res.json();
+        const keys = ['member_added','card_overdue','card_due_today','watch_card_updated','watch_card_commented','comment_mention'];
+        keys.forEach(k => {
+            const el = document.getElementById('ns_' + k);
+            if (el) el.checked = data[k] !== false;
+        });
+    } catch {}
+}
+
+async function saveNotificationSettings() {
+    const keys = ['member_added','card_overdue','card_due_today','watch_card_updated','watch_card_commented','comment_mention'];
+    const settings = {};
+    keys.forEach(k => {
+        const el = document.getElementById('ns_' + k);
+        if (el) settings[k] = el.checked;
+    });
+    await fetch('/api/notification-settings', {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(settings)
+    });
+    showToast('Настройки уведомлений сохранены');
 }
 
 // ===== Workload (Nice №43) =====

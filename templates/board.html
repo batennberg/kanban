@@ -387,6 +387,18 @@
                 </div>
             </div>
 
+            <div class="bsp-field-group">
+                <label class="bsp-label">Уведомления</label>
+                <div class="bsp-notif-settings" id="bspNotifSettings">
+                    <label class="bsp-notif-row"><input type="checkbox" id="ns_member_added" checked> Меня назначили ответственным</label>
+                    <label class="bsp-notif-row"><input type="checkbox" id="ns_card_overdue" checked> Задача просрочена</label>
+                    <label class="bsp-notif-row"><input type="checkbox" id="ns_card_due_today" checked> Срок задачи — сегодня</label>
+                    <label class="bsp-notif-row"><input type="checkbox" id="ns_watch_card_updated" checked> Изменение отслеживаемой карточки</label>
+                    <label class="bsp-notif-row"><input type="checkbox" id="ns_watch_card_commented" checked> Комментарий к отслеживаемой карточке</label>
+                    <label class="bsp-notif-row"><input type="checkbox" id="ns_comment_mention" checked> Упоминание в комментарии</label>
+                </div>
+            </div>
+
             <button class="btn-primary bsp-save-btn" onclick="saveBoardSettings()">Сохранить</button>
             <div class="bsp-msg" id="bspMsg"></div>
         </div>
