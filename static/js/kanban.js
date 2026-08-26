@@ -110,11 +110,7 @@ function _switchBoardView(name) {
 
     Object.values(_BOARD_VIEWS).forEach(v => {
         const el  = document.getElementById(v.elId);
-        const btn = document.getElementById(v.btnId);
-        const txt = document.getElementById(v.txtId);
         if (el)  el.style.display = 'none';
-        if (btn) btn.classList.remove('btn-board-action--active');
-        if (txt) txt.textContent = v.label;
     });
 
     if (name === 'kanban') {
@@ -127,11 +123,7 @@ function _switchBoardView(name) {
     if (!v) return;
     wrap.style.display = 'none';
     const el  = document.getElementById(v.elId);
-    const btn = document.getElementById(v.btnId);
-    const txt = document.getElementById(v.txtId);
     if (el)  el.style.display = '';
-    if (btn) btn.classList.add('btn-board-action--active');
-    if (txt) txt.textContent = 'Доска';
     if (v.onShow) v.onShow();
     _syncBoardStateToURL();
 }
@@ -5314,6 +5306,41 @@ window.uploadBoardBackground = async function(input) {
     input.value = '';
 };
 
+
+// ===== NAVBAR DROPDOWNS =====
+
+function _closeNavDropdowns() {
+    document.querySelectorAll('.nav-dropdown').forEach(d => d.style.display = 'none');
+}
+
+window.toggleViewsDropdown = function(e) {
+    e.stopPropagation();
+    _closeNavDropdowns();
+    const dd = document.getElementById('viewsDropdown');
+    if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+};
+
+window.toggleMoreDropdown = function(e) {
+    e.stopPropagation();
+    _closeNavDropdowns();
+    const dd = document.getElementById('moreDropdown');
+    if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+};
+
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.nav-dropdown-wrap')) _closeNavDropdowns();
+});
+
+// ===== CARD SIDEBAR "MORE" EXPANDER =====
+
+window.toggleCmMore = function() {
+    const section = document.getElementById('cmMoreSection');
+    const toggle = document.getElementById('cmMoreToggle');
+    if (!section || !toggle) return;
+    const isHidden = section.style.display === 'none';
+    section.style.display = isHidden ? 'block' : 'none';
+    toggle.querySelector('.cm-sidebar-toggle-text').textContent = isHidden ? 'Свернуть' : 'Ещё...';
+};
 
 // ===== EXPORT DROPDOWN (Should №98) =====
 

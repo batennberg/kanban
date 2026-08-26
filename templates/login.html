@@ -65,4 +65,10 @@
     </div>
 
 </div>
+<script>
+if (!CSS || !CSS.registerProperty) {
+    var ring = document.querySelector('.lp-glow-ring');
+    if (ring) ring.classList.add('lp-glow-ring--fallback');
+}
+</script>
 {% endblock %}
