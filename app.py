@@ -1742,9 +1742,28 @@ def _fire_webhooks(conn, event_type, payload):
 
 
 def _send_webhook(url, event_type, payload, secret):
-    """Отправить один HTTP POST webhook."""
+    """Отправить один HTTP POST webhook. Формат: raw/slack/zapier/n8n/discord."""
     import urllib.request
-    body = json.dumps({'event': event_type, 'data': payload}).encode('utf-8')
+    import urllib.error
+
+    fmt = payload.get('_webhook_format', 'raw') if isinstance(payload, dict) else 'raw'
+    event = payload.get('event', event_type) if isinstance(payload, dict) else event_type
+    data  = payload.get('data', payload) if isinstance(payload, dict) else payload
+
+    if fmt == 'slack':
+        title = data.get('title', event) if isinstance(data, dict) else str(data)
+        body_obj = {'text': f"*{event}*\n{title}"}
+    elif fmt == 'discord':
+        title = data.get('title', event) if isinstance(data, dict) else str(data)
+        body_obj = {'content': f"**{event}**\n{title}"}
+    elif fmt == 'zapier':
+        body_obj = {'event': event, 'data': data, 'source': 'almaly-kanban'}
+    elif fmt == 'n8n':
+        body_obj = {'json': {'event': event, 'data': data}}
+    else:  # raw
+        body_obj = {'event': event, 'data': data}
+
+    body = json.dumps(body_obj).encode('utf-8')
     headers = {'Content-Type': 'application/json'}
     if secret:
         sig = _hmac.new(secret.encode(), body, _hashlib.sha256).hexdigest()
@@ -1752,8 +1771,8 @@ def _send_webhook(url, event_type, payload, secret):
     req = urllib.request.Request(url, data=body, headers=headers, method='POST')
     try:
         urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass  # silently ignore failures
+    except (urllib.error.URLError, Exception):
+        pass
 
 
 @app.route('/api/webhooks', methods=['GET'])
@@ -1776,10 +1795,11 @@ def api_create_webhook():
     events = data.get('events', '*').strip()
     board_id = data.get('board_id', 0)
     secret = data.get('secret', '') or uuid.uuid4().hex[:24]
+    fmt = data.get('format', 'raw')
     with get_db() as conn:
         cur = conn.execute(
-            'INSERT INTO webhooks (url, events, board_id, secret, created_by) VALUES (?,?,?,?,?)',
-            (url, events, board_id, secret, session['user']['email'])
+            'INSERT INTO webhooks (url, events, board_id, secret, created_by, format) VALUES (?,?,?,?,?,?)',
+            (url, events, board_id, secret, session['user']['email'], fmt)
         )
         wh_id = cur.lastrowid
     return jsonify({'ok': True, 'id': wh_id, 'secret': secret})
@@ -1813,7 +1833,9 @@ def api_test_webhook():
     url = data.get('url', '').strip()
     if not url: return jsonify({'error': 'url обязателен'}), 400
     secret = data.get('secret', '')
-    _threading.Thread(target=_send_webhook, args=(url, 'test', {'message': 'Webhook test from Almaly Kanban'}, secret), daemon=True).start()
+    fmt = data.get('format', 'raw')
+    test_payload = {'event': 'test', 'data': {'message': 'Webhook test from Almaly Kanban', 'title': 'Тестовая карточка', 'board': 'Тестовая доска'}, '_webhook_format': fmt}
+    _threading.Thread(target=_send_webhook, args=(url, 'test', test_payload, secret), daemon=True).start()
     return jsonify({'ok': True})
 
 
@@ -3339,9 +3361,11 @@ def api_get_card_relations(card_id):
 @app.route('/api/cards/<int:card_id>/relations', methods=['POST'])
 def api_add_card_relation(card_id):
     """Двусторонняя связь: хранится одной строкой в каноническом порядке (a<b),
-    видна и находится с обеих сторон одинаково."""
+    видна и находится с обеих сторон одинаково. relation_type: related/blocks/blocked_by/duplicate."""
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
-    other_id = (request.get_json() or {}).get('other_card_id')
+    d = request.get_json() or {}
+    other_id = d.get('other_card_id')
+    relation_type = d.get('relation_type', 'related')
     if not other_id: return jsonify({'error': 'other_card_id required'}), 400
     other_id = int(other_id)
     if other_id == card_id: return jsonify({'error': 'cannot relate a card to itself'}), 400
@@ -3349,8 +3373,8 @@ def api_add_card_relation(card_id):
     with get_db() as conn:
         other = conn.execute('SELECT title FROM cards WHERE id=?', (other_id,)).fetchone()
         if not other: return jsonify({'error': 'not found'}), 404
-        conn.execute('INSERT OR IGNORE INTO card_relations (card_a_id, card_b_id) VALUES (?,?)', (a, b))
-        _log_activity(conn, card_id, 'relation_added', other['title'])
+        conn.execute('INSERT OR IGNORE INTO card_relations (card_a_id, card_b_id, relation_type) VALUES (?,?,?)', (a, b, relation_type))
+        _log_activity(conn, card_id, 'relation_added', f"{other['title']} ({relation_type})")
     return jsonify({'ok': True}), 201
 
 @app.route('/api/cards/<int:card_id>/relations/<int:other_id>', methods=['DELETE'])
@@ -3363,6 +3387,42 @@ def api_remove_card_relation(card_id, other_id):
         if other:
             _log_activity(conn, card_id, 'relation_removed', other['title'])
     return jsonify({'ok': True})
+
+
+@app.route('/api/cards/<int:card_id>/vote', methods=['POST'])
+def api_vote_card(card_id):
+    """Проголосовать за карточку (Nice №33)."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    email = session['user']['email']
+    d = request.get_json() or {}
+    vote_val = int(d.get('vote', 1))
+    if vote_val not in (1, -1): vote_val = 1
+    with get_db() as conn:
+        existing = conn.execute('SELECT vote FROM card_votes WHERE card_id=? AND user_email=?', (card_id, email)).fetchone()
+        if existing:
+            if existing['vote'] == vote_val:
+                conn.execute('DELETE FROM card_votes WHERE card_id=? AND user_email=?', (card_id, email))
+                voted = False
+            else:
+                conn.execute('UPDATE card_votes SET vote=? WHERE card_id=? AND user_email=?', (vote_val, card_id, email))
+                voted = True
+        else:
+            conn.execute('INSERT INTO card_votes (card_id, user_email, vote) VALUES (?,?,?)', (card_id, email, vote_val))
+            voted = True
+        row = conn.execute('SELECT SUM(vote) AS score FROM card_votes WHERE card_id=?', (card_id,)).fetchone()
+        score = row['score'] or 0
+    return jsonify({'score': score, 'voted': voted})
+
+
+@app.route('/api/cards/<int:card_id>/votes')
+def api_get_votes(card_id):
+    """Получить счёт голосов и текущий голос пользователя."""
+    if 'user' not in session: return jsonify({'score': 0, 'my_vote': 0})
+    email = session['user']['email']
+    with get_db() as conn:
+        row = conn.execute('SELECT SUM(vote) AS score FROM card_votes WHERE card_id=?', (card_id,)).fetchone()
+        my = conn.execute('SELECT vote FROM card_votes WHERE card_id=? AND user_email=?', (card_id, email)).fetchone()
+    return jsonify({'score': row['score'] or 0, 'my_vote': my['vote'] if my else 0})
 
 
 # ===== API — ACCESS MANAGEMENT =====
@@ -4173,6 +4233,29 @@ def migrate_db():
                 left_at    TEXT
             )
         ''')
+
+        # ── Зависимости задач (Nice №32) ──
+        try:
+            conn.execute("ALTER TABLE card_relations ADD COLUMN relation_type TEXT DEFAULT 'related'")
+        except sqlite3.OperationalError:
+            pass
+
+        # ── Голосование (Nice №33) ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS card_votes (
+                card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                user_email TEXT    NOT NULL,
+                vote       INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT    DEFAULT (datetime('now','localtime')),
+                PRIMARY KEY (card_id, user_email)
+            )
+        ''')
+
+        # ── Webhook форматы (Nice №70) ──
+        try:
+            conn.execute("ALTER TABLE webhooks ADD COLUMN format TEXT DEFAULT 'raw'")
+        except sqlite3.OperationalError:
+            pass
 
         # ── Журнал автоматизаций (Should №59) ──
         conn.execute('''

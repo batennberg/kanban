@@ -1024,6 +1024,7 @@ async function loadCardData(dbId) {
         renderAttachments(data.attachments || []);
         renderLinks(data.links || []);
         renderCardRelations(data.relations || []);
+        loadVotes(data.id);
         renderChecklists(data.checklists || []);
         renderCustomFields(data.custom_fields || []);
         loadCycleTime(dbId);
@@ -1495,20 +1496,57 @@ function renderCardRelations(list) {
 function appendRelationToDOM(rel) {
     const container = document.getElementById('cmRelations');
     document.getElementById('cmRelationsEmpty').style.display = 'none';
+    const relTypeLabels = { related: '', blocks: ' 🔒 блокирует', blocked_by: ' 🔒 заблокирована', duplicate: ' дубликат' };
+    const relType = rel.relation_type || 'related';
+    const typeBadge = relTypeLabels[relType] || '';
 
     const item = document.createElement('div');
-    item.className = 'cm-relation-item' + (rel.completed ? ' cm-relation-item--done' : '');
+    item.className = 'cm-relation-item' + (rel.completed ? ' cm-relation-item--done' : '') + (relType === 'blocked_by' ? ' cm-relation-item--blocked' : '');
     item.dataset.relationCardId = rel.id;
     item.innerHTML = `
         <span class="cm-relation-dot" style="background:${escHtml(rel.board_color || '#4361EE')}"></span>
         <a href="/card/${rel.id}" class="cm-relation-info">
-            <span class="cm-relation-title">${escHtml(rel.title)}</span>
+            <span class="cm-relation-title">${escHtml(rel.title)}${typeBadge}</span>
             <span class="cm-relation-meta">${escHtml(rel.board_name)} · ${escHtml(rel.column_name)}</span>
         </a>
         <button class="cm-attach-del" onclick="removeCardRelation(${rel.id})" title="Убрать связь">✕</button>
     `;
     container.appendChild(item);
 }
+
+// ===== Voting (Nice №33) =====
+
+async function loadVotes(cardId) {
+    try {
+        const res = await fetch(`/api/cards/${cardId}/votes`);
+        if (!res.ok) return;
+        const d = await res.json();
+        const scoreEl = document.getElementById('cmVoteScore');
+        if (scoreEl) scoreEl.textContent = d.score || 0;
+        const btns = document.querySelectorAll('.cm-vote-btn');
+        btns.forEach(b => b.classList.remove('cm-vote-btn--active'));
+        if (d.my_vote === 1) btns[0]?.classList.add('cm-vote-btn--active');
+        if (d.my_vote === -1) btns[1]?.classList.add('cm-vote-btn--active');
+    } catch {}
+}
+
+window.voteCard = async function(voteVal) {
+    if (!currentCardDbId) return;
+    const res = await fetch(`/api/cards/${currentCardDbId}/vote`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vote: voteVal })
+    });
+    if (res.ok) {
+        const d = await res.json();
+        document.getElementById('cmVoteScore').textContent = d.score || 0;
+        const btns = document.querySelectorAll('.cm-vote-btn');
+        btns.forEach(b => b.classList.remove('cm-vote-btn--active'));
+        if (d.voted) {
+            if (voteVal === 1) btns[0]?.classList.add('cm-vote-btn--active');
+            if (voteVal === -1) btns[1]?.classList.add('cm-vote-btn--active');
+        }
+    }
+};
 
 window.showAddRelationForm = function() {
     document.getElementById('cmRelationForm').style.display = 'block';
@@ -1551,9 +1589,10 @@ window.searchRelationCandidates = function(q) {
 
 window.addCardRelation = async function(otherCardId) {
     if (!currentCardDbId) return;
+    const relType = document.getElementById('cmRelationType')?.value || 'related';
     const res = await fetch(`/api/cards/${currentCardDbId}/relations`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ other_card_id: otherCardId })
+        body: JSON.stringify({ other_card_id: otherCardId, relation_type: relType })
     });
     if (!res.ok) { showToast('Не удалось добавить связь', 'error'); return; }
     hideAddRelationForm();

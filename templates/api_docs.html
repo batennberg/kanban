@@ -119,7 +119,29 @@
     </table>
 </div>
 
-<script>
+    <h2>Slack / Teams уведомления</h2>
+    <p>Подключите Slack Incoming Webhook (или совместимый — Teams, Discord) для получения уведомлений об изменениях карточек.</p>
+    <div class="token-section">
+        <h3>Настройка</h3>
+        <div class="token-row">
+            <input class="token-input" id="slackUrl" placeholder="https://hooks.slack.com/services/..." style="flex:3">
+            <input class="token-input" id="slackEvents" placeholder="события: * или card.updated,card.commented" style="flex:2" value="*">
+            <select class="token-input" id="slackFormat" style="flex:1">
+                <option value="raw">raw</option>
+                <option value="slack">Slack</option>
+                <option value="discord">Discord</option>
+                <option value="zapier">Zapier</option>
+                <option value="n8n">n8n</option>
+            </select>
+            <button class="token-btn token-btn--primary" onclick="saveSlack()">Сохранить</button>
+        </div>
+        <div style="margin-top:6px">
+            <button class="token-btn" style="background:#f4f5f7" onclick="testSlack()">Тест</button>
+        </div>
+        <div id="slackList" style="margin-top:12px"></div>
+    </div>
+
+    <script>
 async function loadTokens() {
     const res = await fetch('/api/tokens');
     const tokens = await res.json();
@@ -151,5 +173,59 @@ async function deleteToken(id) {
 function escHtml(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
 
 loadTokens();
+
+// ===== SLACK SETTINGS (Should №65) =====
+
+async function loadSlack() {
+    const res = await fetch('/api/slack');
+    const items = await res.json();
+    const list = document.getElementById('slackList');
+    if (!items.length) { list.innerHTML = '<p style="color:#6b778c;font-size:12px;margin:0">Не настроено</p>'; return; }
+    list.innerHTML = '<table class="api-tbl"><thead><tr><th>URL</th><th>События</th><th>Активно</th><th></th></tr></thead><tbody>' +
+        items.map(s => `<tr><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(s.webhook_url)}">${escHtml(s.webhook_url)}</td><td><code>${escHtml(s.events)}</code></td><td>${s.active ? '✅' : '⏸'}</td><td><button class="token-btn token-btn--danger" onclick="deleteSlack(${s.id})" style="font-size:11px;padding:3px 8px">Удалить</button></td></tr>`).join('') +
+        '</tbody></table>';
+}
+
+async function saveSlack() {
+    const url = document.getElementById('slackUrl').value.trim();
+    const events = document.getElementById('slackEvents').value.trim() || '*';
+    const fmt = document.getElementById('slackFormat').value;
+    if (!url) { alert('Введите URL вебхука'); return; }
+    await fetch('/api/slack', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({webhook_url: url, events, format: fmt}) });
+    document.getElementById('slackUrl').value = '';
+    await loadSlack();
+}
+
+async function testSlack() {
+    const url = document.getElementById('slackUrl').value.trim();
+    const fmt = document.getElementById('slackFormat').value;
+    if (!url) { alert('Введите URL вебхука'); return; }
+    await fetch('/api/slack/test', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({webhook_url: url, format: fmt}) });
+    alert('Тестовое сообщение отправлено');
+}
+
+async function deleteSlack(id) {
+    if (!confirm('Удалить?')) return;
+    await fetch('/api/slack/' + id, { method: 'DELETE' });
+    await loadSlack();
+}
+
+loadSlack();
 </script>
+
+{% block content2 %}
+<div style="max-width:800px;margin:40px auto;padding:0 20px">
+    <h2 style="margin-bottom:16px">Webhook-коннекторы <span style="font-size:13px;color:#5e6c84;font-weight:400">— форматы для Zapier / Make / n8n / Discord</span></h2>
+    <p style="color:#5e6c84;margin-bottom:12px">Выберите формат пейлоада при создании вебхука. Все форматы автоматически подписываются HMAC-SHA256 (заголовок <code>X-Webhook-Signature</code>).</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="border-bottom:2px solid #dfe1e6"><th style="text-align:left;padding:6px 8px">Формат</th><th style="text-align:left;padding:6px 8px">Куда подходит</th><th style="text-align:left;padding:6px 8px">Пример пейлоада</th></tr></thead>
+        <tbody>
+            <tr style="border-bottom:1px solid #f4f5f7"><td style="padding:6px 8px"><code>raw</code></td><td style="padding:6px 8px">Любой HTTP-приёмник</td><td style="padding:6px 8px"><code>{"event":"card.created","data":{...}}</code></td></tr>
+            <tr style="border-bottom:1px solid #f4f5f7"><td style="padding:6px 8px"><code>slack</code></td><td style="padding:6px 8px">Slack Incoming Webhooks</td><td style="padding:6px 8px"><code>{"text":"*card.created*\n..."}</code></td></tr>
+            <tr style="border-bottom:1px solid #f4f5f7"><td style="padding:6px 8px"><code>discord</code></td><td style="padding:6px 8px">Discord Webhooks</td><td style="padding:6px 8px"><code>{"content":"**card.created**\n..."}</code></td></tr>
+            <tr style="border-bottom:1px solid #f4f5f7"><td style="padding:6px 8px"><code>zapier</code></td><td style="padding:6px 8px">Zapier / Make</td><td style="padding:6px 8px"><code>{"event":"...","data":{...},"source":"almaly-kanban"}</code></td></tr>
+            <tr style="border-bottom:1px solid #f4f5f7"><td style="padding:6px 8px"><code>n8n</code></td><td style="padding:6px 8px">n8n Workflow Engine</td><td style="padding:6px 8px"><code>{"json":{"event":"...","data":{...}}}</code></td></tr>
+        </tbody>
+    </table>
+</div>
 {% endblock %}
