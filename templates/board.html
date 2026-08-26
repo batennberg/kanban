@@ -300,15 +300,20 @@
 
             <div class="bsp-field-group">
                 <label class="bsp-label">Автоматизация</label>
-                <p class="cm-empty-hint" style="margin:0 0 6px">Когда карточка попадает в колонку-триггер — выполняется действие.</p>
+                <p class="cm-empty-hint" style="margin:0 0 6px">Триггер: колонка или приближение срока → действие.</p>
                 <div class="bsp-automation-list" id="bspAutomationList"></div>
                 <div class="bsp-automation-add">
+                    <select class="bsp-input" id="autoTriggerType" onchange="onAutoTriggerTypeChange()">
+                        <option value="column">Колонка-триггер</option>
+                        <option value="due_approaching">Приближение срока</option>
+                    </select>
                     <select class="bsp-input" id="autoTriggerColumn">
                         <option value="">Колонка-триггер...</option>
                         {% for col in board.columns %}
                         <option value="{{ col.id }}">{{ col.name }}</option>
                         {% endfor %}
                     </select>
+                    <input class="bsp-input" id="autoTriggerValue" type="text" placeholder="Дни (напр. 1,3,7)" style="display:none">
                     <select class="bsp-input" id="autoActionType" onchange="onAutoActionTypeChange()">
                         <option value="mark_complete">Отметить выполненной</option>
                         <option value="mark_incomplete">Снять отметку выполнения</option>
@@ -367,6 +372,7 @@
                          data-linked-board-id="{{ card.linked_board_id or '' }}"
                          data-members="{% for m in card.members %}{{ m.user_email }}::{{ m.user_name }}{% if not loop.last %}|{% endif %}{% endfor %}"
                          data-start-date="{{ card.start_date or '' }}"
+                         data-repeat="{{ card.repeat_pattern or '' }}"
                          draggable="true"
                          onclick="openCardModal(event, this)">
                         {% if card.cover_color %}
@@ -409,7 +415,11 @@
                         <p class="card-title">{{ card.title }}</p>
                         {% if card.due_date %}
                         <div class="card-due">
-                            <span class="due-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> {{ card.due_date }}
+                            <span class="due-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> {{ card.due_date }}{% if card.repeat_pattern %} 🔁{% endif %}
+                        </div>
+                        {% elif card.repeat_pattern %}
+                        <div class="card-due" style="color:#4361EE">
+                            <span class="due-icon">🔁</span> Повтор
                         </div>
                         {% endif %}
                         {% if card.linked_board_id %}
@@ -774,6 +784,9 @@
                     <button class="cm-sidebar-btn" onclick="openStartDatePopover()">
                         <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> Начало
                     </button>
+                    <button class="cm-sidebar-btn" onclick="openRepeatPopover()">
+                        <span>🔁</span> Повторять
+                    </button>
                     <button class="cm-sidebar-btn" onclick="openDueDatePopover()">
                         <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> Срок
                     </button>
@@ -820,9 +833,12 @@
     </div>
     <div class="qe-sidebar">
         <button class="qe-btn" onclick="qeOpenCardModal()"><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></span> Открыть</button>
+        <button class="qe-btn" onclick="qeToggleDone()"><span>✅</span> <span id="qeDoneLabel">Выполнено</span></button>
         <button class="qe-btn" onclick="qeMoveCard()"><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 16 12 21 17 16"/><polyline points="7 8 12 3 17 8"/></svg></span> Переместить</button>
         <button class="qe-btn" onclick="qeLabel()"><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span> Метка</button>
+        <button class="qe-btn" onclick="qeImportance()"><span>🔥</span> Важность</button>
         <button class="qe-btn" onclick="qeDueDate()"><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> Срок</button>
+        <button class="qe-btn" onclick="qeDuplicate()"><span>📋</span> Дублировать</button>
         <button class="qe-btn qe-btn--danger" onclick="qeDelete()"><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12v6M14 12v6"/></svg></span> В архив</button>
     </div>
 </div>

@@ -256,7 +256,17 @@ def _run_column_automations(conn, card_id, column_id):
     rules = conn.execute(
         'SELECT * FROM automation_rules WHERE trigger_column_id=? AND enabled=1', (column_id,)
     ).fetchall()
-    return [_apply_automation_action(conn, card_id, rule) for rule in rules]
+    results = []
+    for rule in rules:
+        result = _apply_automation_action(conn, card_id, rule)
+        results.append(result)
+        # Журнал автоматизаций (Should №59)
+        details = f"{result.get('action_type', '')} | rule: {result.get('rule_name', '')}"
+        conn.execute(
+            'INSERT INTO automation_log (rule_id, card_id, action, details) VALUES (?,?,?,?)',
+            (rule['id'], card_id, rule['action_type'], details)
+        )
+    return results
 
 
 def _log_card_update_activity(conn, card_id, before, d):
@@ -277,6 +287,63 @@ def _log_card_update_activity(conn, card_id, before, d):
         names = {c['id']: c['name'] for c in cols}
         _log_activity(conn, card_id, 'moved_column',
                       f"{names.get(before['column_id'], '?')} → {names.get(d['column_id'], '?')}")
+
+
+# ===== ПОВТОРЯЮЩИЕСЯ КАРТОЧКИ (Should №60) =====
+
+def _create_repeat_card(conn, src, pattern):
+    """Создаёт следующую карточку по шаблону повторения."""
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    due = src['due_date'] or ''
+    new_due = ''
+    if due:
+        try:
+            d_obj = datetime.strptime(due, '%d.%m.%Y')
+        except ValueError:
+            d_obj = None
+        if d_obj:
+            if pattern == 'daily':
+                new_due = (d_obj + timedelta(days=1)).strftime('%d.%m.%Y')
+            elif pattern == 'weekly':
+                new_due = (d_obj + timedelta(weeks=1)).strftime('%d.%m.%Y')
+            elif pattern == 'monthly':
+                month = d_obj.month + 1
+                year = d_obj.year
+                if month > 12:
+                    month = 1
+                    year += 1
+                day = min(d_obj.day, [31,29 if year%4==0 else 28,31,30,31,30,31,31,30,31,30,31][month-1])
+                new_due = f'{day:02d}.{month:02d}.{year}'
+    start = ''
+    if src['start_date']:
+        try:
+            s_obj = datetime.strptime(src['start_date'], '%d.%m.%Y')
+            if pattern == 'daily':
+                start = (s_obj + timedelta(days=1)).strftime('%d.%m.%Y')
+            elif pattern == 'weekly':
+                start = (s_obj + timedelta(weeks=1)).strftime('%d.%m.%Y')
+            elif pattern == 'monthly':
+                month = s_obj.month + 1
+                year = s_obj.year
+                if month > 12: month = 1; year += 1
+                day = min(s_obj.day, [31,29 if year%4==0 else 28,31,30,31,30,31,31,30,31,30,31][month-1])
+                start = f'{day:02d}.{month:02d}.{year}'
+        except ValueError:
+            pass
+
+    cur = conn.execute(
+        '''INSERT INTO cards (column_id, title, description, label, label_color,
+           due_date, start_date, position, completed, importance, repeat_pattern)
+           VALUES (?,?,?,?,?,?,?,?,0,?,?)''',
+        (src['column_id'], src['title'], src['description'] or '',
+         src['label'] or '', src['label_color'] or '',
+         new_due, start, src['position'],
+         src['importance'] or '', pattern)
+    )
+    new_id = cur.lastrowid
+    _log_activity(conn, new_id, 'created', f'создана автоматически (повтор {pattern})')
+    return new_id
 
 
 # ===== ВАЖНОСТЬ =====
@@ -1764,6 +1831,114 @@ def board_ical(board_id):
     )
 
 
+# ===== SLACK / TEAMS NOTIFICATIONS (Should №65) =====
+
+def _fire_slack(conn, event_type, payload):
+    """Отправить уведомление в Slack/Teams через Incoming Webhook."""
+    rows = conn.execute('SELECT * FROM slack_settings WHERE active=1').fetchall()
+    if not rows:
+        return
+    # Формируем текст
+    actor = payload.get('actor', '')
+    card_title = payload.get('card_title', payload.get('changes', {}).get('title', ''))
+    board_name = payload.get('board_name', '')
+    emoji = {'card.updated': '✏️', 'card.commented': '💬', 'card.created': '🆕',
+             'card.archived': '📦', 'test': '🔔'}.get(event_type, '📋')
+    text = f"{emoji} *{event_type}*"
+    if card_title:
+        text += f"\nКарточка: {card_title}"
+    if board_name:
+        text += f"\nДоска: {board_name}"
+    if actor:
+        text += f"\nАвтор: {actor}"
+    changes = payload.get('changes')
+    if changes and isinstance(changes, dict):
+        fields = ', '.join(changes.keys())
+        text += f"\nИзменения: {fields}"
+
+    body = json.dumps({'text': text}).encode('utf-8')
+    for row in rows:
+        url = row['webhook_url']
+        if not url:
+            continue
+        if row['board_id'] and payload.get('board_id') and row['board_id'] != payload['board_id']:
+            continue
+        events = [e.strip() for e in (row['events'] or '*').split(',')]
+        if '*' not in events and event_type not in events:
+            continue
+        _threading.Thread(target=_send_slack_msg, args=(url, body), daemon=True).start()
+
+
+def _send_slack_msg(url, body):
+    import urllib.request
+    req = urllib.request.Request(url, data=body, headers={'Content-Type': 'application/json'}, method='POST')
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+
+
+@app.route('/api/slack', methods=['GET'])
+def api_get_slack():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        rows = conn.execute('SELECT * FROM slack_settings').fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/slack', methods=['POST'])
+def api_save_slack():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    data = request.get_json(force=True) or {}
+    url = data.get('webhook_url', '').strip()
+    board_id = data.get('board_id', 0)
+    events = data.get('events', '*').strip()
+    with get_db() as conn:
+        existing = conn.execute('SELECT id FROM slack_settings WHERE board_id=?', (board_id,)).fetchone()
+        if existing:
+            conn.execute('UPDATE slack_settings SET webhook_url=?, events=?, active=?, updated_at=datetime("now","localtime") WHERE id=?',
+                         (url, events, 1 if url else 0, existing['id']))
+            wh_id = existing['id']
+        else:
+            cur = conn.execute('INSERT INTO slack_settings (webhook_url, board_id, events) VALUES (?,?,?)',
+                               (url, board_id, events))
+            wh_id = cur.lastrowid
+    return jsonify({'ok': True, 'id': wh_id})
+
+
+@app.route('/api/slack/<int:sl_id>', methods=['DELETE'])
+def api_delete_slack(sl_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        conn.execute('DELETE FROM slack_settings WHERE id=?', (sl_id,))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/slack/<int:sl_id>/toggle', methods=['POST'])
+def api_toggle_slack(sl_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        conn.execute('UPDATE slack_settings SET active = 1 - active WHERE id=?', (sl_id,))
+        row = conn.execute('SELECT active FROM slack_settings WHERE id=?', (sl_id,)).fetchone()
+    return jsonify({'ok': True, 'active': row['active'] if row else 0})
+
+
+@app.route('/api/slack/test', methods=['POST'])
+def api_test_slack():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    data = request.get_json(force=True) or {}
+    url = data.get('webhook_url', '').strip()
+    if not url: return jsonify({'error': 'url обязателен'}), 400
+    body = json.dumps({'text': '🔔 Тестовое уведомление из Almaly Kanban'}).encode('utf-8')
+    _threading.Thread(target=_send_slack_msg, args=(url, body), daemon=True).start()
+    return jsonify({'ok': True})
+
+
 # ===== API — COLUMNS =====
 
 @app.route('/api/columns', methods=['POST'])
@@ -1965,7 +2140,7 @@ def api_get_card(card_id):
 def api_update_card(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     d = request.get_json()
-    allowed = ['title', 'description', 'label', 'label_color', 'due_date', 'start_date', 'column_id', 'position', 'completed', 'cover_color', 'linked_board_id']
+    allowed = ['title', 'description', 'label', 'label_color', 'due_date', 'start_date', 'column_id', 'position', 'completed', 'cover_color', 'linked_board_id', 'repeat_pattern']
     fields, values = [], []
     for f in allowed:
         if f in d:
@@ -1982,8 +2157,14 @@ def api_update_card(card_id):
                 _notify_watchers(conn, card_id, session['user']['email'], session['user']['name'], 'card_updated',
                                  {'changed_fields': list(d.keys())})
                 _fire_webhooks(conn, 'card.updated', {'card_id': card_id, 'changes': d, 'actor': session['user']['email']})
+                _fire_slack(conn, 'card.updated', {'card_id': card_id, 'changes': d, 'actor': session['user']['email']})
                 if 'column_id' in d and before['column_id'] != d['column_id']:
                     automations = _run_column_automations(conn, card_id, d['column_id'])
+                # Повторяющиеся карточки (Should №60) — при завершении создаём копию
+                if 'completed' in d and d['completed'] and not before['completed']:
+                    repeat = before['repeat_pattern'] or ''
+                    if repeat:
+                        _create_repeat_card(conn, before, repeat)
     return jsonify({'ok': True, 'automations': automations})
 
 @app.route('/api/cards/<int:card_id>', methods=['DELETE'])
@@ -2252,6 +2433,7 @@ def api_add_comment(card_id):
         _notify_watchers(conn, card_id, session['user']['email'], session['user']['name'], 'card_commented',
                          {'comment_excerpt': text[:180], 'comment_id': comment_id})
         _fire_webhooks(conn, 'card.commented', {'card_id': card_id, 'comment_id': comment_id, 'actor': session['user']['email']})
+        _fire_slack(conn, 'card.commented', {'card_id': card_id, 'comment_id': comment_id, 'actor': session['user']['email']})
         row['mentions'] = mentions
     return jsonify(row)
 
@@ -2763,23 +2945,32 @@ def api_create_automation(board_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     d = request.get_json() or {}
     trigger_column_id = d.get('trigger_column_id')
+    trigger_type = d.get('trigger_type', 'column')
+    trigger_value = d.get('trigger_value', '')
     action_type       = d.get('action_type')
     action_value      = d.get('action_value', '')
     name              = (d.get('name') or '').strip()
-    if not trigger_column_id or action_type not in _AUTOMATION_ACTIONS:
-        return jsonify({'error': 'invalid'}), 400
+    if trigger_type == 'due_approaching':
+        if action_type not in _AUTOMATION_ACTIONS:
+            return jsonify({'error': 'invalid action'}), 400
+        if not trigger_value:
+            return jsonify({'error': 'trigger_value required (e.g. 1,3,7)'}), 400
+    else:
+        if not trigger_column_id or action_type not in _AUTOMATION_ACTIONS:
+            return jsonify({'error': 'invalid'}), 400
     with get_db() as conn:
-        col = conn.execute('SELECT board_id FROM columns WHERE id=?', (trigger_column_id,)).fetchone()
-        if not col or col['board_id'] != board_id:
-            return jsonify({'error': 'колонка не принадлежит этой доске'}), 400
+        if trigger_type != 'due_approaching':
+            col = conn.execute('SELECT board_id FROM columns WHERE id=?', (trigger_column_id,)).fetchone()
+            if not col or col['board_id'] != board_id:
+                return jsonify({'error': 'колонка не принадлежит этой доске'}), 400
         cur = conn.execute(
-            '''INSERT INTO automation_rules (board_id, name, trigger_column_id, action_type, action_value)
-               VALUES (?,?,?,?,?)''',
-            (board_id, name, trigger_column_id, action_type, action_value)
+            '''INSERT INTO automation_rules (board_id, name, trigger_column_id, action_type, action_value, trigger_type, trigger_value)
+               VALUES (?,?,?,?,?,?,?)''',
+            (board_id, name, trigger_column_id or 0, action_type, action_value, trigger_type, trigger_value)
         )
         row = dict(conn.execute('''
             SELECT ar.*, col.name AS trigger_column_name
-            FROM automation_rules ar JOIN columns col ON col.id = ar.trigger_column_id
+            FROM automation_rules ar LEFT JOIN columns col ON col.id = ar.trigger_column_id
             WHERE ar.id=?
         ''', (cur.lastrowid,)).fetchone())
     return jsonify(row), 201
@@ -2800,6 +2991,30 @@ def api_delete_automation(rule_id):
     with get_db() as conn:
         conn.execute('DELETE FROM automation_rules WHERE id=?', (rule_id,))
     return jsonify({'ok': True})
+
+
+@app.route('/api/automations/log')
+def api_automation_log():
+    """Журнал выполнения автоматизаций (Should №59)."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    board_id = request.args.get('board_id', type=int)
+    limit = request.args.get('limit', 50, type=int)
+    with get_db() as conn:
+        sql = '''
+            SELECT al.*, ar.name AS rule_name, ca.title AS card_title, co.name AS col_name
+            FROM automation_log al
+            LEFT JOIN automation_rules ar ON ar.id = al.rule_id
+            LEFT JOIN cards ca ON ca.id = al.card_id
+            LEFT JOIN columns co ON co.id = ca.column_id
+        '''
+        params = []
+        if board_id:
+            sql += ' WHERE co.board_id = ?'
+            params.append(board_id)
+        sql += ' ORDER BY al.created_at DESC LIMIT ?'
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+    return jsonify([dict(r) for r in rows])
 
 
 # ===== API — CARD LINKS =====
@@ -3684,6 +3899,34 @@ def migrate_db():
             [l['name'] for l in IMPORTANCE_LEVELS]
         )
 
+        # ── Повторяющиеся карточки (Should №60) ──
+        try:
+            conn.execute("ALTER TABLE cards ADD COLUMN repeat_pattern TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
+
+        # ── Автоматизация по приближению срока (Should №55) ──
+        try:
+            conn.execute("ALTER TABLE automation_rules ADD COLUMN trigger_type TEXT DEFAULT 'column'")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE automation_rules ADD COLUMN trigger_value TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
+
+        # ── Журнал автоматизаций (Should №59) ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS automation_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id    INTEGER,
+                card_id    INTEGER,
+                action     TEXT NOT NULL,
+                details    TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+
 
 def _search_text_variants(q):
     """Для одиночного слова ≥5 букв добавляет 1-2 варианта с обрезанным концом —
@@ -3789,9 +4032,56 @@ def health():
     return jsonify({'status': 'ok'})
 
 
+# ===== Автоматизация по приближению срока (Should №55) =====
+# Проверяет карточки с приближающимся дедлайном и применяет правила.
+
+def _check_due_approaching():
+    """Фоновая проверка: карточки с дедлайном через N дней → выполнить действие."""
+    try:
+        with get_db() as conn:
+            rules = conn.execute(
+                "SELECT * FROM automation_rules WHERE trigger_type='due_approaching' AND enabled=1"
+            ).fetchall()
+            if not rules:
+                return
+            today = datetime.now().date()
+            for rule in rules:
+                try:
+                    days_list = [int(x.strip()) for x in (rule['trigger_value'] or '').split(',') if x.strip()]
+                except ValueError:
+                    continue
+                if not days_list:
+                    continue
+                for days in days_list:
+                    target = today + timedelta(days=days)
+                    target_str = target.strftime('%d.%m.%Y')
+                    cards = conn.execute(
+                        "SELECT id FROM cards WHERE due_date=? AND (completed=0 OR completed IS NULL) AND (archived=0 OR archived IS NULL)",
+                        (target_str,)
+                    ).fetchall()
+                    for card in cards:
+                        _apply_automation_action(conn, card['id'], rule)
+                        conn.execute(
+                            'INSERT INTO automation_log (rule_id, card_id, action, details) VALUES (?,?,?,?)',
+                            (rule['id'], card['id'], rule['action_type'], f'due_approaching {days}d → {target_str}')
+                        )
+    except Exception as e:
+        app.logger.error(f'due_approaching check failed: {e}')
+
+
+# Фоновый поток — проверка каждые 5 минут
+def _due_approaching_loop():
+    import time as _time
+    while True:
+        _time.sleep(300)  # 5 минут
+        with app.app_context():
+            _check_due_approaching()
+
+
 with app.app_context():
     init_db()
     migrate_db()
 
 if __name__ == '__main__':
+    _threading.Thread(target=_due_approaching_loop, daemon=True).start()
     app.run(debug=False, port=5001)

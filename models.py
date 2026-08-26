@@ -113,6 +113,22 @@ def init_db():
                 created_by TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             );
+            CREATE TABLE IF NOT EXISTS slack_settings (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                webhook_url TEXT NOT NULL DEFAULT '',
+                board_id   INTEGER DEFAULT 0,
+                events     TEXT NOT NULL DEFAULT '*',
+                active     INTEGER DEFAULT 1,
+                updated_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS automation_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id    INTEGER,
+                card_id    INTEGER,
+                action     TEXT NOT NULL,
+                details    TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
         ''')
         if conn.execute('SELECT COUNT(*) FROM boards').fetchone()[0] == 0:
             _seed(conn)

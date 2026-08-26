@@ -799,6 +799,7 @@ function appendCardToDOM(card, colId) {
     el.draggable    = true;
     el.dataset.cardId = card.id;
     el.dataset.members = (card.members || []).map(m => `${m.user_email}::${m.user_name}`).join('|');
+    el.dataset.repeat = card.repeat_pattern || '';
     el.onclick      = (e) => openCardModal(e, el);
 
     let html = `<button class="card-check-btn" onclick="toggleComplete(event, this)" title="Отметить выполненной">✓</button>`;
@@ -810,7 +811,9 @@ function appendCardToDOM(card, colId) {
     }
     html += `<p class="card-title">${escHtml(card.title)}</p>`;
     if (card.due_date) {
-        html += `<div class="card-due"><span class="due-icon">${_CAL_SVG}</span> ${escHtml(card.due_date)}</div>`;
+        html += `<div class="card-due"><span class="due-icon">${_CAL_SVG}</span> ${escHtml(card.due_date)}${card.repeat_pattern ? ' 🔁' : ''}</div>`;
+    } else if (card.repeat_pattern) {
+        html += `<div class="card-due" style="color:#4361EE"><span class="due-icon">🔁</span> Повтор</div>`;
     }
     el.innerHTML = html;
 
@@ -966,6 +969,18 @@ window.openCardModal = function(e, cardEl) {
         d.className   = 'cm-due-badge';
         d.textContent = dueEl.textContent;
         meta.appendChild(d);
+    }
+    // Повтор (Should №60)
+    const repeatVal = cardEl.dataset.repeat || '';
+    if (repeatVal) {
+        const r = document.createElement('span');
+        r.className   = 'cm-due-badge';
+        r.style.background = '#4361EE15';
+        r.style.color = '#4361EE';
+        r.style.borderColor = '#4361EE40';
+        const labels = { daily: 'Ежедн.', weekly: 'Еженед.', monthly: 'Ежемес.' };
+        r.textContent = '🔁 ' + (labels[repeatVal] || repeatVal);
+        meta.appendChild(r);
     }
 
     // Reset
@@ -2345,6 +2360,42 @@ function updateModalStart(start) {
     }
 }
 
+// --- Повторяющиеся карточки (Should №60) ---
+const REPEAT_OPTIONS = [
+    { value: '',          label: 'Без повтора' },
+    { value: 'daily',     label: 'Ежедневно' },
+    { value: 'weekly',    label: 'Еженедельно' },
+    { value: 'monthly',   label: 'Ежемесячно' },
+];
+
+window.openRepeatPopover = function() {
+    if (!currentCardDbId) return;
+    const currentCard = document.getElementById(currentCardId);
+    const currentPattern = currentCard?.dataset.repeat || '';
+    const buttonsHtml = REPEAT_OPTIONS.map(o => `
+        <button class="importance-btn${o.value === currentPattern ? ' importance-btn--active' : ''}"
+                style="--pl-color:${o.value ? '#4361EE' : '#999'}"
+                onclick="setRepeat('${o.value}')">
+            <span class="importance-dot" style="background:${o.value ? '#4361EE' : '#999'}"></span>
+            ${escHtml(o.label)}
+        </button>`).join('');
+    openPopover('Повторять', `
+        <div class="importance-list">${buttonsHtml}</div>
+        <p class="cm-empty-hint" style="margin-top:8px">При завершении карточки будет автоматически создана копия со сдвигом даты.</p>
+    `);
+};
+
+window.setRepeat = async function(pattern) {
+    if (!currentCardDbId) return;
+    await fetch(`/api/cards/${currentCardDbId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repeat_pattern: pattern })
+    });
+    const cardEl = document.getElementById(currentCardId);
+    if (cardEl) cardEl.dataset.repeat = pattern;
+    openRepeatPopover();
+};
+
 // --- Переместить ---
 window.openMovePopover = function() {
     const currentColId = parseInt(
@@ -2784,6 +2835,47 @@ window.qeDelete = function() {
         function() { fetch('/api/cards/' + cardId, { method: 'DELETE' }); },
         function() { if (parent) parent.insertBefore(cardEl, nextSib); updateColumnCounts(); }
     );
+};
+
+// ===== Quick Actions (Should №53) =====
+
+window.qeToggleDone = function() {
+    if (!qeCardId) return;
+    const cardEl = document.getElementById(qeCardDomId);
+    const isDone = cardEl?.classList.contains('card--done');
+    fetch('/api/cards/' + qeCardId, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed: isDone ? 0 : 1 })
+    });
+    if (cardEl) cardEl.classList.toggle('card--done', !isDone);
+    closeQuickEdit();
+};
+
+window.qeImportance = function() {
+    const cardEl = document.getElementById(qeCardDomId);
+    closeQuickEdit();
+    if (cardEl) {
+        openCardModal({}, cardEl);
+        setTimeout(() => openImportancePopover(), 150);
+    }
+};
+
+window.qeDuplicate = function() {
+    if (!qeCardId) return;
+    const cardEl = document.getElementById(qeCardDomId);
+    const col = cardEl?.closest('.column');
+    const colId = col?.dataset?.colId;
+    closeQuickEdit();
+    if (colId) {
+        fetch('/api/cards', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ column_id: parseInt(colId), title: (cardEl?.querySelector('.card-title')?.textContent || '') + ' (копия)' })
+        }).then(r => r.json()).then(d => {
+            if (d.id) location.reload();
+        });
+    }
 };
 
 document.addEventListener('keydown', e => {
@@ -4394,6 +4486,32 @@ document.addEventListener('keydown', e => {
     document.addEventListener('click', e => {
         if (e.target.closest('.card')) _unfocusCard();
     });
+
+    // ПКМ → контекстное меню (Should №53)
+    document.addEventListener('contextmenu', e => {
+        const card = e.target.closest('.card');
+        if (!card || !card.dataset.cardId) return;
+        if (_isInputFocused() || _isModalOpen()) return;
+        e.preventDefault();
+        qeCardDomId = card.id;
+        qeCardId = parseInt(card.dataset.cardId);
+        const title = card.querySelector('.card-title')?.textContent.trim() || '';
+        document.getElementById('qeTitle').value = title;
+        // Обновить label "Выполнено"
+        const doneLabel = document.getElementById('qeDoneLabel');
+        if (doneLabel) doneLabel.textContent = card.classList.contains('card--done') ? 'Активна' : 'Выполнено';
+        const popup = document.getElementById('quickEditPopup');
+        popup.style.display = 'flex';
+        const rect = card.getBoundingClientRect();
+        let top = rect.top + window.scrollY;
+        let left = rect.right + 8 + window.scrollX;
+        if (left + popup.offsetWidth > window.innerWidth - 8) left = rect.left - popup.offsetWidth - 8 + window.scrollX;
+        if (top + popup.offsetHeight > window.innerHeight + window.scrollY - 8) top = window.innerHeight + window.scrollY - popup.offsetHeight - 8;
+        popup.style.top = top + 'px';
+        popup.style.left = left + 'px';
+        popup.classList.add('active');
+        document.getElementById('quickEditOverlay').classList.add('active');
+    });
 }
 
 
@@ -4770,12 +4888,22 @@ window.onAutoActionTypeChange = function() {
     document.getElementById('autoLabelNameValue').style.display  = type === 'add_label' ? '' : 'none';
 };
 
+window.onAutoTriggerTypeChange = function() {
+    const type = document.getElementById('autoTriggerType').value;
+    document.getElementById('autoTriggerColumn').style.display = type === 'column' ? '' : 'none';
+    document.getElementById('autoTriggerValue').style.display   = type === 'due_approaching' ? '' : 'none';
+};
+
 function _automationRuleSummary(rule) {
     let action = _AUTOMATION_ACTION_LABELS[rule.action_type] || rule.action_type;
     if (rule.action_type === 'set_importance') {
         action += `: ${rule.action_value}`;
     } else if (rule.action_type === 'add_label') {
         try { action += `: «${JSON.parse(rule.action_value).name}»`; } catch { /* старое значение без JSON */ }
+    }
+    const triggerType = rule.trigger_type || 'column';
+    if (triggerType === 'due_approaching') {
+        return `За ${rule.trigger_value} дн. до срока → ${action}`;
     }
     return `Когда карточка попадает в «${rule.trigger_column_name}» → ${action}`;
 }
@@ -4809,10 +4937,16 @@ window.renderAutomationList = async function() {
 
 window.addAutomationRule = async function() {
     const boardId = _getBoardId();
+    const triggerType = document.getElementById('autoTriggerType').value;
     const triggerColumnId = parseInt(document.getElementById('autoTriggerColumn').value);
+    const triggerValue = document.getElementById('autoTriggerValue').value.trim();
     const actionType = document.getElementById('autoActionType').value;
-    if (!boardId || !triggerColumnId || !actionType) {
+    if (triggerType === 'column' && (!boardId || !triggerColumnId || !actionType)) {
         showBspMsg('Выберите колонку-триггер и действие', true);
+        return;
+    }
+    if (triggerType === 'due_approaching' && (!boardId || !triggerValue || !actionType)) {
+        showBspMsg('Введите дни до срока и действие', true);
         return;
     }
 
@@ -4825,10 +4959,17 @@ window.addAutomationRule = async function() {
         actionValue = JSON.stringify({ name, color: '#4361EE' });
     }
 
+    const payload = { trigger_type: triggerType, action_type: actionType, action_value: actionValue };
+    if (triggerType === 'column') {
+        payload.trigger_column_id = triggerColumnId;
+    } else {
+        payload.trigger_value = triggerValue;
+    }
+
     const res = await fetch(`/api/boards/${boardId}/automations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trigger_column_id: triggerColumnId, action_type: actionType, action_value: actionValue })
+        body: JSON.stringify(payload)
     });
     if (!res.ok) { showBspMsg('Не удалось создать правило', true); return; }
     const labelInput = document.getElementById('autoLabelNameValue');
