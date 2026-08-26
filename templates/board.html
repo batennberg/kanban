@@ -116,6 +116,7 @@
                 <div class="export-dropdown" id="exportDropdown" style="display:none">
                     <a href="/api/boards/{{ board.id }}/export" class="export-dropdown-item">CSV (только данные)</a>
                     <a href="/api/boards/{{ board.id }}/export/zip" class="export-dropdown-item">ZIP (данные + вложения)</a>
+                    <a href="/api/boards/{{ board.id }}/ical" class="export-dropdown-item">iCal-фид (подписка в календаре)</a>
                 </div>
             </div>
             {% endif %}

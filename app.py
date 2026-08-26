@@ -1694,6 +1694,76 @@ def api_test_webhook():
     return jsonify({'ok': True})
 
 
+# ===== iCAL FEED (Should №66) =====
+
+@app.route('/api/boards/<int:board_id>/ical')
+def board_ical(board_id):
+    """iCal-фид карточек доски с дедлайнами — подписка в Outlook/Google Calendar."""
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return jsonify({'error': 'forbidden'}), 403
+
+    with get_db() as conn:
+        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        if not board:
+            return jsonify({'error': 'Not found'}), 404
+        rows = conn.execute('''
+            SELECT ca.id, ca.title, ca.description, ca.due_date, ca.completed,
+                   co.name AS col_name, ca.created_at
+            FROM cards ca
+            JOIN columns co ON co.id = ca.column_id
+            WHERE co.board_id = ? AND ca.due_date != '' AND ca.due_date IS NOT NULL
+            ORDER BY ca.due_date
+        ''', (board_id,)).fetchall()
+
+    def _escape_ics(text):
+        return (text or '').replace('\\', '\\\\').replace(';', '\\;').replace(',', '\\,').replace('\n', '\\n')
+
+    def _parse_due(due_str):
+        """Парсит дд.мм.гггг [чч:мм] в iCal datetime."""
+        parts = (due_str or '').strip().split(' ')
+        dp = parts[0].split('.')
+        if len(dp) != 3:
+            return None
+        d, m, y = dp
+        if len(parts) > 1 and ':' in parts[1]:
+            hh, mi = parts[1].split(':')
+            return f"{y}{m.zfill(2)}{d.zfill(2)}T{hh.zfill(2)}{mi.zfill(2)}00"
+        return f"{y}{m.zfill(2)}{d.zfill(2)}T235900"
+
+    lines = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//Almaly Kanban//Board Feed//RU',
+        f'X-WR-CALNAME:{_escape_ics(board["name"])}',
+    ]
+    for r in rows:
+        due = _parse_due(r['due_date'])
+        if not due:
+            continue
+        uid = f"kanban-card-{r['id']}@kanban"
+        summary = _escape_ics(r['title'])
+        desc = _escape_ics(r['description'] or '')
+        status = '✅' if r['completed'] else '⏳'
+        lines += [
+            'BEGIN:VEVENT',
+            f'UID:{uid}',
+            f'DTSTART:{due}',
+            f'DTEND:{due}',
+            f'SUMMARY:{status} {summary}',
+            f'DESCRIPTION:{desc}\\nКолонка: {_escape_ics(r["col_name"])}',
+            'END:VEVENT',
+        ]
+    lines.append('END:VCALENDAR')
+
+    ics_content = '\r\n'.join(lines)
+    return app.response_class(
+        ics_content.encode('utf-8'),
+        mimetype='text/calendar; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename="kanban-{board_id}.ics"'}
+    )
+
+
 # ===== API — COLUMNS =====
 
 @app.route('/api/columns', methods=['POST'])
