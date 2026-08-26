@@ -3110,6 +3110,9 @@ kbd {
 .cm-vote-btn--active { background: #deebff; border-color: #4c9aff; color: #0747a6; }
 .cm-vote-score { font-size: 18px; font-weight: 700; color: #172b4d; min-width: 24px; text-align: center; }
 
+/* AI Summary (Nice №75) */
+.cm-ai-summary { font-size: 13px; line-height: 1.5; color: #172b4d; background: #f4f5f7; padding: 10px 12px; border-radius: 8px; border-left: 3px solid #6554C0; margin-top: 8px; }
+
 /* Activity (audit) list */
 .cm-activity-list {
     display: flex;

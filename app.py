@@ -1909,6 +1909,78 @@ def board_ical(board_id):
     )
 
 
+@app.route('/boards/<int:board_id>/calendar')
+def board_calendar(board_id):
+    """Monthly calendar planner (Nice №74)."""
+    if 'user' not in session: return redirect(url_for('login'))
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return 'Access denied', 403
+    with get_db() as conn:
+        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        if not board:
+            return 'Not found', 404
+        # Get all cards with due dates for this board
+        cards = conn.execute('''
+            SELECT ca.id, ca.title, ca.due_date, ca.start_date, ca.completed,
+                   ca.importance, co.name AS col_name, co.color AS col_color
+            FROM cards ca
+            JOIN columns co ON co.id = ca.column_id
+            WHERE co.board_id=? AND ca.due_date != '' AND ca.due_date IS NOT NULL
+            ORDER BY ca.due_date
+        ''', (board_id,)).fetchall()
+    return render_template('calendar.html', board=board, cards=[dict(c) for c in cards])
+
+
+def _summarize_text(text, max_sentences=3):
+    """Extractive summarizer — pick most important sentences (Nice №75)."""
+    import re
+    if not text or not text.strip():
+        return ''
+    sentences = re.split(r'[.!?]+\s+', text.strip())
+    sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
+    if len(sentences) <= max_sentences:
+        return '. '.join(sentences) + ('.' if sentences else '')
+    stopwords = {'и', 'в', 'на', 'не', 'с', 'по', 'для', 'что', 'это', 'как', 'но', 'от', 'до', 'из',
+                 'за', 'при', 'или', 'так', 'все', 'его', 'её', 'их', 'мы', 'вы', 'он', 'она', 'оно', 'они',
+                 'то', 'уже', 'ещё', 'еще', 'тоже', 'только', 'очень', 'было', 'быть', 'будет', 'были',
+                 'нужно', 'нужен', 'нужна', 'можно', 'надо', 'нет', 'да', 'когда', 'где', 'кто', 'чем'}
+    scored = []
+    for i, s in enumerate(sentences):
+        words = [w.lower() for w in re.findall(r'\w+', s) if len(w) > 2]
+        score = sum(1 for w in words if w not in stopwords)
+        if i < 2: score += 2
+        if any(kw in s.lower() for kw in ['важно', 'критично', 'срочно', 'блокер', 'проблема', 'задача', 'результат']): score += 3
+        scored.append((score, i, s))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    top = sorted(scored[:max_sentences], key=lambda x: x[1])
+    return '. '.join(t[2] for t in top) + '.'
+
+
+@app.route('/api/cards/<int:card_id>/summarize', methods=['POST'])
+def api_summarize_card(card_id):
+    """AI-суммаризация карточки (Nice №75)."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        card = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+        if not card: return jsonify({'error': 'not found'}), 404
+        comments = conn.execute(
+            'SELECT text FROM comments WHERE card_id=? ORDER BY created_at', (card_id,)
+        ).fetchall()
+        text = (card['description'] or '') + '\n' + '\n'.join(c['text'] for c in comments if c['text'])
+        summary = _summarize_text(text)
+        conn.execute('UPDATE cards SET ai_summary=? WHERE id=?', (summary, card_id))
+    return jsonify({'summary': summary})
+
+
+@app.route('/api/cards/<int:card_id>/summary')
+def api_get_summary(card_id):
+    if 'user' not in session: return jsonify({'summary': ''})
+    with get_db() as conn:
+        row = conn.execute('SELECT ai_summary FROM cards WHERE id=?', (card_id,)).fetchone()
+    return jsonify({'summary': row['ai_summary'] if row and row['ai_summary'] else ''})
+
+
 # ===== SLACK / TEAMS NOTIFICATIONS (Should №65) =====
 
 def _fire_slack(conn, event_type, payload):
@@ -4254,6 +4326,12 @@ def migrate_db():
         # ── Webhook форматы (Nice №70) ──
         try:
             conn.execute("ALTER TABLE webhooks ADD COLUMN format TEXT DEFAULT 'raw'")
+        except sqlite3.OperationalError:
+            pass
+
+        # ── AI-суммаризация — столбец кэша (Nice №75) ──
+        try:
+            conn.execute("ALTER TABLE cards ADD COLUMN ai_summary TEXT")
         except sqlite3.OperationalError:
             pass
 

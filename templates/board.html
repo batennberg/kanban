@@ -111,6 +111,9 @@
             <button class="btn-board-action" onclick="openWorkloadPanel()" title="Загрузка участников">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="btn-act-text">Workload</span>
             </button>
+            <a href="/boards/{{ board.id }}/calendar" class="btn-board-action" style="text-decoration:none" title="Календарь-планировщик">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span class="btn-act-text">Календарь</span>
+            </a>
             {% if user.role == 'admin' %}
             <div class="export-dropdown-wrap">
                 <button class="btn-board-action" onclick="toggleExportMenu(event)" title="Экспорт доски">
@@ -696,6 +699,17 @@
                     </div>
                     <textarea class="cm-description" id="cmDescription" spellcheck="true" lang="ru" placeholder="Добавьте подробное описание задачи..." style="display:none" onblur="finishDescriptionEdit()"></textarea>
                     <p class="cm-description-hint">Поддерживается Markdown: **жирный**, *курсив*, списки, `код`, таблицы, ![картинка](url)</p>
+                </div>
+
+                <div class="cm-section" id="cmAiSection">
+                    <div class="cm-section-head" style="justify-content:space-between">
+                        <div style="display:flex;align-items:center;gap:6px">
+                            <span class="cm-sec-icon">&#9733;</span>
+                            <h3 class="cm-sec-title">AI-суммаризация</h3>
+                        </div>
+                        <button class="btn-secondary btn-sm" onclick="summarizeCard()" style="font-size:11px;padding:3px 8px">Сгенерировать</button>
+                    </div>
+                    <div id="cmAiSummary" class="cm-ai-summary" style="display:none"></div>
                 </div>
 
                 <div class="cm-section" id="cmChecklistSection" style="display:none">

@@ -1025,6 +1025,7 @@ async function loadCardData(dbId) {
         renderLinks(data.links || []);
         renderCardRelations(data.relations || []);
         loadVotes(data.id);
+        loadAiSummary(data.id);
         renderChecklists(data.checklists || []);
         renderCustomFields(data.custom_fields || []);
         loadCycleTime(dbId);
@@ -1546,6 +1547,29 @@ window.voteCard = async function(voteVal) {
             if (voteVal === -1) btns[1]?.classList.add('cm-vote-btn--active');
         }
     }
+};
+
+// ===== AI Summarization (Nice №75) =====
+
+async function loadAiSummary(cardId) {
+    try {
+        const res = await fetch(`/api/cards/${cardId}/summary`);
+        if (!res.ok) return;
+        const d = await res.json();
+        const el = document.getElementById('cmAiSummary');
+        if (el && d.summary) { el.textContent = d.summary; el.style.display = 'block'; }
+    } catch {}
+}
+
+window.summarizeCard = async function() {
+    if (!currentCardDbId) return;
+    const el = document.getElementById('cmAiSummary');
+    if (el) { el.textContent = 'Анализирую...'; el.style.display = 'block'; }
+    try {
+        const res = await fetch(`/api/cards/${currentCardDbId}/summarize`, { method: 'POST' });
+        const d = await res.json();
+        if (el) { el.textContent = d.summary || 'Нет достаточно данных для суммаризации'; }
+    } catch { if (el) el.textContent = 'Ошибка генерации'; }
 };
 
 window.showAddRelationForm = function() {

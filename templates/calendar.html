@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}{{ board.name }} — Календарь{% endblock %}
+{% block body %}
+<div class="calendar-page">
+    <div class="calendar-header">
+        <a href="/boards/{{ board.id }}" class="back-link">&larr; {{ board.name }}</a>
+        <h1 class="calendar-title">Планировщик</h1>
+        <div class="calendar-nav">
+            <button class="cal-nav-btn" onclick="calPrev()">&#8249;</button>
+            <span class="cal-month-label" id="calMonthLabel"></span>
+            <button class="cal-nav-btn" onclick="calNext()">&#8250;</button>
+            <button class="cal-nav-btn cal-today" onclick="calToday()">Сегодня</button>
+        </div>
+    </div>
+    <div class="calendar-grid" id="calendarGrid"></div>
+</div>
+
+<script>
+const CARDS = {{ cards | tojson }};
+let calYear, calMonth;
+
+function calInit() {
+    const now = new Date();
+    calYear = now.getFullYear();
+    calMonth = now.getMonth();
+    calRender();
+}
+
+function calPrev() { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } calRender(); }
+function calNext() { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } calRender(); }
+function calToday() { const n = new Date(); calYear = n.getFullYear(); calMonth = n.getMonth(); calRender(); }
+
+function calParseDue(s) {
+    if (!s) return null;
+    const parts = s.split(' ')[0].split('.');
+    if (parts.length !== 3) return null;
+    const [d, m, y] = parts;
+    return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+}
+
+function calRender() {
+    const months = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    document.getElementById('calMonthLabel').textContent = months[calMonth] + ' ' + calYear;
+
+    const firstDay = new Date(calYear, calMonth, 1);
+    const lastDay  = new Date(calYear, calMonth + 1, 0);
+    const startPad = (firstDay.getDay() + 6) % 7;
+    const totalDays = lastDay.getDate();
+
+    const dayNames = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+    let html = '<div class="cal-weekdays">' + dayNames.map(d => `<div class="cal-weekday">${d}</div>`).join('') + '</div>';
+    html += '<div class="cal-days">';
+
+    for (let i = 0; i < startPad; i++) html += '<div class="cal-day cal-day--empty"></div>';
+
+    const today = new Date(); today.setHours(0,0,0,0);
+
+    for (let d = 1; d <= totalDays; d++) {
+        const dt = new Date(calYear, calMonth, d);
+        dt.setHours(0,0,0,0);
+        const isToday = dt.getTime() === today.getTime();
+        const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+
+        const dayCards = CARDS.filter(c => {
+            const cd = calParseDue(c.due_date);
+            return cd && cd.getTime() === dt.getTime();
+        });
+
+        html += `<div class="cal-day${isToday ? ' cal-day--today' : ''}${isWeekend ? ' cal-day--weekend' : ''}">`;
+        html += `<div class="cal-day-num">${d}</div>`;
+        dayCards.forEach(c => {
+            const impCls = c.importance === 'critical' ? ' cal-card--critical' : c.importance === 'high' ? ' cal-card--high' : '';
+            const doneCls = c.completed ? ' cal-card--done' : '';
+            html += `<a href="/card/${c.id}" class="cal-card${impCls}${doneCls}" style="border-left-color:${c.col_color || '#4361EE'}">`;
+            html += `<span class="cal-card-title">${escHtml(c.title)}</span>`;
+            html += `<span class="cal-card-meta">${escHtml(c.col_name)}</span>`;
+            html += '</a>';
+        });
+        html += '</div>';
+    }
+
+    const endPad = (7 - ((startPad + totalDays) % 7)) % 7;
+    for (let i = 0; i < endPad; i++) html += '<div class="cal-day cal-day--empty"></div>';
+
+    html += '</div>';
+    document.getElementById('calendarGrid').innerHTML = html;
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+calInit();
+</script>
+
+<style>
+.calendar-page { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+.calendar-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+.back-link { color: #4361EE; text-decoration: none; font-size: 14px; font-weight: 500; }
+.back-link:hover { text-decoration: underline; }
+.calendar-title { font-size: 22px; font-weight: 700; color: #172b4d; margin: 0; }
+.calendar-nav { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.cal-nav-btn { background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 14px; font-weight: 500; color: #172b4d; }
+.cal-nav-btn:hover { background: #ebecf0; }
+.cal-today { font-size: 12px; }
+.cal-month-label { font-size: 16px; font-weight: 600; min-width: 160px; text-align: center; }
+
+.cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 2px; }
+.cal-weekday { text-align: center; font-size: 12px; font-weight: 600; color: #5e6c84; padding: 8px 0; text-transform: uppercase; letter-spacing: .5px; }
+
+.cal-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.cal-day { background: #fff; border: 1px solid #f4f5f7; border-radius: 6px; min-height: 90px; padding: 4px 6px; }
+.cal-day--empty { background: transparent; border: none; min-height: 0; }
+.cal-day--today { border: 2px solid #4361EE; background: #f0f4ff; }
+.cal-day--weekend { background: #fafbfc; }
+.cal-day-num { font-size: 13px; font-weight: 600; color: #5e6c84; margin-bottom: 4px; padding: 2px 4px; }
+.cal-day--today .cal-day-num { color: #4361EE; }
+
+.cal-card { display: block; padding: 4px 6px; margin-bottom: 2px; border-radius: 4px; border-left: 3px solid #4361EE; background: #f4f5f7; text-decoration: none; color: #172b4d; font-size: 11px; line-height: 1.3; transition: .15s; }
+.cal-card:hover { background: #ebecf0; }
+.cal-card--done { opacity: .5; text-decoration: line-through; }
+.cal-card--high { border-left-color: #ff991f; background: #fff8e5; }
+.cal-card--critical { border-left-color: #de350b; background: #ffebe6; }
+.cal-card-title { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-card-meta { display: block; font-size: 10px; color: #5e6c84; margin-top: 1px; }
+</style>
+{% endblock %}
