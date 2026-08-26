@@ -95,6 +95,24 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 PRIMARY KEY (board_id, user_email)
             );
+            CREATE TABLE IF NOT EXISTS api_tokens (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_email TEXT NOT NULL,
+                name       TEXT NOT NULL DEFAULT '',
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                last_used  TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS webhooks (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                url        TEXT NOT NULL,
+                events     TEXT NOT NULL DEFAULT '*',
+                board_id   INTEGER DEFAULT 0,
+                secret     TEXT NOT NULL DEFAULT '',
+                active     INTEGER DEFAULT 1,
+                created_by TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
         ''')
         if conn.execute('SELECT COUNT(*) FROM boards').fetchone()[0] == 0:
             _seed(conn)

@@ -1,0 +1,155 @@
+{% extends 'base.html' %}
+{% block title %}REST API — Almaly Kanban{% endblock %}
+
+{% block head %}
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+.api-page { padding: 24px 32px; max-width: 900px; margin: 0 auto; }
+.api-page h1 { font-size: 22px; font-weight: 700; color: #172b4d; margin-bottom: 6px; }
+.api-page h2 { font-size: 16px; font-weight: 600; color: #172b4d; margin: 28px 0 10px; border-bottom: 1px solid #dfe1e6; padding-bottom: 6px; }
+.api-page h3 { font-size: 14px; font-weight: 600; color: #172b4d; margin: 18px 0 8px; }
+.api-page p { font-size: 13px; color: #6b778c; line-height: 1.6; margin: 6px 0; }
+.api-page code { background: #f4f5f7; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+.api-page pre { background: #1a1a1a; color: #e6e6e6; padding: 14px 18px; border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; margin: 8px 0; }
+.api-page pre code { background: transparent; padding: 0; color: inherit; }
+
+.method { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; margin-right: 6px; font-family: monospace; }
+.method-get    { background: #e3fcef; color: #00875a; }
+.method-post   { background: #e3f0ff; color: #0052cc; }
+.method-put    { background: #fff7e6; color: #ff8b00; }
+.method-delete { background: #ffebe6; color: #de350b; }
+
+.endpoint { font-size: 13px; font-family: monospace; color: #172b4d; }
+
+.token-section { background: #f4f5f7; border-radius: 10px; padding: 16px 20px; margin: 16px 0; }
+.token-section h3 { margin-top: 0; }
+.token-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+.token-input { flex: 1; padding: 7px 10px; border: 1px solid #dfe1e6; border-radius: 6px; font-size: 13px; font-family: monospace; }
+.token-btn { padding: 7px 14px; border-radius: 6px; border: none; font-size: 13px; font-weight: 500; cursor: pointer; }
+.token-btn--primary { background: #4361EE; color: #fff; }
+.token-btn--danger  { background: #ffebe6; color: #de350b; }
+
+.api-tbl { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+.api-tbl th { text-align: left; font-weight: 500; color: #6b778c; padding: 6px 8px; border-bottom: 1px solid #dfe1e6; }
+.api-tbl td { padding: 6px 8px; border-bottom: 1px solid #f1f2f4; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="api-page">
+    <h1>REST API</h1>
+    <p>Полный список эндпоинтов Almaly Kanban. Авторизация — по сессии (куки) или по API-токену.</p>
+
+    <h2>Авторизация по токену</h2>
+    <p>Создайте токен ниже, затем передавайте его в заголовке:</p>
+    <pre><code>Authorization: Bearer &lt;token&gt;</code></pre>
+
+    <div class="token-section">
+        <h3>Мои токены</h3>
+        <div class="token-row">
+            <input class="token-input" id="tokenName" placeholder="Имя токена (необязательно)">
+            <button class="token-btn token-btn--primary" onclick="createToken()">Создать</button>
+        </div>
+        <div id="tokenResult" style="display:none; margin-top:8px">
+            <div style="background:#e3fcef;border-radius:6px;padding:8px 12px;font-size:12px;font-family:monospace;word-break:break-all">
+                Ваш токен: <strong id="tokenValue"></strong><br>
+                <span style="color:#6b778c">Скопируйте его сейчас — он больше не будет показан.</span>
+            </div>
+        </div>
+        <div id="tokensList" style="margin-top:12px"></div>
+    </div>
+
+    <h2>Эндпоинты</h2>
+
+    <h3>Доски</h3>
+    <table class="api-tbl">
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/boards</span></td><td>Список досок</td></tr>
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/boards/{id}</span></td><td>Доска с колонками</td></tr>
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/boards/{id}/export</span></td><td>Экспорт в CSV</td></tr>
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/boards/{id}/export/zip</span></td><td>ZIP-экспорт (данные + вложения)</td></tr>
+    </table>
+
+    <h3>Карточки</h3>
+    <table class="api-tbl">
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/cards/{id}</span></td><td>Карточка с комментариями, активностью, чек-листами</td></tr>
+        <tr><td><span class="method method-put">PUT</span> <span class="endpoint">/api/cards/{id}</span></td><td>Обновить карточку (JSON body)</td></tr>
+        <tr><td><span class="method method-delete">DEL</span> <span class="endpoint">/api/cards/{id}</span></td><td>Архивировать карточку</td></tr>
+        <tr><td><span class="method method-post">POST</span> <span class="endpoint">/api/cards/{id}/restore</span></td><td>Восстановить из архива</td></tr>
+        <tr><td><span class="method method-post">POST</span> <span class="endpoint">/api/cards/{id}/watch</span></td><td>Вкл/выкл наблюдение</td></tr>
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/cards/{id}/watchers</span></td><td>Список наблюдателей</td></tr>
+    </table>
+
+    <h3>Комментарии</h3>
+    <table class="api-tbl">
+        <tr><td><span class="method method-post">POST</span> <span class="endpoint">/api/cards/{id}/comments</span></td><td>Добавить комментарий <code>{"text":"..."}</code></td></tr>
+        <tr><td><span class="method method-delete">DEL</span> <span class="endpoint">/api/comments/{id}</span></td><td>Удалить комментарий</td></tr>
+    </table>
+
+    <h3>Поиск</h3>
+    <table class="api-tbl">
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/search?q=...</span></td><td>Поиск карточек. Операторы: <code>board:</code> <code>member:</code> <code>due:overdue</code> <code>is:done</code></td></tr>
+    </table>
+
+    <h3>Уведомления</h3>
+    <table class="api-tbl">
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/inbox</span></td><td>Список уведомлений</td></tr>
+        <tr><td><span class="method method-post">POST</span> <span class="endpoint">/api/inbox/{id}/read</span></td><td>Отметить прочитанным</td></tr>
+    </table>
+
+    <h3>Пользователи (admin)</h3>
+    <table class="api-tbl">
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/users</span></td><td>Список пользователей</td></tr>
+        <tr><td><span class="method method-post">POST</span> <span class="endpoint">/api/users</span></td><td>Создать пользователя</td></tr>
+        <tr><td><span class="method method-put">PUT</span> <span class="endpoint">/api/users/{email}</span></td><td>Обновить пользователя</td></tr>
+        <tr><td><span class="method method-delete">DEL</span> <span class="endpoint">/api/users/{email}</span></td><td>Удалить пользователя</td></tr>
+    </table>
+
+    <h3>Приглашения (admin)</h3>
+    <table class="api-tbl">
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/invites</span></td><td>Список приглашений</td></tr>
+        <tr><td><span class="method method-post">POST</span> <span class="endpoint">/api/invites</span></td><td>Создать приглашение <code>{"email":"...","role":"user"}</code></td></tr>
+    </table>
+
+    <h3>Прочее</h3>
+    <table class="api-tbl">
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/health</span></td><td>Health-check</td></tr>
+        <tr><td><span class="method method-get">GET</span> <span class="endpoint">/api/tokens</span></td><td>Мои API-токены</td></tr>
+        <tr><td><span class="method method-post">POST</span> <span class="endpoint">/api/tokens</span></td><td>Создать токен <code>{"name":"..."}</code></td></tr>
+        <tr><td><span class="method method-delete">DEL</span> <span class="endpoint">/api/tokens/{id}</span></td><td>Удалить токен</td></tr>
+    </table>
+</div>
+
+<script>
+async function loadTokens() {
+    const res = await fetch('/api/tokens');
+    const tokens = await res.json();
+    const list = document.getElementById('tokensList');
+    if (!tokens.length) { list.innerHTML = '<p style="color:#6b778c;font-size:12px;margin:0">Нет токенов</p>'; return; }
+    list.innerHTML = '<table class="api-tbl"><thead><tr><th>Имя</th><th>Создан</th><th>Последнее использование</th><th></th></tr></thead><tbody>' +
+        tokens.map(t => `<tr><td>${escHtml(t.name || '—')}</td><td>${escHtml(t.created_at)}</td><td>${t.last_used ? escHtml(t.last_used) : 'никогда'}</td><td><button class="token-btn token-btn--danger" onclick="deleteToken(${t.id})" style="font-size:11px;padding:3px 8px">Удалить</button></td></tr>`).join('') +
+        '</tbody></table>';
+}
+
+async function createToken() {
+    const name = document.getElementById('tokenName').value.trim() || 'API token';
+    const res = await fetch('/api/tokens', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name}) });
+    const d = await res.json();
+    if (d.token) {
+        document.getElementById('tokenValue').textContent = d.token;
+        document.getElementById('tokenResult').style.display = '';
+        document.getElementById('tokenName').value = '';
+        await loadTokens();
+    }
+}
+
+async function deleteToken(id) {
+    if (!confirm('Удалить токен?')) return;
+    await fetch('/api/tokens/' + id, { method: 'DELETE' });
+    await loadTokens();
+}
+
+function escHtml(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
+
+loadTokens();
+</script>
+{% endblock %}

@@ -12,6 +12,7 @@ from urllib.parse import quote as url_quote
 UPLOAD_FOLDER   = os.path.join(os.path.dirname(__file__), 'uploads')
 AVATARS_FOLDER  = os.path.join(os.path.dirname(__file__), 'static', 'uploads', 'avatars')
 BOARD_BG_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'uploads', 'board-bg')
+ALLOWED_DOMAINS = [d.strip().lower() for d in os.environ.get('ALLOWED_DOMAINS', '').split(',') if d.strip()]
 os.makedirs(UPLOAD_FOLDER,   exist_ok=True)
 os.makedirs(AVATARS_FOLDER,  exist_ok=True)
 os.makedirs(BOARD_BG_FOLDER, exist_ok=True)
@@ -1241,6 +1242,11 @@ def api_create_user():
         return jsonify({'error': 'email, name и password обязательны'}), 400
     if role not in _VALID_ROLES:
         return jsonify({'error': 'недопустимая роль'}), 400
+    # Ограничение по домену (Should №89)
+    if ALLOWED_DOMAINS:
+        domain = email.split('@')[-1] if '@' in email else ''
+        if domain not in ALLOWED_DOMAINS:
+            return jsonify({'error': f'Домен {domain} не разрешён. Допустимые: {", ".join(ALLOWED_DOMAINS)}'}), 400
 
     from sheets import is_configured, create_user, get_user
     if is_configured():
@@ -1338,6 +1344,11 @@ def api_create_invite():
     boards = data.get('boards', '')
     if not email:
         return jsonify({'error': 'email обязателен'}), 400
+    # Ограничение по домену (Should №89)
+    if ALLOWED_DOMAINS:
+        domain = email.split('@')[-1] if '@' in email else ''
+        if domain not in ALLOWED_DOMAINS:
+            return jsonify({'error': f'Домен {domain} не разрешён. Допустимые: {", ".join(ALLOWED_DOMAINS)}'}), 400
     token = uuid.uuid4().hex[:16]
     with get_db() as conn:
         conn.execute(
@@ -1496,6 +1507,191 @@ def api_card_watchers(card_id):
             'SELECT user_email FROM card_watchers WHERE card_id=?', (card_id,)
         ).fetchall()
     return jsonify([r['user_email'] for r in rows])
+
+
+# ===== API TOKENS (Should №68) =====
+
+import hashlib
+
+def _hash_token(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+def _get_user_from_token():
+    """Попытка аутентификации по Bearer-токену. Возвращает dict user или None."""
+    auth = request.headers.get('Authorization', '')
+    if not auth.startswith('Bearer '):
+        return None
+    token = auth[7:].strip()
+    if not token:
+        return None
+    token_hash = _hash_token(token)
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT user_email FROM api_tokens WHERE token_hash=?", (token_hash,)
+        ).fetchone()
+        if not row:
+            return None
+        # обновить last_used
+        conn.execute("UPDATE api_tokens SET last_used=datetime('now','localtime') WHERE token_hash=?",
+                     (token_hash,))
+        user_row = conn.execute("SELECT email, name, role FROM users WHERE email=?",
+                                (row['user_email'],)).fetchone()
+        if not user_row:
+            return None
+        return {'email': user_row['email'], 'name': user_row['name'], 'role': user_row['role']}
+
+
+@app.before_request
+def _api_token_auth():
+    """Если нет сессии, попробовать Bearer-токен для API-маршрутов."""
+    if 'user' not in session and request.path.startswith('/api/'):
+        user = _get_user_from_token()
+        if user:
+            session['user'] = user
+
+
+@app.route('/api/tokens', methods=['GET'])
+def api_list_tokens():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, created_at, last_used FROM api_tokens WHERE user_email=?",
+            (session['user']['email'],)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/tokens', methods=['POST'])
+def api_create_token():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    data = request.get_json(force=True) or {}
+    name = data.get('name', 'API token').strip()
+    token = uuid.uuid4().hex
+    token_hash = _hash_token(token)
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO api_tokens (user_email, name, token_hash) VALUES (?,?,?)",
+            (session['user']['email'], name, token_hash)
+        )
+    return jsonify({'ok': True, 'token': token, 'name': name})
+
+
+@app.route('/api/tokens/<int:token_id>', methods=['DELETE'])
+def api_delete_token(token_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute("DELETE FROM api_tokens WHERE id=? AND user_email=?",
+                     (token_id, session['user']['email']))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/docs')
+def api_docs():
+    """Страница документации REST API."""
+    if 'user' not in session: return redirect(url_for('login'))
+    return render_template('api_docs.html', user=session['user'])
+
+
+# ===== WEBHOOKS (Should №69) =====
+
+import hashlib as _hashlib
+import hmac as _hmac
+import threading as _threading
+
+def _fire_webhooks(conn, event_type, payload):
+    """Отправить вебхуки асинхронно для данного события."""
+    rows = conn.execute(
+        "SELECT * FROM webhooks WHERE active=1"
+    ).fetchall()
+    if not rows:
+        return
+    for wh in rows:
+        # Фильтрация по доске
+        if wh['board_id'] and payload.get('board_id') and wh['board_id'] != payload['board_id']:
+            continue
+        # Фильтрация по типу события
+        events = [e.strip() for e in (wh['events'] or '*').split(',')]
+        if '*' not in events and event_type not in events:
+            continue
+        url = wh['url']
+        secret = wh['secret']
+        _threading.Thread(target=_send_webhook, args=(url, event_type, payload, secret), daemon=True).start()
+
+
+def _send_webhook(url, event_type, payload, secret):
+    """Отправить один HTTP POST webhook."""
+    import urllib.request
+    body = json.dumps({'event': event_type, 'data': payload}).encode('utf-8')
+    headers = {'Content-Type': 'application/json'}
+    if secret:
+        sig = _hmac.new(secret.encode(), body, _hashlib.sha256).hexdigest()
+        headers['X-Webhook-Signature'] = f'sha256={sig}'
+    req = urllib.request.Request(url, data=body, headers=headers, method='POST')
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass  # silently ignore failures
+
+
+@app.route('/api/webhooks', methods=['GET'])
+def api_list_webhooks():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        rows = conn.execute('SELECT * FROM webhooks ORDER BY created_at DESC').fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/webhooks', methods=['POST'])
+def api_create_webhook():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    data = request.get_json(force=True) or {}
+    url = data.get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'url обязателен'}), 400
+    events = data.get('events', '*').strip()
+    board_id = data.get('board_id', 0)
+    secret = data.get('secret', '') or uuid.uuid4().hex[:24]
+    with get_db() as conn:
+        cur = conn.execute(
+            'INSERT INTO webhooks (url, events, board_id, secret, created_by) VALUES (?,?,?,?,?)',
+            (url, events, board_id, secret, session['user']['email'])
+        )
+        wh_id = cur.lastrowid
+    return jsonify({'ok': True, 'id': wh_id, 'secret': secret})
+
+
+@app.route('/api/webhooks/<int:wh_id>', methods=['DELETE'])
+def api_delete_webhook(wh_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        conn.execute('DELETE FROM webhooks WHERE id=?', (wh_id,))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/webhooks/<int:wh_id>/toggle', methods=['POST'])
+def api_toggle_webhook(wh_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        conn.execute('UPDATE webhooks SET active = 1 - active WHERE id=?', (wh_id,))
+        row = conn.execute('SELECT active FROM webhooks WHERE id=?', (wh_id,)).fetchone()
+    return jsonify({'ok': True, 'active': row['active'] if row else 0})
+
+
+@app.route('/api/webhooks/test', methods=['POST'])
+def api_test_webhook():
+    """Отправить тестовый webhook по URL."""
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    data = request.get_json(force=True) or {}
+    url = data.get('url', '').strip()
+    if not url: return jsonify({'error': 'url обязателен'}), 400
+    secret = data.get('secret', '')
+    _threading.Thread(target=_send_webhook, args=(url, 'test', {'message': 'Webhook test from Almaly Kanban'}, secret), daemon=True).start()
+    return jsonify({'ok': True})
 
 
 # ===== API — COLUMNS =====
@@ -1715,6 +1911,7 @@ def api_update_card(card_id):
                 _log_card_update_activity(conn, card_id, before, d)
                 _notify_watchers(conn, card_id, session['user']['email'], session['user']['name'], 'card_updated',
                                  {'changed_fields': list(d.keys())})
+                _fire_webhooks(conn, 'card.updated', {'card_id': card_id, 'changes': d, 'actor': session['user']['email']})
                 if 'column_id' in d and before['column_id'] != d['column_id']:
                     automations = _run_column_automations(conn, card_id, d['column_id'])
     return jsonify({'ok': True, 'automations': automations})
@@ -1984,6 +2181,7 @@ def api_add_comment(card_id):
         )
         _notify_watchers(conn, card_id, session['user']['email'], session['user']['name'], 'card_commented',
                          {'comment_excerpt': text[:180], 'comment_id': comment_id})
+        _fire_webhooks(conn, 'card.commented', {'card_id': card_id, 'comment_id': comment_id, 'actor': session['user']['email']})
         row['mentions'] = mentions
     return jsonify(row)
 
