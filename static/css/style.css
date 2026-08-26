@@ -4840,7 +4840,8 @@ kbd {
     .board-bc-ws,
     .board-bc-sep { display: none; }           /* убираем workspace-часть */
     .board-bc-name { font-size: 14px; }
-    .navbar-right { gap: 4px; flex-shrink: 0; }
+    .navbar-right { gap: 4px; flex-shrink: 0; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; }
+    .navbar-right::-webkit-scrollbar { display: none; }
     .btn-board-action { padding: 5px 9px; font-size: 12px; }
 
     /* Канбан-колонки — snap scrolling */
