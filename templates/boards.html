@@ -34,6 +34,13 @@
                 </svg>
                 Мои задачи
             </a>
+            <a href="/reports/overdue" class="ws-nav-item">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                Просроченные
+            </a>
             <button class="ws-nav-item" id="navFavourites" onclick="filterFavourites(this)" style="display:none">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
                     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
@@ -313,6 +320,32 @@
             <!-- список пользователей -->
             <div id="usersList" style="padding:16px 20px"></div>
 
+            <!-- приглашение по ссылке -->
+            <div id="inviteSection" style="display:none; border-top:1px solid var(--border); padding:16px 20px">
+                <p style="font-weight:600;font-size:13px;margin-bottom:12px">Пригласить по ссылке</p>
+                <div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:end">
+                    <div class="form-group" style="margin-bottom:0">
+                        <label>Email приглашаемого</label>
+                        <input type="email" id="inviteEmail" placeholder="user@company.kz" autocomplete="off">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label>Роль</label>
+                        <select id="inviteRole" class="form-select">
+                            <option value="user">Пользователь</option>
+                            <option value="viewer">Наблюдатель</option>
+                        </select>
+                    </div>
+                    <button class="btn-primary" onclick="createInvite()" id="createInviteBtn">Создать ссылку</button>
+                </div>
+                <div id="inviteResult" style="margin-top:12px;display:none">
+                    <div style="background:#f4f5f7;border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:8px">
+                        <input type="text" id="inviteLink" readonly style="flex:1;border:1px solid #dfe1e6;border-radius:6px;padding:6px 10px;font-size:13px;background:#fff">
+                        <button class="btn-secondary" onclick="copyInviteLink()" style="white-space:nowrap">Копировать</button>
+                    </div>
+                </div>
+                <div id="invitesList" style="margin-top:14px"></div>
+            </div>
+
             <!-- форма добавления (скрыта по умолчанию) -->
             <div id="addUserForm" style="display:none; border-top:1px solid var(--border); padding:16px 20px">
                 <p style="font-weight:600;font-size:13px;margin-bottom:12px">Новый пользователь</p>
@@ -362,6 +395,7 @@
         </div>
         <div class="modal-footer">
             <button class="btn-secondary" onclick="closeUsersModal()">Закрыть</button>
+            <button class="btn-secondary" onclick="toggleInviteSection()" id="inviteToggleBtn">Пригласить</button>
             <button class="btn-primary" id="showAddUserBtn" onclick="showAddUserForm()">+ Добавить пользователя</button>
         </div>
     </div>
@@ -1287,6 +1321,63 @@ function cancelEditUser() {
     document.getElementById('saveUserBtn').textContent = 'Добавить пользователя';
     document.getElementById('saveUserBtn').onclick = saveUser;
     hideAddUserForm();
+}
+
+// ===== INVITE BY LINK (Should №79) =====
+
+function toggleInviteSection() {
+    const sec = document.getElementById('inviteSection');
+    const isOpen = sec.style.display !== 'none';
+    sec.style.display = isOpen ? 'none' : '';
+    if (!isOpen) loadInvites();
+}
+
+async function createInvite() {
+    const email = document.getElementById('inviteEmail').value.trim().toLowerCase();
+    const role  = document.getElementById('inviteRole').value;
+    if (!email) { alert('Введите email'); return; }
+    const btn = document.getElementById('createInviteBtn');
+    btn.disabled = true; btn.textContent = '...';
+    try {
+        const res = await fetch('/api/invites', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, role })
+        });
+        const d = await res.json();
+        if (!res.ok) { alert(d.error || 'Ошибка'); return; }
+        document.getElementById('inviteLink').value = d.link;
+        document.getElementById('inviteResult').style.display = '';
+        document.getElementById('inviteEmail').value = '';
+        await loadInvites();
+    } finally {
+        btn.disabled = false; btn.textContent = 'Создать ссылку';
+    }
+}
+
+function copyInviteLink() {
+    const inp = document.getElementById('inviteLink');
+    inp.select();
+    navigator.clipboard.writeText(inp.value);
+}
+
+async function loadInvites() {
+    const container = document.getElementById('invitesList');
+    if (!container) return;
+    const res = await fetch('/api/invites');
+    const invites = await res.json();
+    if (!invites.length) {
+        container.innerHTML = '<p style="color:#6b778c;font-size:12px;margin:0">Нет приглашений</p>';
+        return;
+    }
+    container.innerHTML = '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="color:#6b778c;text-align:left"><th>Email</th><th>Роль</th><th>Статус</th><th>Создано</th></tr></thead><tbody>' +
+        invites.map(inv => {
+            const status = inv.used_at
+                ? '<span style="color:#00875a">Использовано</span>'
+                : '<span style="color:#ff8b00">Ожидает</span>';
+            return `<tr style="border-top:1px solid #f1f2f4"><td>${escHtml(inv.email)}</td><td>${inv.role === 'admin' ? 'Админ' : 'Пользователь'}</td><td>${status}</td><td>${escHtml(inv.created_at)}</td></tr>`;
+        }).join('') +
+        '</tbody></table>';
 }
 
 function escHtml(str) {

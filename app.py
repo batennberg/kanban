@@ -833,6 +833,65 @@ def my_tasks():
     return render_template('my_tasks.html', cards=cards, user=session['user'])
 
 
+@app.route('/reports/overdue')
+def reports_overdue():
+    """Сводный отчёт по просроченным карточкам по всем доскам (Should №100)."""
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    board_ids = _get_board_ids()
+
+    from datetime import datetime
+    today = datetime.now().strftime('%d.%m.%Y')
+
+    with get_db() as conn:
+        sql = '''
+            SELECT ca.*, co.name AS column_name, b.name AS board_name, b.color AS board_color
+            FROM cards ca
+            JOIN columns co ON co.id = ca.column_id
+            JOIN boards b ON b.id = co.board_id
+            WHERE ca.due_date != ''
+              AND ca.due_date IS NOT NULL
+              AND (ca.archived = 0 OR ca.archived IS NULL)
+              AND ca.completed = 0
+        '''
+        params = []
+        if board_ids is not None:
+            ph = ','.join('?' * len(board_ids))
+            sql += f' AND b.id IN ({ph})'
+            params += board_ids
+        sql += '''
+            ORDER BY
+                CASE WHEN ca.due_date < ? THEN 0 ELSE 1 END,
+                substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)
+                    || substr(ca.due_date,12,5)
+        '''
+        params.append(today)
+        rows = conn.execute(sql, params).fetchall()
+        cards = _attach_card_extras(conn, rows)
+
+        # Group by board
+        from collections import OrderedDict
+        boards_map = OrderedDict()
+        overdue_count = 0
+        for c in cards:
+            due = c['due_date']
+            is_overdue = due < today if due else False
+            if not is_overdue:
+                continue
+            overdue_count += 1
+            bname = c['board_name']
+            if bname not in boards_map:
+                boards_map[bname] = {'color': c['board_color'], 'cards': []}
+            boards_map[bname]['cards'].append(c)
+
+        # Cards due today (not yet overdue but need attention)
+        due_today = [c for c in cards if c['due_date'] == today]
+
+    return render_template('reports_overdue.html',
+                           boards=boards_map, overdue_count=overdue_count,
+                           due_today=due_today, today=today, user=session['user'])
+
+
 # ===== API — BOARDS =====
 
 @app.route('/api/boards', methods=['GET'])
@@ -1256,6 +1315,189 @@ def api_delete_user(email):
     return jsonify({'ok': True})
 
 
+# ===== INVITES (Should №79) =====
+
+@app.route('/api/invites', methods=['GET'])
+def api_list_invites():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT * FROM invites ORDER BY created_at DESC'
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/invites', methods=['POST'])
+def api_create_invite():
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
+    data = request.get_json(force=True)
+    email = data.get('email', '').strip().lower()
+    role  = data.get('role', 'user').strip()
+    boards = data.get('boards', '')
+    if not email:
+        return jsonify({'error': 'email обязателен'}), 400
+    token = uuid.uuid4().hex[:16]
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO invites (token, email, role, board_ids, created_by) VALUES (?,?,?,?,?)',
+            (token, email, role, boards, session['user']['email'])
+        )
+    base = request.host_url.rstrip('/')
+    link = f'{base}/invite/{token}'
+    return jsonify({'ok': True, 'token': token, 'link': link})
+
+
+@app.route('/invite/<token>')
+def invite_page(token):
+    with get_db() as conn:
+        inv = conn.execute('SELECT * FROM invites WHERE token=?', (token,)).fetchone()
+    if not inv:
+        return render_template('invite.html', error='Ссылка недействительна', invite=None)
+    if inv['used_at']:
+        return render_template('invite.html', error='Ссылка уже использована', invite=None)
+    if inv['expires_at']:
+        from datetime import datetime
+        try:
+            exp = datetime.strptime(inv['expires_at'], '%Y-%m-%d %H:%M:%S')
+            if datetime.now() > exp:
+                return render_template('invite.html', error='Срок действия ссылки истёк', invite=None)
+        except ValueError:
+            pass
+    return render_template('invite.html', invite=dict(inv), error=None)
+
+
+@app.route('/invite/<token>', methods=['POST'])
+def invite_register(token):
+    with get_db() as conn:
+        inv = conn.execute('SELECT * FROM invites WHERE token=?', (token,)).fetchone()
+    if not inv or inv['used_at']:
+        return render_template('invite.html', error='Ссылка недействительна', invite=None)
+    name = request.form.get('name', '').strip()
+    password = request.form.get('password', '')
+    if not name or not password:
+        return render_template('invite.html', error='Заполните имя и пароль', invite=dict(inv))
+    if len(password) < 4:
+        return render_template('invite.html', error='Пароль минимум 4 символа', invite=dict(inv))
+    from werkzeug.security import generate_password_hash
+    pw_hash = generate_password_hash(password)
+    email = inv['email']
+    with get_db() as conn:
+        existing = conn.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+        if existing:
+            conn.execute('UPDATE users SET name=?, password_hash=? WHERE email=?', (name, pw_hash, email))
+        else:
+            conn.execute(
+                'INSERT INTO users (email, name, password_hash, role) VALUES (?,?,?,?)',
+                (email, name, pw_hash, inv['role'])
+            )
+        if inv['board_ids']:
+            user = conn.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+            if user:
+                for bid in inv['board_ids'].split(','):
+                    bid = bid.strip()
+                    if bid.isdigit():
+                        conn.execute(
+                            'INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (?,?)',
+                            (user['id'], int(bid))
+                        )
+        from datetime import datetime
+        conn.execute('UPDATE invites SET used_at=? WHERE token=?',
+                     (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), token))
+    return redirect(url_for('login'))
+
+
+# ===== WATCHERS (Should №81) =====
+
+def _notify_watchers(conn, card_id, actor_email, actor_name, change_type, extra_payload=None):
+    """Уведомить всех watchers карточки + watchers доски о изменении."""
+    if not card_id:
+        return
+    card_row = conn.execute('''
+        SELECT ca.title, co.board_id, b.name AS board_name
+        FROM cards ca
+        JOIN columns co ON co.id = ca.column_id
+        JOIN boards b ON b.id = co.board_id
+        WHERE ca.id = ?
+    ''', (card_id,)).fetchone()
+    if not card_row:
+        return
+    board_id = card_row['board_id']
+    actor_email = (actor_email or '').strip().lower()
+
+    emails = set()
+    # card watchers
+    for r in conn.execute('SELECT user_email FROM card_watchers WHERE card_id=?', (card_id,)).fetchall():
+        emails.add(r['user_email'].strip().lower())
+    # board watchers
+    if board_id:
+        for r in conn.execute('SELECT user_email FROM board_watchers WHERE board_id=?', (board_id,)).fetchall():
+            emails.add(r['user_email'].strip().lower())
+
+    payload = json.dumps({
+        'type': change_type,
+        'card_id': card_id,
+        'card_title': card_row['title'],
+        'board_id': board_id,
+        'board_name': card_row['board_name'],
+        'actor_email': actor_email,
+        'actor_name': actor_name,
+        **(extra_payload or {}),
+    })
+    for email in emails:
+        if email == actor_email:
+            continue
+        conn.execute(
+            'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
+            (email, f'watch_{change_type}', card_id, payload, board_id)
+        )
+
+
+@app.route('/api/cards/<int:card_id>/watch', methods=['POST'])
+def api_toggle_card_watch(card_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    email = session['user']['email']
+    with get_db() as conn:
+        existing = conn.execute(
+            'SELECT 1 FROM card_watchers WHERE card_id=? AND user_email=?', (card_id, email)
+        ).fetchone()
+        if existing:
+            conn.execute('DELETE FROM card_watchers WHERE card_id=? AND user_email=?', (card_id, email))
+            watching = False
+        else:
+            conn.execute('INSERT OR IGNORE INTO card_watchers (card_id, user_email) VALUES (?,?)', (card_id, email))
+            watching = True
+    return jsonify({'ok': True, 'watching': watching})
+
+
+@app.route('/api/boards/<int:board_id>/watch', methods=['POST'])
+def api_toggle_board_watch(board_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    email = session['user']['email']
+    with get_db() as conn:
+        existing = conn.execute(
+            'SELECT 1 FROM board_watchers WHERE board_id=? AND user_email=?', (board_id, email)
+        ).fetchone()
+        if existing:
+            conn.execute('DELETE FROM board_watchers WHERE board_id=? AND user_email=?', (board_id, email))
+            watching = False
+        else:
+            conn.execute('INSERT OR IGNORE INTO board_watchers (board_id, user_email) VALUES (?,?)', (board_id, email))
+            watching = True
+    return jsonify({'ok': True, 'watching': watching})
+
+
+@app.route('/api/cards/<int:card_id>/watchers')
+def api_card_watchers(card_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT user_email FROM card_watchers WHERE card_id=?', (card_id,)
+        ).fetchall()
+    return jsonify([r['user_email'] for r in rows])
+
+
 # ===== API — COLUMNS =====
 
 @app.route('/api/columns', methods=['POST'])
@@ -1471,6 +1713,8 @@ def api_update_card(card_id):
             conn.execute(f'UPDATE cards SET {",".join(fields)} WHERE id=?', values)
             if before:
                 _log_card_update_activity(conn, card_id, before, d)
+                _notify_watchers(conn, card_id, session['user']['email'], session['user']['name'], 'card_updated',
+                                 {'changed_fields': list(d.keys())})
                 if 'column_id' in d and before['column_id'] != d['column_id']:
                     automations = _run_column_automations(conn, card_id, d['column_id'])
     return jsonify({'ok': True, 'automations': automations})
@@ -1738,6 +1982,8 @@ def api_add_comment(card_id):
             session['user'].get('email', ''),
             session['user'].get('name', '')
         )
+        _notify_watchers(conn, card_id, session['user']['email'], session['user']['name'], 'card_commented',
+                         {'comment_excerpt': text[:180], 'comment_id': comment_id})
         row['mentions'] = mentions
     return jsonify(row)
 
@@ -2680,6 +2926,87 @@ def export_board(board_id):
         mimetype='text/csv; charset=utf-8',
         headers={'Content-Disposition': f"attachment; filename=\"export.csv\"; filename*=UTF-8''{encoded}"}
     )
+
+
+@app.route('/api/boards/<int:board_id>/export/zip')
+def export_board_zip(board_id):
+    """ZIP-экспорт доски: CSV + все вложения (Should №98)."""
+    import zipfile
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    if session['user'].get('role') != 'admin':
+        return jsonify({'error': 'forbidden'}), 403
+    board_ids = _get_board_ids()
+    if board_ids is not None and board_id not in board_ids:
+        return jsonify({'error': 'forbidden'}), 403
+
+    with get_db() as conn:
+        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        if not board:
+            return jsonify({'error': 'Not found'}), 404
+        rows = conn.execute('''
+            SELECT ca.id, co.name AS col_name, ca.title, ca.description,
+                   ca.due_date,
+                   CASE WHEN ca.completed=1 THEN 'Выполнена' ELSE 'Активна' END AS status
+            FROM cards ca
+            JOIN columns co ON co.id = ca.column_id
+            WHERE co.board_id = ?
+            ORDER BY co.position, ca.position
+        ''', (board_id,)).fetchall()
+        members_rows = conn.execute('''
+            SELECT cm.card_id, COALESCE(NULLIF(cm.user_name,''), cm.user_email) AS member
+            FROM card_members cm
+            JOIN cards ca ON ca.id = cm.card_id
+            JOIN columns co ON co.id = ca.column_id
+            WHERE co.board_id = ?
+        ''', (board_id,)).fetchall()
+        labels_rows = conn.execute('''
+            SELECT cl.card_id, cl.name
+            FROM card_labels cl
+            JOIN cards ca ON ca.id = cl.card_id
+            JOIN columns co ON co.id = ca.column_id
+            WHERE co.board_id = ?
+            ORDER BY cl.position, cl.id
+        ''', (board_id,)).fetchall()
+        att_rows = conn.execute('''
+            SELECT a.card_id, a.filename, a.filepath
+            FROM attachments a
+            JOIN cards ca ON ca.id = a.card_id
+            JOIN columns co ON co.id = ca.column_id
+            WHERE co.board_id = ?
+        ''', (board_id,)).fetchall()
+
+    cm_map = {}
+    for m in members_rows:
+        cm_map.setdefault(m['card_id'], []).append(m['member'])
+    lbl_map = {}
+    for l in labels_rows:
+        lbl_map.setdefault(l['card_id'], []).append(l['name'])
+
+    # Build CSV in memory
+    output = io.StringIO()
+    w = csv.writer(output)
+    w.writerow(['Колонка', 'Карточка', 'Описание', 'Метки', 'Срок', 'Статус', 'Участники'])
+    for r in rows:
+        w.writerow([r['col_name'], r['title'], r['description'],
+                    ', '.join(lbl_map.get(r['id'], [])), r['due_date'], r['status'],
+                    ', '.join(cm_map.get(r['id'], []))])
+    csv_bytes = ('﻿' + output.getvalue()).encode('utf-8')
+
+    # Build zip in memory
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr('export.csv', csv_bytes)
+        for att in att_rows:
+            if os.path.isfile(att['filepath']):
+                arcname = f"attachments/{att['card_id']}/{att['filename']}"
+                zf.write(att['filepath'], arcname)
+    buf.seek(0)
+
+    encoded = url_quote(board['name'] + '.zip')
+    return send_file(buf, mimetype='application/zip',
+                     as_attachment=True,
+                     download_name=board['name'] + '.zip')
 
 
 @app.route('/api/workspaces/<int:ws_id>/export')

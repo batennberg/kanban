@@ -1,0 +1,158 @@
+{% extends 'base.html' %}
+{% block title %}Регистрация по приглашению — Almaly Kanban{% endblock %}
+
+{% block head %}
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+.invite-page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f4f5f7;
+    font-family: 'DM Sans', sans-serif;
+}
+.invite-card {
+    background: #fff;
+    border: 1px solid #dfe1e6;
+    border-radius: 12px;
+    padding: 36px 32px;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.06);
+}
+.invite-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 24px;
+}
+.invite-logo-icon {
+    width: 36px; height: 36px;
+    background: #1a1a1a;
+    color: #fff;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+}
+.invite-logo-text {
+    font-size: 16px;
+    font-weight: 600;
+    color: #172b4d;
+}
+.invite-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #172b4d;
+    margin-bottom: 4px;
+}
+.invite-subtitle {
+    font-size: 13px;
+    color: #6b778c;
+    margin-bottom: 20px;
+}
+.invite-email {
+    display: inline-block;
+    background: #f4f5f7;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 13px;
+    color: #172b4d;
+    font-weight: 500;
+    margin-bottom: 16px;
+}
+.invite-form .form-group {
+    margin-bottom: 14px;
+}
+.invite-form label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: #6b778c;
+    margin-bottom: 4px;
+}
+.invite-form input {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid #dfe1e6;
+    border-radius: 6px;
+    font-size: 14px;
+    outline: none;
+    transition: border .15s;
+    box-sizing: border-box;
+}
+.invite-form input:focus { border-color: #4361EE; }
+.invite-btn {
+    width: 100%;
+    padding: 10px;
+    background: #4361EE;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 6px;
+    transition: background .15s;
+}
+.invite-btn:hover { background: #3451de; }
+.invite-btn:disabled { opacity: .6; cursor: default; }
+.invite-error {
+    background: #ffebe6;
+    color: #de350b;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+.invite-role-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-bottom: 14px;
+}
+.invite-role-admin { background: #e3f0ff; color: #0052cc; }
+.invite-role-user  { background: #e3fcef; color: #00875a; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="invite-page">
+    <div class="invite-card">
+        <div class="invite-logo">
+            <div class="invite-logo-icon">АК</div>
+            <span class="invite-logo-text">Almaly Kanban</span>
+        </div>
+
+        {% if error %}
+            <div class="invite-error">{{ error }}</div>
+        {% elif invite %}
+            <div class="invite-title">Добро пожаловать!</div>
+            <div class="invite-subtitle">Вы приглашены в Almaly Kanban. Создайте аккаунт:</div>
+            <div class="invite-email">{{ invite.email }}</div>
+            <span class="invite-role-badge {{ 'invite-role-admin' if invite.role == 'admin' else 'invite-role-user' }}">
+                {{ 'Администратор' if invite.role == 'admin' else 'Пользователь' }}
+            </span>
+
+            <form class="invite-form" method="POST">
+                <div class="form-group">
+                    <label>Ваше имя</label>
+                    <input type="text" name="name" placeholder="Иван Иванов" required autofocus>
+                </div>
+                <div class="form-group">
+                    <label>Пароль</label>
+                    <input type="password" name="password" placeholder="Минимум 4 символа" required minlength="4">
+                </div>
+                <button type="submit" class="invite-btn">Создать аккаунт</button>
+            </form>
+        {% else %}
+            <div class="invite-error">Ссылка недействительна или уже использована.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

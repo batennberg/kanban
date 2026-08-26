@@ -1038,6 +1038,15 @@ async function loadCardData(dbId) {
             const cardEl = document.getElementById(currentCardId);
             if (cardEl) cardEl.dataset.linkedBoardId = data.linked_board_id;
         }
+
+        // Watch state (Should №81)
+        try {
+            const wRes = await fetch(`/api/cards/${dbId}/watchers`);
+            const watchers = await wRes.json();
+            const myEmail = window.__userEmail || '';
+            _isWatching = Array.isArray(watchers) && watchers.includes(myEmail);
+            _updateWatchBtn();
+        } catch {}
     } catch (err) {
         console.error('Ошибка загрузки карточки', err);
     }
@@ -1252,6 +1261,29 @@ window.closeCardModal = async function() {
     const boardId = document.getElementById('boardColumns')?.dataset.boardId;
     if (boardId) history.replaceState(null, '', `/board/${boardId}`);
 };
+
+// ===== WATCH TOGGLE (Should №81) =====
+
+let _isWatching = false;
+
+window.toggleCardWatch = async function() {
+    if (!currentCardDbId) return;
+    try {
+        const res = await fetch(`/api/cards/${currentCardDbId}/watch`, { method: 'POST' });
+        const d = await res.json();
+        if (d.ok) {
+            _isWatching = d.watching;
+            _updateWatchBtn();
+        }
+    } catch {}
+};
+
+function _updateWatchBtn() {
+    const label = document.getElementById('cmWatchLabel');
+    if (label) label.textContent = _isWatching ? 'Вы наблюдаете' : 'Наблюдать';
+    const btn = document.getElementById('cmWatchBtn');
+    if (btn) btn.classList.toggle('cm-sidebar-btn--active', _isWatching);
+}
 
 window.copyCardLink = async function() {
     if (!currentCardDbId) return;
@@ -4245,6 +4277,126 @@ document.addEventListener('keydown', e => {
 });
 
 
+// ===== KEYBOARD NAVIGATION (Should №108) =====
+{
+    let _focusedCard = null;   // currently focused .card element
+
+    function _isInputFocused() {
+        const tag = document.activeElement?.tagName;
+        return ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || document.activeElement?.isContentEditable;
+    }
+
+    function _isModalOpen() {
+        return document.getElementById('cardModal')?.style.display !== 'none'
+            || document.getElementById('quickEditOverlay')?.classList.contains('active')
+            || document.getElementById('searchModal')?.style.display !== 'none'
+            || document.getElementById('shortcutsModal')?.style.display !== 'none'
+            || document.getElementById('boardSwitcherPanel')?.style.display !== 'none'
+            || document.getElementById('profileModal')?.style.display !== 'none';
+    }
+
+    function _boardColumns() {
+        return document.querySelectorAll('.board-columns .column');
+    }
+
+    function _visibleCards() {
+        const cards = [];
+        _boardColumns().forEach(col => {
+            if (col.classList.contains('column--collapsed')) return;
+            col.querySelectorAll('.column-cards .card').forEach(c => {
+                if (!c.classList.contains('archived')) cards.push(c);
+            });
+        });
+        return cards;
+    }
+
+    function _focusCard(card) {
+        if (_focusedCard) _focusedCard.classList.remove('card--focused');
+        _focusedCard = card;
+        if (card) {
+            card.classList.add('card--focused');
+            card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }
+
+    function _unfocusCard() {
+        if (_focusedCard) {
+            _focusedCard.classList.remove('card--focused');
+            _focusedCard = null;
+        }
+    }
+
+    // n — новая карточка в первой колонке
+    // j/k — навигация вниз/вверх
+    // Enter/o — открыть фокусную карточку
+    // / — фокус на глобальный поиск
+    document.addEventListener('keydown', e => {
+        if (_isInputFocused() || _isModalOpen()) return;
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+        const boardCols = document.querySelector('.board-columns');
+        if (!boardCols) return;  // не на странице доски
+
+        const cards = _visibleCards();
+
+        if (e.key === 'n') {
+            e.preventDefault();
+            const firstCol = _boardColumns()[0];
+            if (firstCol) {
+                const colId = firstCol.dataset.colId;
+                if (colId && typeof addCard === 'function') {
+                    addCard(parseInt(colId));
+                }
+            }
+            return;
+        }
+
+        if (e.key === 'j') {
+            e.preventDefault();
+            if (!cards.length) return;
+            const idx = _focusedCard ? cards.indexOf(_focusedCard) : -1;
+            _focusCard(cards[Math.min(idx + 1, cards.length - 1)]);
+            return;
+        }
+
+        if (e.key === 'k') {
+            e.preventDefault();
+            if (!cards.length) return;
+            const idx = _focusedCard ? cards.indexOf(_focusedCard) : -1;
+            _focusCard(cards[Math.max(idx - 1, 0)]);
+            return;
+        }
+
+        if (e.key === 'Enter' || e.key === 'o') {
+            if (_focusedCard) {
+                e.preventDefault();
+                const cardId = _focusedCard.dataset.cardId;
+                if (cardId && typeof openCardModal === 'function') {
+                    openCardModal(parseInt(cardId));
+                }
+            }
+            return;
+        }
+
+        if (e.key === '/') {
+            e.preventDefault();
+            if (typeof openSearch === 'function') openSearch();
+            return;
+        }
+
+        if (e.key === 'Escape' && _focusedCard) {
+            _unfocusCard();
+            return;
+        }
+    });
+
+    // Снимаем фокус при клике на карточку (открывается modal)
+    document.addEventListener('click', e => {
+        if (e.target.closest('.card')) _unfocusCard();
+    });
+}
+
+
 // ===== BOARD LINK IN CARD =====
 
 let _blBoards = null;
@@ -4765,6 +4917,22 @@ window.uploadBoardBackground = async function(input) {
     showBspMsg('Фон загружен');
     input.value = '';
 };
+
+
+// ===== EXPORT DROPDOWN (Should №98) =====
+
+window.toggleExportMenu = function(e) {
+    e.stopPropagation();
+    const dd = document.getElementById('exportDropdown');
+    if (!dd) return;
+    const isOpen = dd.style.display !== 'none';
+    dd.style.display = isOpen ? 'none' : 'block';
+};
+
+document.addEventListener('click', e => {
+    const dd = document.getElementById('exportDropdown');
+    if (dd && !e.target.closest('.export-dropdown-wrap')) dd.style.display = 'none';
+});
 
 
 // ===== ARCHIVE PANEL =====

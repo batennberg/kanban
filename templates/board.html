@@ -109,9 +109,15 @@
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12v6M14 12v6"/></svg><span class="btn-act-text">Архив</span>
             </button>
             {% if user.role == 'admin' %}
-            <a href="/api/boards/{{ board.id }}/export" class="btn-board-action" title="Экспорт в CSV">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span class="btn-act-text">Экспорт</span>
-            </a>
+            <div class="export-dropdown-wrap">
+                <button class="btn-board-action" onclick="toggleExportMenu(event)" title="Экспорт доски">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:4px;vertical-align:-1px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span class="btn-act-text">Экспорт</span>
+                </button>
+                <div class="export-dropdown" id="exportDropdown" style="display:none">
+                    <a href="/api/boards/{{ board.id }}/export" class="export-dropdown-item">CSV (только данные)</a>
+                    <a href="/api/boards/{{ board.id }}/export/zip" class="export-dropdown-item">ZIP (данные + вложения)</a>
+                </div>
+            </div>
             {% endif %}
             <button class="user-avatar-btn" id="userAvatarBtn"
                     onclick="toggleProfileDropdown(event)"
@@ -772,6 +778,9 @@
                     </button>
 
                     <p class="cm-sidebar-label" style="margin-top:14px">Карточка</p>
+                    <button class="cm-sidebar-btn" id="cmWatchBtn" onclick="toggleCardWatch()">
+                        <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span> <span id="cmWatchLabel">Наблюдать</span>
+                    </button>
                     <button class="cm-sidebar-btn" onclick="openMovePopover()">
                         <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 16 12 21 17 16"/><polyline points="7 8 12 3 17 8"/></svg></span> Переместить
                     </button>
@@ -826,6 +835,7 @@
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.5/dist/purify.min.js"></script>
 <script src="{{ url_for('static', filename='js/kanban.js') }}"></script>
 <script>
+window.__userEmail = '{{ user.email | default("") }}';
 // ===== HORIZONTAL PAN SCROLL =====
 (function () {
     const wrap = document.querySelector('.board-columns-wrap');

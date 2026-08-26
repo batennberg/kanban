@@ -72,6 +72,29 @@ def init_db():
                 filepath    TEXT NOT NULL,
                 uploaded_at TEXT DEFAULT (datetime('now','localtime'))
             );
+            CREATE TABLE IF NOT EXISTS invites (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                token       TEXT NOT NULL UNIQUE,
+                email       TEXT NOT NULL,
+                role        TEXT NOT NULL DEFAULT 'user',
+                board_ids   TEXT DEFAULT '',
+                created_by  TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now','localtime')),
+                expires_at  TEXT DEFAULT '',
+                used_at     TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS card_watchers (
+                card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                user_email TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                PRIMARY KEY (card_id, user_email)
+            );
+            CREATE TABLE IF NOT EXISTS board_watchers (
+                board_id   INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                user_email TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                PRIMARY KEY (board_id, user_email)
+            );
         ''')
         if conn.execute('SELECT COUNT(*) FROM boards').fetchone()[0] == 0:
             _seed(conn)

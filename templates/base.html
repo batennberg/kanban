@@ -24,9 +24,14 @@
                 </button>
             </div>
             <div class="shortcuts-list">
-                <div class="shortcut-row"><span class="shortcut-keys"><kbd>Esc</kbd></span><span>Закрыть модал / dropdown</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>Esc</kbd></span><span>Закрыть модал / dropdown / снять фокус</span></div>
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>?</kbd></span><span>Эта подсказка</span></div>
-                <div class="shortcut-row"><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>K</kbd></span><span>Глобальный поиск</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>n</kbd></span><span>Новая карточка (первая колонка)</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>j</kbd> / <kbd>k</kbd></span><span>Навигация вниз / вверх по карточкам</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>Enter</kbd></span><span>Открыть фокусную карточку</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>/</kbd></span><span>Глобальный поиск</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>K</kbd></span><span>Глобальный поиск (альт.)</span></div>
+                <div class="shortcut-row"><span class="shortcut-keys"><kbd>b</kbd></span><span>Переключатель досок</span></div>
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>,</kbd></span><span>Открыть профиль</span></div>
                 <div class="shortcut-row"><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="shortcut-plus">+</span><kbd>Enter</kbd></span><span>Отправить комментарий</span></div>
             </div>
@@ -106,6 +111,16 @@
             case 'column_archived':
                 title = actorName + ' отправил(а) список в архив';
                 label = payload.column_name || '';
+                break;
+            case 'watch_card_updated':
+                title = actorName + ' изменил(а) отслеживаемую карточку';
+                label = payload.card_title || '';
+                detail = (payload.changed_fields || []).join(', ');
+                break;
+            case 'watch_card_commented':
+                title = actorName + ' прокомментировал(а) отслеживаемую карточку';
+                label = payload.card_title || '';
+                detail = payload.comment_excerpt || '';
                 break;
             case 'comment_mention':
             default:
