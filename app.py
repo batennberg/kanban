@@ -217,14 +217,41 @@ def _log_activity(conn, card_id, event_type, detail=''):
     )
 
 
-_AUTOMATION_ACTIONS = ('mark_complete', 'mark_incomplete', 'archive_card', 'set_importance', 'add_label')
+_AUTOMATION_ACTIONS = ('mark_complete', 'mark_incomplete', 'archive_card', 'set_importance', 'add_label', 'create_card_on_board')
+
+
+def _check_automation_condition(conn, card_id, rule):
+    """Проверяет условие правила (Should №56). Возвращает True если условие выполнено."""
+    cond_type = rule['condition_type'] or 'none'
+    cond_value = rule['condition_value'] or ''
+    if cond_type == 'none' or not cond_type:
+        return True
+    card = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+    if not card:
+        return False
+    if cond_type == 'importance_is':
+        return (card['importance'] or '') == cond_value
+    elif cond_type == 'has_label':
+        labels = conn.execute('SELECT name FROM card_labels WHERE card_id=?', (card_id,)).fetchall()
+        return any(cond_value.lower() in (l['name'] or '').lower() for l in labels)
+    elif cond_type == 'member_is':
+        members = conn.execute('SELECT user_email FROM card_members WHERE card_id=?', (card_id,)).fetchall()
+        return any(cond_value.lower() in (m['user_email'] or '').lower() for m in members)
+    elif cond_type == 'not_completed':
+        return not card['completed']
+    elif cond_type == 'has_due_date':
+        return bool((card['due_date'] or '').strip())
+    return True
 
 
 def _apply_automation_action(conn, card_id, rule):
     """Выполняет одно действие автоматизации над карточкой (Should №52)."""
+    if not _check_automation_condition(conn, card_id, rule):
+        return {'rule_id': rule['id'], 'rule_name': rule['name'], 'action_type': 'skipped', 'detail': 'condition not met'}
     action = rule['action_type']
     value  = rule['action_value'] or ''
     tag    = f"автоматизация «{rule['name']}»" if rule['name'] else 'автоматизация'
+    target_board_id = rule['target_board_id'] or 0
 
     if action == 'mark_complete':
         conn.execute('UPDATE cards SET completed=1 WHERE id=?', (card_id,))
@@ -247,6 +274,18 @@ def _apply_automation_action(conn, card_id, rule):
         if name:
             conn.execute('INSERT OR IGNORE INTO card_labels (card_id, name, color) VALUES (?,?,?)', (card_id, name, color))
             _log_activity(conn, card_id, 'label_added', name)
+    elif action == 'create_card_on_board' and target_board_id:
+        # Кросс-досочная автоматизация (Should №57)
+        src = conn.execute('SELECT title, description FROM cards WHERE id=?', (card_id,)).fetchone()
+        first_col = conn.execute(
+            'SELECT id FROM columns WHERE board_id=? ORDER BY position LIMIT 1', (target_board_id,)
+        ).fetchone()
+        if first_col:
+            title = value or (src['title'] if src else 'Задача с другой доски')
+            conn.execute(
+                'INSERT INTO cards (column_id, title, description, position) VALUES (?,?,?,0)',
+                (first_col['id'], title, src['description'] if src else '')
+            )
     return {'rule_id': rule['id'], 'rule_name': rule['name'], 'action_type': action}
 
 
@@ -773,7 +812,8 @@ def board(board_id):
                 col_dict['cards'].append(card_dict)
             col_dict['mirrors'] = mirrors_by_column.get(col['id'], [])
             board_data['columns'].append(col_dict)
-    return render_template('board.html', board=board_data, board_id=board_id, user=session['user'])
+    boards_all = conn.execute('SELECT id, name FROM boards ORDER BY name').fetchall()
+    return render_template('board.html', board=board_data, board_id=board_id, user=session['user'], boards_all=boards_all)
 
 
 @app.route('/card/<int:card_id>')
@@ -2950,6 +2990,9 @@ def api_create_automation(board_id):
     action_type       = d.get('action_type')
     action_value      = d.get('action_value', '')
     name              = (d.get('name') or '').strip()
+    condition_type    = d.get('condition_type', 'none')
+    condition_value   = d.get('condition_value', '')
+    target_board_id   = d.get('target_board_id', 0)
     if trigger_type == 'due_approaching':
         if action_type not in _AUTOMATION_ACTIONS:
             return jsonify({'error': 'invalid action'}), 400
@@ -2964,9 +3007,9 @@ def api_create_automation(board_id):
             if not col or col['board_id'] != board_id:
                 return jsonify({'error': 'колонка не принадлежит этой доске'}), 400
         cur = conn.execute(
-            '''INSERT INTO automation_rules (board_id, name, trigger_column_id, action_type, action_value, trigger_type, trigger_value)
-               VALUES (?,?,?,?,?,?,?)''',
-            (board_id, name, trigger_column_id or 0, action_type, action_value, trigger_type, trigger_value)
+            '''INSERT INTO automation_rules (board_id, name, trigger_column_id, action_type, action_value, trigger_type, trigger_value, condition_type, condition_value, target_board_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?)''',
+            (board_id, name, trigger_column_id or 0, action_type, action_value, trigger_type, trigger_value, condition_type, condition_value, target_board_id)
         )
         row = dict(conn.execute('''
             SELECT ar.*, col.name AS trigger_column_name
@@ -3015,6 +3058,64 @@ def api_automation_log():
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+# ===== API — АВТОМАТИЗАЦИЯ ПО РАСПИСАНИЮ (Should №54) =====
+
+_SCHEDULED_ACTIONS = ('create_card', 'archive_completed', 'move_to_column')
+
+@app.route('/api/boards/<int:board_id>/scheduled', methods=['GET'])
+def api_list_scheduled(board_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        rows = conn.execute(
+            '''SELECT sa.*, col.name AS target_column_name
+               FROM scheduled_automations sa
+               LEFT JOIN columns col ON col.id = sa.target_column_id
+               WHERE sa.board_id=? ORDER BY sa.id''', (board_id,)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/boards/<int:board_id>/scheduled', methods=['POST'])
+def api_create_scheduled(board_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json() or {}
+    action_type = d.get('action_type')
+    schedule = (d.get('schedule') or '').strip()
+    target_column_id = d.get('target_column_id')
+    action_value = d.get('action_value', '')
+    name = (d.get('name') or '').strip()
+    if action_type not in _SCHEDULED_ACTIONS or not schedule:
+        return jsonify({'error': 'invalid'}), 400
+    with get_db() as conn:
+        cur = conn.execute(
+            '''INSERT INTO scheduled_automations (board_id, name, action_type, action_value, target_column_id, schedule)
+               VALUES (?,?,?,?,?,?)''',
+            (board_id, name, action_type, action_value, target_column_id or 0, schedule)
+        )
+        row = dict(conn.execute(
+            '''SELECT sa.*, col.name AS target_column_name
+               FROM scheduled_automations sa LEFT JOIN columns col ON col.id = sa.target_column_id
+               WHERE sa.id=?''', (cur.lastrowid,)
+        ).fetchone())
+    return jsonify(row), 201
+
+@app.route('/api/scheduled/<int:sched_id>', methods=['PUT'])
+def api_update_scheduled(sched_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json() or {}
+    if 'enabled' not in d:
+        return jsonify({'error': 'nothing to update'}), 400
+    with get_db() as conn:
+        conn.execute('UPDATE scheduled_automations SET enabled=? WHERE id=?', (1 if d['enabled'] else 0, sched_id))
+    return jsonify({'ok': True})
+
+@app.route('/api/scheduled/<int:sched_id>', methods=['DELETE'])
+def api_delete_scheduled(sched_id):
+    if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        conn.execute('DELETE FROM scheduled_automations WHERE id=?', (sched_id,))
+    return jsonify({'ok': True})
 
 
 # ===== API — CARD LINKS =====
@@ -3915,6 +4016,22 @@ def migrate_db():
         except sqlite3.OperationalError:
             pass
 
+        # ── Условия в правилах (Should №56) ──
+        try:
+            conn.execute("ALTER TABLE automation_rules ADD COLUMN condition_type TEXT DEFAULT 'none'")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE automation_rules ADD COLUMN condition_value TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
+
+        # ── Автоматизация между досками (Should №57) ──
+        try:
+            conn.execute("ALTER TABLE automation_rules ADD COLUMN target_board_id INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
         # ── Журнал автоматизаций (Should №59) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS automation_log (
@@ -3924,6 +4041,22 @@ def migrate_db():
                 action     TEXT NOT NULL,
                 details    TEXT DEFAULT '',
                 created_at TEXT DEFAULT (datetime('now','localtime'))
+            )
+        ''')
+
+        # ── Автоматизация по расписанию (Should №54) ──
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS scheduled_automations (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_id     INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                name         TEXT    NOT NULL DEFAULT '',
+                action_type  TEXT    NOT NULL,
+                action_value TEXT    DEFAULT '',
+                target_column_id INTEGER REFERENCES columns(id) ON DELETE SET NULL,
+                schedule     TEXT    NOT NULL,
+                enabled      INTEGER DEFAULT 1,
+                last_run     TEXT,
+                created_at   TEXT DEFAULT (datetime('now','localtime'))
             )
         ''')
 
@@ -4073,9 +4206,124 @@ def _check_due_approaching():
 def _due_approaching_loop():
     import time as _time
     while True:
-        _time.sleep(300)  # 5 минут
+        _time.sleep(60)  # 1 минута — для расписаний
         with app.app_context():
             _check_due_approaching()
+            _check_scheduled_automations()
+
+
+# ===== Автоматизация по расписанию (Should №54) =====
+
+def _parse_schedule(schedule_str):
+    """Парсит строку расписания: 'daily:HH:MM' или 'weekly:DAY:HH:MM' или 'monthly:DD:HH:MM'.
+    Возвращает (type, params) или None."""
+    parts = schedule_str.split(':')
+    if len(parts) < 3:
+        return None
+    sched_type = parts[0].lower()
+    if sched_type == 'daily':
+        try:
+            hour, minute = int(parts[1]), int(parts[2])
+            return ('daily', {'hour': hour, 'minute': minute})
+        except ValueError:
+            return None
+    elif sched_type == 'weekly':
+        days = {'mon':0,'tue':1,'wed':2,'thu':3,'fri':4,'sat':5,'sun':6,
+                'пн':0,'вт':1,'ср':2,'чт':3,'пт':4,'сб':5,'вс':6}
+        day_str = parts[1].lower()
+        if day_str not in days:
+            return None
+        try:
+            hour, minute = int(parts[2]), int(parts[3]) if len(parts) > 3 else 0
+            return ('weekly', {'weekday': days[day_str], 'hour': hour, 'minute': minute})
+        except ValueError:
+            return None
+    elif sched_type == 'monthly':
+        try:
+            day, hour, minute = int(parts[1]), int(parts[2]), int(parts[3]) if len(parts) > 3 else 0
+            return ('monthly', {'day': day, 'hour': hour, 'minute': minute})
+        except ValueError:
+            return None
+    return None
+
+
+def _check_scheduled_automations():
+    """Проверяет расписания и выполняет совпавшие."""
+    try:
+        from datetime import datetime as _dt
+        now = _dt.now()
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT * FROM scheduled_automations WHERE enabled=1"
+            ).fetchall()
+            for row in rows:
+                parsed = _parse_schedule(row['schedule'])
+                if not parsed:
+                    continue
+                sched_type, params = parsed
+                match = False
+                if sched_type == 'daily':
+                    match = (now.hour == params['hour'] and now.minute == params['minute'])
+                elif sched_type == 'weekly':
+                    match = (now.weekday() == params['weekday'] and now.hour == params['hour'] and now.minute == params['minute'])
+                elif sched_type == 'monthly':
+                    match = (now.day == params['day'] and now.hour == params['hour'] and now.minute == params['minute'])
+                if not match:
+                    continue
+                # Не выполнять повторно в ту же минуту
+                last = row['last_run'] or ''
+                now_key = now.strftime('%Y-%m-%d %H:%M')
+                if last == now_key:
+                    continue
+                _execute_scheduled_action(conn, row)
+                conn.execute(
+                    "UPDATE scheduled_automations SET last_run=? WHERE id=?",
+                    (now_key, row['id'])
+                )
+    except Exception as e:
+        app.logger.error(f'scheduled_automations check failed: {e}')
+
+
+def _execute_scheduled_action(conn, sched):
+    """Выполняет одно запланированное действие."""
+    action = sched['action_type']
+    value = sched['action_value'] or ''
+    target_col = sched['target_column_id'] or 0
+    board_id = sched['board_id']
+    log_msg = f"Расписание «{sched['name']}»: {action}"
+
+    if action == 'create_card':
+        if not target_col:
+            return
+        cur = conn.execute(
+            '''INSERT INTO cards (column_id, title, description, due_date, position)
+               VALUES (?,?,?,?,0)''',
+            (target_col, value or 'Задача по расписанию', '', '')
+        )
+        _log_activity(conn, cur.lastrowid, 'created', log_msg)
+    elif action == 'archive_completed':
+        if not target_col:
+            col_ids = [c['id'] for c in conn.execute(
+                'SELECT id FROM columns WHERE board_id=?', (board_id,)
+            ).fetchall()]
+        else:
+            col_ids = [target_col]
+        ph = ','.join('?' * len(col_ids))
+        conn.execute(
+            f"UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE column_id IN ({ph}) AND completed=1 AND (archived=0 OR archived IS NULL)",
+            col_ids
+        )
+    elif action == 'move_to_column':
+        if not target_col:
+            return
+        # Перемещаем все карточки из колонки-значения в target_column
+        src_col_id = int(value) if value.isdigit() else 0
+        if not src_col_id:
+            return
+        conn.execute(
+            'UPDATE cards SET column_id=? WHERE column_id=? AND (archived=0 OR archived IS NULL)',
+            (target_col, src_col_id)
+        )
 
 
 with app.app_context():

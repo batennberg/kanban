@@ -4798,6 +4798,7 @@ window.openBoardSettings = function(btn) {
 
     _populateImportanceSelect();
     renderAutomationList();
+    renderScheduledList();
 };
 
 window.closeBoardSettings = function() {
@@ -4868,11 +4869,12 @@ window.saveBoardAsTemplate = async function() {
 // ===== АВТОМАТИЗАЦИЯ ПО ТРИГГЕРУ (Should №52) =====
 
 const _AUTOMATION_ACTION_LABELS = {
-    mark_complete:   'Отметить выполненной',
-    mark_incomplete: 'Снять отметку выполнения',
-    archive_card:    'Отправить в архив',
-    set_importance:  'Установить важность',
-    add_label:       'Добавить метку',
+    mark_complete:         'Отметить выполненной',
+    mark_incomplete:       'Снять отметку выполнения',
+    archive_card:          'Отправить в архив',
+    set_importance:        'Установить важность',
+    add_label:             'Добавить метку',
+    create_card_on_board:  'Создать карточку на другой доске',
 };
 
 function _populateImportanceSelect() {
@@ -4886,12 +4888,23 @@ window.onAutoActionTypeChange = function() {
     const type = document.getElementById('autoActionType').value;
     document.getElementById('autoImportanceValue').style.display = type === 'set_importance' ? '' : 'none';
     document.getElementById('autoLabelNameValue').style.display  = type === 'add_label' ? '' : 'none';
+    document.getElementById('autoTargetBoard').style.display     = type === 'create_card_on_board' ? '' : 'none';
 };
 
 window.onAutoTriggerTypeChange = function() {
     const type = document.getElementById('autoTriggerType').value;
     document.getElementById('autoTriggerColumn').style.display = type === 'column' ? '' : 'none';
     document.getElementById('autoTriggerValue').style.display   = type === 'due_approaching' ? '' : 'none';
+};
+
+window.onAutoConditionChange = function() {
+    const type = document.getElementById('autoConditionType').value;
+    document.getElementById('autoConditionValue').style.display = (type && type !== 'none' && type !== 'not_completed' && type !== 'has_due_date') ? '' : 'none';
+};
+
+const _COND_LABELS = {
+    importance_is: 'Важность=', has_label: 'Метка', member_is: 'Участник',
+    not_completed: 'Не выполнена', has_due_date: 'Есть срок'
 };
 
 function _automationRuleSummary(rule) {
@@ -4901,11 +4914,22 @@ function _automationRuleSummary(rule) {
     } else if (rule.action_type === 'add_label') {
         try { action += `: «${JSON.parse(rule.action_value).name}»`; } catch { /* старое значение без JSON */ }
     }
-    const triggerType = rule.trigger_type || 'column';
-    if (triggerType === 'due_approaching') {
-        return `За ${rule.trigger_value} дн. до срока → ${action}`;
+    const condType = rule.condition_type || 'none';
+    let condStr = '';
+    if (condType && condType !== 'none') {
+        condStr = _COND_LABELS[condType] || condType;
+        if (rule.condition_value) condStr += ` "${rule.condition_value}"`;
+        condStr = ` [если ${condStr}]`;
     }
-    return `Когда карточка попадает в «${rule.trigger_column_name}» → ${action}`;
+    const triggerType = rule.trigger_type || 'column';
+    let result;
+    if (triggerType === 'due_approaching') {
+        result = `За ${rule.trigger_value} дн. до срока${condStr} → ${action}`;
+    } else {
+        result = `Когда карточка попадает в «${rule.trigger_column_name}»${condStr} → ${action}`;
+    }
+    if (rule.target_board_id) result += ` (на доску #${rule.target_board_id})`;
+    return result;
 }
 
 window.renderAutomationList = async function() {
@@ -4966,6 +4990,18 @@ window.addAutomationRule = async function() {
         payload.trigger_value = triggerValue;
     }
 
+    const condType = document.getElementById('autoConditionType').value;
+    const condValue = document.getElementById('autoConditionValue').value.trim();
+    if (condType && condType !== 'none') {
+        payload.condition_type = condType;
+        payload.condition_value = condValue;
+    }
+    if (actionType === 'create_card_on_board') {
+        const tbId = parseInt(document.getElementById('autoTargetBoard').value);
+        if (!tbId) { showBspMsg('Выберите целевую доску', true); return; }
+        payload.target_board_id = tbId;
+    }
+
     const res = await fetch(`/api/boards/${boardId}/automations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4989,6 +5025,96 @@ window.toggleAutomationRule = async function(ruleId, enabled) {
 window.deleteAutomationRule = async function(ruleId, btn) {
     if (!confirm('Удалить это правило автоматизации?')) return;
     await fetch(`/api/automations/${ruleId}`, { method: 'DELETE' });
+    btn.closest('.bsp-automation-item')?.remove();
+};
+
+// ===== Автоматизация по расписанию (Should №54) =====
+
+window.onSchedFrequencyChange = function() {
+    const freq = document.getElementById('schedFrequency').value;
+    document.getElementById('schedDay').style.display = freq === 'weekly' ? '' : 'none';
+    document.getElementById('schedDayOfMonth').style.display = freq === 'monthly' ? '' : 'none';
+};
+
+function _schedSummary(r) {
+    const labels = { create_card: 'Создать карточку', archive_completed: 'Архивировать выполненные', move_to_column: 'Переместить' };
+    const parts = r.schedule.split(':');
+    let when = r.schedule;
+    if (parts[0] === 'daily') when = `Ежедневно в ${parts[1]}:${parts[2]}`;
+    else if (parts[0] === 'weekly') {
+        const days = { mon:'Пн',tue:'Вт',wed:'Ср',thu:'Чт',fri:'Пт',sat:'Сб',sun:'Вс' };
+        when = `Каждый ${days[parts[1]] || parts[1]} в ${parts[2]}:${parts[3]||'00'}`;
+    } else if (parts[0] === 'monthly') when = `${parts[1]}-е числа в ${parts[2]}:${parts[3]||'00'}`;
+    return `${when} → ${labels[r.action_type] || r.action_type}${r.target_column_name ? ' в «' + r.target_column_name + '»' : ''}`;
+}
+
+window.renderScheduledList = async function() {
+    const boardId = _getBoardId();
+    const container = document.getElementById('bspScheduledList');
+    if (!boardId || !container) return;
+    container.innerHTML = '<p class="cm-empty-hint">Загрузка...</p>';
+    let rules = [];
+    try {
+        const res = await fetch(`/api/boards/${boardId}/scheduled`);
+        if (res.ok) rules = await res.json();
+    } catch (err) { console.error(err); }
+    if (!rules.length) {
+        container.innerHTML = '<p class="cm-empty-hint">Нет запланированных задач</p>';
+        return;
+    }
+    container.innerHTML = rules.map(r => `
+        <div class="bsp-automation-item">
+            <label class="bsp-cf-toggle">
+                <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleScheduledRule(${r.id}, this.checked)">
+            </label>
+            <span class="bsp-automation-text">${escHtml(_schedSummary(r))}</span>
+            <button class="bsp-cf-delete" onclick="deleteScheduledRule(${r.id}, this)" title="Удалить">✕</button>
+        </div>
+    `).join('');
+};
+
+window.addScheduledRule = async function() {
+    const boardId = _getBoardId();
+    const actionType = document.getElementById('schedActionType').value;
+    const name = document.getElementById('schedName').value.trim();
+    const value = document.getElementById('schedValue').value.trim();
+    const targetCol = parseInt(document.getElementById('schedTargetColumn').value) || 0;
+    const freq = document.getElementById('schedFrequency').value;
+    const time = document.getElementById('schedTime').value || '09:00';
+    const [h, m] = time.split(':');
+    let schedule = '';
+    if (freq === 'daily') {
+        schedule = `daily:${h}:${m}`;
+    } else if (freq === 'weekly') {
+        const day = document.getElementById('schedDay').value;
+        schedule = `weekly:${day}:${h}:${m}`;
+    } else if (freq === 'monthly') {
+        const dayNum = document.getElementById('schedDayOfMonth').value || '1';
+        schedule = `monthly:${dayNum}:${h}:${m}`;
+    }
+    if (!boardId || !schedule) { showBspMsg('Заполните расписание', true); return; }
+    const res = await fetch(`/api/boards/${boardId}/scheduled`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action_type: actionType, name: name || 'Расписание', action_value: value, target_column_id: targetCol, schedule })
+    });
+    if (!res.ok) { showBspMsg('Не удалось создать', true); return; }
+    document.getElementById('schedName').value = '';
+    document.getElementById('schedValue').value = '';
+    renderScheduledList();
+    showBspMsg('Расписание добавлено');
+};
+
+window.toggleScheduledRule = async function(id, enabled) {
+    await fetch(`/api/scheduled/${id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+    });
+};
+
+window.deleteScheduledRule = async function(id, btn) {
+    if (!confirm('Удалить расписание?')) return;
+    await fetch(`/api/scheduled/${id}`, { method: 'DELETE' });
     btn.closest('.bsp-automation-item')?.remove();
 };
 

@@ -320,10 +320,63 @@
                         <option value="archive_card">Отправить в архив</option>
                         <option value="set_importance">Установить важность</option>
                         <option value="add_label">Добавить метку</option>
+                        <option value="create_card_on_board">Создать карточку на другой доске</option>
                     </select>
                     <select class="bsp-input" id="autoImportanceValue" style="display:none"></select>
                     <input class="bsp-input" id="autoLabelNameValue" type="text" placeholder="Название метки" style="display:none">
+                    <select class="bsp-input" id="autoConditionType" onchange="onAutoConditionChange()">
+                        <option value="none">Без условия</option>
+                        <option value="importance_is">Важность =</option>
+                        <option value="has_label">Есть метка</option>
+                        <option value="member_is">Участник</option>
+                        <option value="not_completed">Не выполнена</option>
+                        <option value="has_due_date">Есть срок</option>
+                    </select>
+                    <input class="bsp-input" id="autoConditionValue" type="text" placeholder="Значение" style="display:none">
+                    <select class="bsp-input" id="autoTargetBoard" style="display:none">
+                        <option value="">Целевая доска...</option>
+                        {% for b in boards_all %}
+                        {% if b.id != board_id %}
+                        <option value="{{ b.id }}">{{ b.name }}</option>
+                        {% endif %}
+                        {% endfor %}
+                    </select>
                     <button class="btn-secondary btn-sm" onclick="addAutomationRule()">Добавить правило</button>
+                </div>
+            </div>
+
+            <div class="bsp-field-group">
+                <label class="bsp-label">Расписание</label>
+                <p class="cm-empty-hint" style="margin:0 0 6px">Действия по времени: создание карточек, архивирование выполненных, перемещение.</p>
+                <div class="bsp-automation-list" id="bspScheduledList"></div>
+                <div class="bsp-automation-add">
+                    <select class="bsp-input" id="schedActionType">
+                        <option value="create_card">Создать карточку</option>
+                        <option value="archive_completed">Архивировать выполненные</option>
+                        <option value="move_to_column">Переместить из колонки в колонку</option>
+                    </select>
+                    <input class="bsp-input" id="schedName" type="text" placeholder="Название">
+                    <input class="bsp-input" id="schedValue" type="text" placeholder="Заголовок карточки / ID исходной колонки">
+                    <select class="bsp-input" id="schedTargetColumn">
+                        <option value="">Целевая колонка...</option>
+                        {% for col in board.columns %}
+                        <option value="{{ col.id }}">{{ col.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <select class="bsp-input" id="schedFrequency" onchange="onSchedFrequencyChange()">
+                        <option value="daily">Ежедневно</option>
+                        <option value="weekly">Еженедельно</option>
+                        <option value="monthly">Ежемесячно</option>
+                    </select>
+                    <select class="bsp-input" id="schedDay" style="display:none">
+                        <option value="mon">Пн</option><option value="tue">Вт</option>
+                        <option value="wed">Ср</option><option value="thu">Чт</option>
+                        <option value="fri">Пт</option><option value="sat">Сб</option>
+                        <option value="sun">Вс</option>
+                    </select>
+                    <input class="bsp-input" id="schedDayOfMonth" type="number" min="1" max="31" placeholder="День" style="display:none">
+                    <input class="bsp-input" id="schedTime" type="time" value="09:00">
+                    <button class="btn-secondary btn-sm" onclick="addScheduledRule()">Добавить</button>
                 </div>
             </div>
 
