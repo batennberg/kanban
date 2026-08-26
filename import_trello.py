@@ -102,31 +102,88 @@ def get_comment_author(action, member_map):
     return 'Пользователь'
 
 
-def match_existing_users(conn, member_map):
+def match_existing_users(conn, member_map, user_map=None):
     """Сопоставляет участников Trello (id→имя) с уже существующими пользователями
-    приложения по точному имени (без учёта регистра). Trello не отдаёт email в
-    экспорте, поэтому это единственный доступный способ связки.
+    приложения. Стратегия (по убыванию приоритета):
+      1. Прямое соответствие из user_map (если передан --user-map файл)
+      2. По email (если Trello-данные содержат email у участника)
+      3. По имени (точное совпадение, без учёта регистра)
     Возвращает {trello_member_id: (email, имя_у_нас)} — только для совпавших."""
     rows = conn.execute('SELECT email, name FROM users').fetchall()
-    by_name = {r['name'].strip().lower(): (r['email'], r['name']) for r in rows if r['name']}
+    by_name  = {r['name'].strip().lower(): (r['email'], r['name']) for r in rows if r['name']}
+    by_email = {r['email'].strip().lower(): (r['email'], r['name']) for r in rows if r['email']}
     matched = {}
+
+    # 1) user_map — ручное соответствие (trello_email → local_email или trello_name → local_email)
+    if user_map:
+        for trello_id, trello_name in member_map.items():
+            # Пробуем по имени Trello
+            local_email = user_map.get(trello_name.strip().lower())
+            if local_email:
+                hit = by_email.get(local_email.strip().lower())
+                if hit:
+                    matched[trello_id] = hit
+
+    # 2) email из данных Trello (если есть)
+    #    Trello-экспорт может содержать 'memberCreator.email' или 'members[].email'
+    #    — но стандартный JSON-экспорт обычно НЕ содержит email участников.
+    #    На случай если пользователь расширил экспорт — пробуем.
+    for trello_id, trello_name in member_map.items():
+        if trello_id in matched:
+            continue
+        # member может иметь email в поле (не гарантировано)
+        # Пока полагаемся на name-matching — см. третий шаг.
+
+    # 3) По имени (fallback — единственный способ без user_map)
     for trello_id, name in member_map.items():
+        if trello_id in matched:
+            continue
         hit = by_name.get(name.strip().lower())
         if hit:
             matched[trello_id] = hit
+
     return matched
 
 
-def import_board_data(conn, board_id, data, skip_archived, source_dir=None):
+def load_user_map(path):
+    """Загружает mapping-файл формата:
+        trello_name_or_email = local_email
+    Пустые строки и строки с # пропускаются.
+    Возвращает {trello_name_lower: local_email}."""
+    mapping = {}
+    if not path:
+        return mapping
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if '=' not in line:
+                continue
+            key, val = line.split('=', 1)
+            key = key.strip()
+            val = val.strip()
+            if key and val:
+                mapping[key.lower()] = val
+    return mapping
+
+
+def import_board_data(conn, board_id, data, skip_archived, source_dir=None, user_map=None):
     """Импортирует списки/карточки/метки/участников/чеклисты/вложения/комментарии
-    Trello-доски (data) в существующую доску board_id. source_dir — папка с исходным
-    JSON доски (в ней же лежит подпапка attachments/ с физическими файлами; без неё
-    вложения не переносятся). Возвращает словарь со статистикой."""
+    Trello-доски (data) в существующую доску board_id.
+
+    Аргументы:
+        source_dir — папка с исходным JSON доски (в ней же лежит подпапка
+            attachments/ с физическими файлами; без неё физические файлы не
+            переносятся, но метаданные вложений создаются).
+        user_map   — dict {trello_name_or_email_lower: local_email} из
+            load_user_map(); для ручного сопоставления имён Trello → аккаунты.
+    Возвращает словарь со статистикой."""
 
     # ── Участники: сопоставляем Trello-участников доски с уже существующими
-    #    пользователями приложения по имени (Trello не отдаёт email в экспорте) ──
+    #    пользователями приложения (email → имя → user_map fallback) ────────
     member_map      = build_member_map(data.get('members', []))   # trello_id → имя
-    matched_users   = match_existing_users(conn, member_map)       # trello_id → (email, имя)
+    matched_users   = match_existing_users(conn, member_map, user_map)  # trello_id → (email, имя)
     unmatched_names = set()
 
     # ── Списки (→ колонки) ──────────────────────────────────────────────────
@@ -284,51 +341,85 @@ def import_board_data(conn, board_id, data, skip_archived, source_dir=None):
     print(f'  Чек-листов создано: {checklist_count}, пунктов: {item_count}')
 
     # ── Вложения (физические файлы из attachments/) ──────────────────────────
+    # Trello-экспорт может содержать метаданные вложений в card['attachments'],
+    # но сами файлы лежат в подпапке attachments/ рядом с JSON.
+    # Если папки нет — создаём записи в БД (метаданные), но без физических файлов.
     attachment_count   = 0
     attachment_skipped = 0
+    attachment_meta_only = 0   # метаданные записаны, файл не найден
     attachments_dir = os.path.join(source_dir, 'attachments') if source_dir else None
+    has_attachments_dir = attachments_dir and os.path.isdir(attachments_dir)
     for trello_card_id, our_card_id in card_map.items():
         card = card_by_trello_id[trello_card_id]
         for att in card.get('attachments', []):
             stored_name = att.get('fileName') or ''
-            src_path = os.path.join(attachments_dir, stored_name) if (attachments_dir and stored_name) else ''
-            if not src_path or not os.path.exists(src_path):
-                attachment_skipped += 1
-                continue
-
             original_name = unquote(att.get('originalFileName') or stored_name)
             ext       = ('.' + original_name.rsplit('.', 1)[-1]) if '.' in original_name else ''
-            dest_name = uuid.uuid4().hex + ext
-            card_dir  = os.path.join(UPLOAD_FOLDER, str(our_card_id))
-            os.makedirs(card_dir, exist_ok=True)
-            dest_path = os.path.join(card_dir, dest_name)
-            shutil.copyfile(src_path, dest_path)
-
-            size_str    = _fmt_size(os.path.getsize(dest_path))
-            ftype       = _file_type(original_name)
             uploaded_at = parse_datetime(att.get('date'))
 
-            if uploaded_at:
-                conn.execute(
-                    '''INSERT INTO attachments (card_id, filename, filesize, filetype, filepath, uploaded_at)
-                       VALUES (?,?,?,?,?,?)''',
-                    (our_card_id, original_name, size_str, ftype, dest_path, uploaded_at)
-                )
+            # Пробуем найти физический файл
+            src_path = os.path.join(attachments_dir, stored_name) if (has_attachments_dir and stored_name) else ''
+            if src_path and os.path.exists(src_path):
+                dest_name = uuid.uuid4().hex + ext
+                card_dir  = os.path.join(UPLOAD_FOLDER, str(our_card_id))
+                os.makedirs(card_dir, exist_ok=True)
+                dest_path = os.path.join(card_dir, dest_name)
+                shutil.copyfile(src_path, dest_path)
+                size_str = _fmt_size(os.path.getsize(dest_path))
+                ftype    = _file_type(original_name)
+                if uploaded_at:
+                    conn.execute(
+                        '''INSERT INTO attachments (card_id, filename, filesize, filetype, filepath, uploaded_at)
+                           VALUES (?,?,?,?,?,?)''',
+                        (our_card_id, original_name, size_str, ftype, dest_path, uploaded_at)
+                    )
+                else:
+                    conn.execute(
+                        'INSERT INTO attachments (card_id, filename, filesize, filetype, filepath) VALUES (?,?,?,?,?)',
+                        (our_card_id, original_name, size_str, ftype, dest_path)
+                    )
+                attachment_count += 1
             else:
-                conn.execute(
-                    'INSERT INTO attachments (card_id, filename, filesize, filetype, filepath) VALUES (?,?,?,?,?)',
-                    (our_card_id, original_name, size_str, ftype, dest_path)
-                )
-            attachment_count += 1
+                # Файл не найден — записываем метаданные с пометкой-заглушкой,
+                # чтобы пользователь видел вложение в карточке (но скачать не сможет).
+                size_str = att.get('bytes')
+                if size_str is not None:
+                    size_str = _fmt_size(int(size_str))
+                else:
+                    size_str = '—'
+                ftype = _file_type(original_name)
+                placeholder_dir = os.path.join(UPLOAD_FOLDER, str(our_card_id))
+                os.makedirs(placeholder_dir, exist_ok=True)
+                placeholder_path = os.path.join(placeholder_dir, f'_missing_{uuid.uuid4().hex}{ext}')
+                # Пустой файл-заглушка, чтобы не сломать UI (отдаёт 404 при скачивании)
+                open(placeholder_path, 'w').close()
+                if uploaded_at:
+                    conn.execute(
+                        '''INSERT INTO attachments (card_id, filename, filesize, filetype, filepath, uploaded_at)
+                           VALUES (?,?,?,?,?,?)''',
+                        (our_card_id, original_name, size_str, ftype, placeholder_path, uploaded_at)
+                    )
+                else:
+                    conn.execute(
+                        'INSERT INTO attachments (card_id, filename, filesize, filetype, filepath) VALUES (?,?,?,?,?)',
+                        (our_card_id, original_name, size_str, ftype, placeholder_path)
+                    )
+                attachment_meta_only += 1
 
-    if attachments_dir:
-        print(f'  Вложений перенесено: {attachment_count}')
-        if attachment_skipped:
-            print(f'  Вложений пропущено (файл не найден): {attachment_skipped}')
+    if has_attachments_dir:
+        print(f'  Вложений перенесено (файл): {attachment_count}')
+        if attachment_meta_only:
+            print(f'  Вложений (только метаданные, файл не найден в attachments/): {attachment_meta_only}')
     else:
-        attachment_skipped = sum(len(c.get('attachments', [])) for c in card_by_trello_id.values())
-        if attachment_skipped:
-            print(f'  Вложения не перенесены — не передана папка с исходным JSON ({attachment_skipped} шт.)')
+        total_attachments = sum(len(c.get('attachments', [])) for c in card_by_trello_id.values())
+        if total_attachments:
+            print(f'  ⚠ Вложения: папка attachments/ не найдена рядом с JSON ({total_attachments} шт.).')
+            print(f'    Метаданные записаны в БД, но физических файлов нет.')
+            print(f'    Чтобы перенести файлы, положите их в attachments/ рядом с JSON-экспортом')
+            print(f'    (имена файлов должны совпадать с полем fileName в JSON) и запустите импорт повторно.')
+            attachment_skipped = total_attachments
+        else:
+            print(f'  Вложений в доске нет.')
 
     # ── Комментарии (actions → commentCard) ─────────────────────────────────
     comment_count = 0
@@ -385,13 +476,14 @@ def import_board_data(conn, board_id, data, skip_archived, source_dir=None):
         'checklist_items': item_count,
         'attachments': attachment_count,
         'attachments_skipped': attachment_skipped,
+        'attachments_meta_only': attachment_meta_only,
         'comments': comment_count,
         'comments_skipped': skipped_comments,
         'unmatched_names': unmatched_names,
     }
 
 
-def run(json_path, board_id, skip_archived):
+def run(json_path, board_id, skip_archived, user_map_path=None):
     # Проверяем файл
     if not os.path.exists(json_path):
         print(f'Файл не найден: {json_path}')
@@ -399,6 +491,9 @@ def run(json_path, board_id, skip_archived):
 
     with open(json_path, encoding='utf-8') as f:
         data = json.load(f)
+
+    # Загружаем mapping-файл пользователей (если передан)
+    user_map = load_user_map(user_map_path) if user_map_path else None
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -413,10 +508,13 @@ def run(json_path, board_id, skip_archived):
 
     board_name = data.get('name', '(без названия)')
     print(f'\nИмпорт из Trello: «{board_name}»')
-    print(f'Целевая доска: [{board_id}] {board["name"]}\n')
+    print(f'Целевая доска: [{board_id}] {board["name"]}')
+    if user_map:
+        print(f'Mapping-файл: {len(user_map)} правил')
+    print()
 
     source_dir = os.path.dirname(os.path.abspath(json_path))
-    import_board_data(conn, board_id, data, skip_archived, source_dir=source_dir)
+    import_board_data(conn, board_id, data, skip_archived, source_dir=source_dir, user_map=user_map)
 
     conn.commit()
     conn.close()
@@ -430,6 +528,8 @@ if __name__ == '__main__':
     parser.add_argument('--board-id', type=int,   required=True, help='ID доски в нашем приложении')
     parser.add_argument('--skip-archived',         action='store_true',
                         help='Пропустить архивированные списки и карточки Trello')
+    parser.add_argument('--user-map',              default=None,
+                        help='Путь к файлу соответствий пользователей (формат: trello_name=email, по строке)')
     args = parser.parse_args()
 
-    run(args.json_file, args.board_id, args.skip_archived)
+    run(args.json_file, args.board_id, args.skip_archived, user_map_path=args.user_map)

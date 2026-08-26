@@ -32,7 +32,7 @@ import glob
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-from import_trello import import_board_data, TRELLO_COLORS
+from import_trello import import_board_data, TRELLO_COLORS, load_user_map
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'kanban.db')
 
@@ -56,7 +56,7 @@ def guess_board_color(data, fallback):
     return fallback
 
 
-def run(folder, workspace_name, workspace_color, skip_archived, board_color_override):
+def run(folder, workspace_name, workspace_color, skip_archived, board_color_override, user_map_path=None):
     if not os.path.isdir(folder):
         print(f'Папка не найдена: {folder}')
         sys.exit(1)
@@ -66,6 +66,9 @@ def run(folder, workspace_name, workspace_color, skip_archived, board_color_over
         print(f'В папке {folder} не найдено ни одного *.json файла.')
         sys.exit(1)
 
+    # Загружаем mapping-файл пользователей (если передан)
+    user_map = load_user_map(user_map_path) if user_map_path else None
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys = ON')
@@ -73,13 +76,16 @@ def run(folder, workspace_name, workspace_color, skip_archived, board_color_over
     ws_id, ws_created = get_or_create_workspace(conn, workspace_name, workspace_color)
     conn.commit()
     print(f'\nWorkspace: «{workspace_name}» [{ws_id}] {"(создан)" if ws_created else "(существующий)"}')
-    print(f'Файлов найдено: {len(json_files)}\n')
+    print(f'Файлов найдено: {len(json_files)}')
+    if user_map:
+        print(f'Mapping-файл: {len(user_map)} правил')
+    print()
 
     totals = {
         'boards': 0, 'columns': 0, 'cards': 0,
         'labels': 0, 'card_members': 0,
         'checklists': 0, 'checklist_items': 0,
-        'attachments': 0, 'attachments_skipped': 0,
+        'attachments': 0, 'attachments_skipped': 0, 'attachments_meta_only': 0,
         'comments': 0,
     }
     all_unmatched_names = set()
@@ -112,7 +118,7 @@ def run(folder, workspace_name, workspace_color, skip_archived, board_color_over
             board_id = cur.lastrowid
 
             print(f'  → «{board_name}» (из {filename})')
-            stats = import_board_data(conn, board_id, data, skip_archived, source_dir=source_dir)
+            stats = import_board_data(conn, board_id, data, skip_archived, source_dir=source_dir, user_map=user_map)
             conn.commit()
 
             print(f'      колонок: {stats["columns"]}, карточек: {stats["cards"]}, меток: {stats["labels"]}, '
@@ -129,6 +135,7 @@ def run(folder, workspace_name, workspace_color, skip_archived, board_color_over
             totals['checklist_items'] += stats['checklist_items']
             totals['attachments'] += stats['attachments']
             totals['attachments_skipped'] += stats['attachments_skipped']
+            totals['attachments_meta_only'] += stats.get('attachments_meta_only', 0)
             totals['comments'] += stats['comments']
             all_unmatched_names |= stats['unmatched_names']
         except Exception as e:
@@ -148,6 +155,8 @@ def run(folder, workspace_name, workspace_color, skip_archived, board_color_over
     print(f'  Вложений: {totals["attachments"]}')
     if totals['attachments_skipped']:
         print(f'  Вложений пропущено (файл не найден): {totals["attachments_skipped"]}')
+    if totals['attachments_meta_only']:
+        print(f'  Вложений (только метаданные): {totals["attachments_meta_only"]}')
     print(f'  Комментариев: {totals["comments"]}')
     if all_unmatched_names:
         print(f'\nНесопоставленные участники Trello ({len(all_unmatched_names)}, без учёта совпадений с '
@@ -169,6 +178,9 @@ if __name__ == '__main__':
     parser.add_argument('--workspace-color', default=DEFAULT_BOARD_COLOR, help='Цвет workspace при создании (hex, по умолчанию #0052cc)')
     parser.add_argument('--board-color',     default=None, help='Принудительный цвет для всех досок (hex). По умолчанию цвет угадывается из фона доски Trello')
     parser.add_argument('--skip-archived',   action='store_true', help='Пропустить архивированные списки и карточки Trello')
+    parser.add_argument('--user-map',        default=None,
+                        help='Путь к файлу соответствий пользователей (формат: trello_name=email, по строке)')
     args = parser.parse_args()
 
-    run(args.folder, args.workspace, args.workspace_color, args.skip_archived, args.board_color)
+    run(args.folder, args.workspace, args.workspace_color, args.skip_archived, args.board_color,
+        user_map_path=args.user_map)
