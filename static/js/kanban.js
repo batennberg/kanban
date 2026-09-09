@@ -4462,7 +4462,7 @@ window.colMenuDuplicate = async function() {
     showToast('Список продублирован');
 };
 
-window.colMenuDelete = function() {
+window.colMenuDelete = async function() {
     document.getElementById('colMenuDropdown').style.display = 'none';
     const colId   = colMenuTargetId;
     const col     = document.querySelector(`.column[data-col-id="${colId}"]`);
