@@ -98,6 +98,8 @@ if (_boardIsReadonly) {
 
 // ===== DRAG-AND-DROP (карточки) =====
 
+const _dirtyCards = new Set();
+
 if (!_boardIsReadonly) {
     document.querySelectorAll('.cards-list').forEach(list => {
         new Sortable(list, {
@@ -108,7 +110,12 @@ if (!_boardIsReadonly) {
             delay: 300,
             delayOnTouchOnly: true,
             touchStartThreshold: 8,
-            onEnd: () => { updateColumnCounts(); persistOrder(); }
+            onEnd: (evt) => {
+                const id = parseInt(evt.item?.dataset?.cardId);
+                if (id) _dirtyCards.add(id);
+                updateColumnCounts();
+                persistOrder();
+            }
         });
     });
 }
@@ -811,14 +818,16 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function persistOrder() {
+    if (!_dirtyCards.size) return;
     const cards = [];
     document.querySelectorAll('.cards-list').forEach(list => {
         const colId = parseInt(list.dataset.colId);
         list.querySelectorAll('.card').forEach((card, pos) => {
             const id = parseInt(card.dataset.cardId);
-            if (id) cards.push({ id, column_id: colId, position: pos });
+            if (id && _dirtyCards.has(id)) cards.push({ id, column_id: colId, position: pos });
         });
     });
+    _dirtyCards.clear();
     if (cards.length) {
         fetch('/api/cards/reorder', {
             method: 'POST',
@@ -871,6 +880,7 @@ window.inlineCardSave = async function(colId) {
         body: JSON.stringify({ column_id: parseInt(colId), title })
     });
     const card = await res.json();
+    _dirtyCards.add(card.id);
     appendCardToDOM(card, colId);
     showToast('Карточка добавлена');
 
@@ -983,7 +993,12 @@ window.inlineColSave = async function() {
         delay: 300,
         delayOnTouchOnly: true,
         touchStartThreshold: 8,
-        onEnd: () => { updateColumnCounts(); persistOrder(); }
+        onEnd: (evt) => {
+            const id = parseInt(evt.item?.dataset?.cardId);
+            if (id) _dirtyCards.add(id);
+            updateColumnCounts();
+            persistOrder();
+        }
     });
 
     inlineColCancel();
@@ -2729,6 +2744,7 @@ window.openMovePopover = function() {
 window.moveCardToColumn = async function(targetColId) {
     if (!currentCardDbId) return;
     const movedCardId = currentCardDbId;
+    _dirtyCards.add(currentCardDbId);
     const res = await fetch(`/api/cards/${currentCardDbId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ column_id: targetColId, position: 9999 })
@@ -3436,6 +3452,7 @@ window.createCardFromTemplate = async function(templateId) {
     });
     if (!res.ok) { showToast('Не удалось создать карточку из шаблона', 'error'); return; }
     const card = await res.json();
+    _dirtyCards.add(card.id);
     appendCardToDOM(card, colId);
     updateColumnCounts();
     inlineCardCancel(colId);
@@ -4433,7 +4450,12 @@ window.colMenuDuplicate = async function() {
         delay: 300,
         delayOnTouchOnly: true,
         touchStartThreshold: 8,
-        onEnd: () => { updateColumnCounts(); persistOrder(); }
+        onEnd: (evt) => {
+            const id = parseInt(evt.item?.dataset?.cardId);
+            if (id) _dirtyCards.add(id);
+            updateColumnCounts();
+            persistOrder();
+        }
     });
 
     updateColumnCounts();
