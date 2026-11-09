@@ -3976,61 +3976,53 @@ def export_workspace(ws_id):
 
 def migrate_db():
     with get_db() as conn:
-        # ── Старые миграции ──
         for stmt in [
-            "ALTER TABLE users ADD COLUMN avatar_color  TEXT DEFAULT '#4361EE'",
-            'ALTER TABLE users ADD COLUMN avatar_photo  TEXT',
-            'ALTER TABLE cards ADD COLUMN completed        INTEGER DEFAULT 0',
-            'ALTER TABLE cards ADD COLUMN cover_color      TEXT    DEFAULT ""',
-            'ALTER TABLE cards ADD COLUMN linked_board_id  INTEGER REFERENCES boards(id) ON DELETE SET NULL',
-            'ALTER TABLE cards ADD COLUMN archived         INTEGER DEFAULT 0',
-            'ALTER TABLE cards ADD COLUMN archived_at      TEXT',
-            'ALTER TABLE cards ADD COLUMN start_date       TEXT    DEFAULT ""',
-            'ALTER TABLE cards ADD COLUMN importance       TEXT    DEFAULT ""',
-            'ALTER TABLE columns ADD COLUMN archived       INTEGER DEFAULT 0',
-            'ALTER TABLE columns ADD COLUMN archived_at    TEXT',
-            'ALTER TABLE columns ADD COLUMN wip_limit      INTEGER DEFAULT 0',
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_color  TEXT DEFAULT '#4361EE'",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_photo  TEXT",
+            "ALTER TABLE cards ADD COLUMN IF NOT EXISTS completed        INTEGER DEFAULT 0",
+            "ALTER TABLE cards ADD COLUMN IF NOT EXISTS cover_color      TEXT    DEFAULT ''",
+            "ALTER TABLE cards ADD COLUMN IF NOT EXISTS linked_board_id  INTEGER REFERENCES boards(id) ON DELETE SET NULL",
+            "ALTER TABLE cards ADD COLUMN IF NOT EXISTS archived         INTEGER DEFAULT 0",
+            "ALTER TABLE cards ADD COLUMN IF NOT EXISTS archived_at      TEXT",
+            "ALTER TABLE cards ADD COLUMN IF NOT EXISTS start_date       TEXT    DEFAULT ''",
+            "ALTER TABLE cards ADD COLUMN IF NOT EXISTS importance       TEXT    DEFAULT ''",
+            "ALTER TABLE columns ADD COLUMN IF NOT EXISTS archived       INTEGER DEFAULT 0",
+            "ALTER TABLE columns ADD COLUMN IF NOT EXISTS archived_at    TEXT",
+            "ALTER TABLE columns ADD COLUMN IF NOT EXISTS wip_limit      INTEGER DEFAULT 0",
             '''CREATE TABLE IF NOT EXISTS card_members (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 user_email TEXT    NOT NULL,
-                user_name  TEXT    NOT NULL DEFAULT \'\',
+                user_name  TEXT    NOT NULL DEFAULT '',
                 UNIQUE(card_id, user_email)
             )''',
             '''CREATE TABLE IF NOT EXISTS checklist_items (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 text       TEXT    NOT NULL,
                 checked    INTEGER DEFAULT 0,
                 position   INTEGER DEFAULT 0,
-                created_at TEXT    DEFAULT (datetime('now','localtime'))
+                created_at TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )''',
         ]:
-            try:
-                conn.execute(stmt)
-            except sqlite3.OperationalError:
-                pass
+            conn.execute(stmt)
 
         # ── Workspaces (шаг 1) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS workspaces (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 name       TEXT NOT NULL UNIQUE,
                 color      TEXT DEFAULT '#0052cc',
-                created_at TEXT DEFAULT (datetime('now','localtime'))
+                created_at TEXT DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
         for col_stmt in [
-            "ALTER TABLE boards ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL",
-            "ALTER TABLE boards ADD COLUMN description  TEXT DEFAULT ''",
-            "ALTER TABLE boards ADD COLUMN bg_image     TEXT",
+            "ALTER TABLE boards ADD COLUMN IF NOT EXISTS workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL",
+            "ALTER TABLE boards ADD COLUMN IF NOT EXISTS description  TEXT DEFAULT ''",
+            "ALTER TABLE boards ADD COLUMN IF NOT EXISTS bg_image     TEXT",
         ]:
-            try:
-                conn.execute(col_stmt)
-            except sqlite3.OperationalError:
-                pass
+            conn.execute(col_stmt)
 
-        # Создаём workspaces из существующих company-значений (одноразово)
         companies = conn.execute(
             "SELECT company, MIN(color) as color FROM boards "
             "WHERE company != '' AND company IS NOT NULL "
@@ -4038,11 +4030,10 @@ def migrate_db():
         ).fetchall()
         for row in companies:
             conn.execute(
-                'INSERT OR IGNORE INTO workspaces (name, color) VALUES (%s, %s)',
+                'INSERT INTO workspaces (name, color) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING',
                 (row['company'], row['color'])
             )
 
-        # Проставляем workspace_id доскам, у которых его нет
         conn.execute('''
             UPDATE boards
             SET workspace_id = (
