@@ -6,7 +6,7 @@
 
 **Architecture:** Direct SQL-dialect port (spec's "Approach A" — no ORM). `models.py:get_db()` returns a thin wrapper around a `psycopg2` connection that preserves the existing `conn.execute(...)` calling convention and `row['col']`/`dict(row)`/`row[0]` access patterns used throughout `app.py`, so ~594 call sites only need their SQL *text* changed, not their calling code.
 
-**Tech Stack:** Python 3.11, Flask, `psycopg2` (replaces `sqlite3`), PostgreSQL 16 (local dev instance via `docker run`, no compose yet — that's a separate follow-up plan).
+**Tech Stack:** Python 3.11, Flask, `psycopg2` (replaces `sqlite3`), PostgreSQL 16 (local dev instance — native Windows install via winget, since Docker is not available on this dev machine; see Task 1's ruling note. Containerization is a separate follow-up plan regardless).
 
 **Spec:** `docs/superpowers/specs/2026-11-10-postgres-docker-migration-design.md`
 
@@ -41,6 +41,8 @@
 **Interfaces:**
 - Produces: a running local Postgres instance + env vars (`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`) that every later task's `get_db()` work depends on.
 
+**Ruling (made during execution, not in the original plan text):** Docker is not installed on this dev machine (confirmed — not in PATH, no install directory), so Step 3 below uses a **native Windows PostgreSQL 16 install** (via `winget install PostgreSQL.PostgreSQL.16`) instead of `docker run`. This is a tooling substitution only — the produced interface (a reachable Postgres on `localhost:5432` with the env vars below) is identical either way, and every later task's `docker exec kanban-pg-dev psql ...` verification commands are rewritten to plain `psql` calls against this native instance. Cost if this ruling is wrong: low — swapping back to Docker later only means re-running Step 3 differently; no task downstream of Task 1 depends on *how* Postgres is hosted, only on the env vars connecting to it.
+
 - [ ] **Step 1: Add the Postgres driver dependency**
 
 Edit `requirements.txt`, add one line:
@@ -53,18 +55,30 @@ psycopg2-binary>=2.9.9
 Run: `pip install -r requirements.txt`
 Expected: `psycopg2-binary` installs without error.
 
-- [ ] **Step 3: Start a local Postgres container for development**
+- [ ] **Step 3: Install and start a local PostgreSQL 16 instance for development**
 
-Run:
-```bash
-docker run -d --name kanban-pg-dev \
-  -e POSTGRES_DB=kanban \
-  -e POSTGRES_USER=kanban \
-  -e POSTGRES_PASSWORD=devpass \
-  -p 5432:5432 \
-  postgres:16
+Run (PowerShell, as the user — may need the user to approve a system-install permission prompt):
+```powershell
+winget install --id PostgreSQL.PostgreSQL.16 -e --source winget --accept-package-agreements --accept-source-agreements --silent
 ```
-Expected: container starts; `docker ps` shows `kanban-pg-dev` as `Up`.
+Expected: installs and starts the `postgresql-x64-16` Windows service automatically. Verify with:
+```powershell
+Get-Service -Name "postgresql-x64-16"
+```
+Expected: `Status` is `Running`.
+
+Then create the `kanban` role and database (the installer only creates the `postgres` superuser; EDB's winget package defaults that superuser's password to `postgres`):
+```powershell
+$env:PGPASSWORD="postgres"
+& "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -h localhost -c "CREATE ROLE kanban LOGIN PASSWORD 'devpass';"
+& "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -h localhost -c "CREATE DATABASE kanban OWNER kanban;"
+```
+Expected: both commands print `CREATE ROLE` / `CREATE DATABASE`.
+
+Add PostgreSQL's `bin` directory to `PATH` for the rest of this and later tasks' shell commands (so `psql` can be called directly instead of the full path):
+```bash
+export PATH="/c/Program Files/PostgreSQL/16/bin:$PATH"
+```
 
 - [ ] **Step 4: Add Postgres env vars**
 
@@ -407,7 +421,7 @@ def _seed_users(conn):
 - [ ] **Step 2: Reset the dev database and verify schema creation**
 
 ```bash
-docker exec kanban-pg-dev psql -U kanban -d kanban -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+PGPASSWORD=devpass psql -U kanban -h localhost -d kanban -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 python -c "
 from dotenv import load_dotenv; load_dotenv()
 from models import init_db
@@ -622,7 +636,7 @@ def migrate_db():
 - [ ] **Step 2: Run it against the local dev Postgres and verify idempotency**
 
 ```bash
-docker exec kanban-pg-dev psql -U kanban -d kanban -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+PGPASSWORD=devpass psql -U kanban -h localhost -d kanban -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 python -c "
 from dotenv import load_dotenv; load_dotenv()
 from models import init_db
@@ -639,7 +653,7 @@ Expected: prints `migrate_db block 1 OK (twice, idempotent)`. (This will current
 - [ ] **Step 3: Verify the exact timestamp format (Review Focus item)**
 
 ```bash
-docker exec kanban-pg-dev psql -U kanban -d kanban -c \
+PGPASSWORD=devpass psql -U kanban -h localhost -d kanban -c \
   "SELECT to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS');"
 ```
 Expected: one row, format exactly `YYYY-MM-DD HH24:MI:SS` shaped, e.g. `2026-11-10 14:32:07` — verify with:
@@ -764,7 +778,7 @@ Note: `card_labels`'s one-time backfill changed from `INSERT OR IGNORE` to `INSE
 - [ ] **Step 2: Verify this block's DDL is syntactically valid Postgres**
 
 ```bash
-docker exec kanban-pg-dev psql -U kanban -d kanban -c "\d checklists" 2>&1 | head -5
+PGPASSWORD=devpass psql -U kanban -h localhost -d kanban -c "\d checklists" 2>&1 | head -5
 ```
 (Run after Task 10 completes and `migrate_db()` runs fully — for now, confirm via `python -m py_compile app.py`.)
 
@@ -1163,7 +1177,7 @@ import os, uuid, csv, io, shutil, re, json
 - [ ] **Step 3: Full end-to-end run against a clean local Postgres**
 
 ```bash
-docker exec kanban-pg-dev psql -U kanban -d kanban -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+PGPASSWORD=devpass psql -U kanban -h localhost -d kanban -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 python -c "
 from dotenv import load_dotenv; load_dotenv()
 import app  # runs init_db() + migrate_db() at import time (app.py module-level code)
@@ -1190,7 +1204,7 @@ Expected: prints `idempotent OK`.
 - [ ] **Step 5: Verify every table exists**
 
 ```bash
-docker exec kanban-pg-dev psql -U kanban -d kanban -c "\dt" | wc -l
+PGPASSWORD=devpass psql -U kanban -h localhost -d kanban -c "\dt" | wc -l
 ```
 Expected: 41 application tables listed (plus the `\dt` header/footer lines).
 
@@ -1256,7 +1270,7 @@ Expected: no output, exit code 0.
 
 - [ ] **Step 4: Functional check — create one row through each converted route and confirm its id comes back correctly (Review Focus item)**
 
-With the local dev stack up (`docker exec kanban-pg-dev ...` schema reset + `python app.py` running against Postgres), exercise a representative sample that covers the riskiest category (id used immediately in a follow-up query, not just returned as-is):
+With the local dev stack up (native Postgres schema reset via `psql` + `python app.py` running against it), exercise a representative sample that covers the riskiest category (id used immediately in a follow-up query, not just returned as-is):
 
 ```bash
 curl -s -X POST http://localhost:5001/api/columns -H "Content-Type: application/json" \
@@ -1663,11 +1677,18 @@ def health():
 ```bash
 curl -s http://localhost:5001/health
 # expected: {"status": "ok"}
+```
 
-docker stop kanban-pg-dev
+Then simulate the database being unreachable (PowerShell — stopping/starting the native Postgres Windows service may require elevated permissions on this machine; if it's denied, this one down-path check is skippable — it's not load-bearing, the 200-path above is the one the spec requires):
+```powershell
+Stop-Service postgresql-x64-16
+```
+```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5001/health
 # expected: 503
-docker start kanban-pg-dev
+```
+```powershell
+Start-Service postgresql-x64-16
 ```
 
 - [ ] **Step 3: Commit**
@@ -1840,7 +1861,7 @@ Expected: both sets empty (or `extra` containing only tables that exist in the n
 
 ```bash
 cp kanban.db /tmp/kanban-test.db
-docker exec kanban-pg-dev psql -U kanban -d kanban -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+PGPASSWORD=devpass psql -U kanban -h localhost -d kanban -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 python -c "
 from dotenv import load_dotenv; load_dotenv()
 from models import init_db
@@ -1916,7 +1937,7 @@ Copy the actual production `kanban.db` (from the Windows server) to this dev mac
 - [ ] **Step 2: Reset local Postgres and apply schema**
 
 ```bash
-docker exec kanban-pg-dev psql -U kanban -d kanban -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+PGPASSWORD=devpass psql -U kanban -h localhost -d kanban -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 python -c "
 from dotenv import load_dotenv; load_dotenv()
 from models import init_db
