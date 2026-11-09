@@ -80,7 +80,7 @@ def _find_mentioned_users(conn, text):
             rows = conn.execute(
                 '''
                 SELECT email, name FROM users
-                WHERE LOWER(email)=? OR LOWER(name)=? OR LOWER(name)=? OR LOWER(SUBSTR(email, 1, CASE WHEN INSTR(email, '@') > 0 THEN INSTR(email, '@') - 1 ELSE LENGTH(email) END))=?
+                WHERE LOWER(email)=%s OR LOWER(name)=%s OR LOWER(name)=%s OR LOWER(SUBSTR(email, 1, CASE WHEN INSTR(email, '@') > 0 THEN INSTR(email, '@') - 1 ELSE LENGTH(email) END))=%s
                 ''',
                 (mention, mention, mention, mention)
             ).fetchall()
@@ -97,7 +97,7 @@ def _create_comment_mentions(conn, card_id, comment_id, text, actor_email, actor
         FROM cards c
         JOIN columns col ON col.id = c.column_id
         JOIN boards b ON b.id = col.board_id
-        WHERE c.id = ?
+        WHERE c.id = %s
     ''', (card_id,)).fetchone()
     for user in _find_mentioned_users(conn, text):
         if user['email'] == (actor_email or '').strip().lower():
@@ -105,7 +105,7 @@ def _create_comment_mentions(conn, card_id, comment_id, text, actor_email, actor
         if not _user_notif_enabled(conn, user['email'], 'comment_mention'):
             continue
         conn.execute(
-            'INSERT OR IGNORE INTO comment_mentions (comment_id, mentioned_email, mentioned_name) VALUES (?,?,?)',
+            'INSERT OR IGNORE INTO comment_mentions (comment_id, mentioned_email, mentioned_name) VALUES (%s,%s,%s)',
             (comment_id, user['email'], user['name'])
         )
         payload = json.dumps({
@@ -121,7 +121,7 @@ def _create_comment_mentions(conn, card_id, comment_id, text, actor_email, actor
             'comment_excerpt': (text or '')[:180],
         })
         conn.execute(
-            'INSERT INTO inbox_entries (recipient_email, type, card_id, comment_id, payload, board_id) VALUES (?,?,?,?,?,?)',
+            'INSERT INTO inbox_entries (recipient_email, type, card_id, comment_id, payload, board_id) VALUES (%s,%s,%s,%s,%s,%s)',
             (user['email'], 'comment_mention', card_id, comment_id, payload, card_row['board_id'] if card_row else None)
         )
         mentions.append(user)
@@ -142,7 +142,7 @@ def _admin_emails(conn):
 
 def _user_notif_enabled(conn, email, notif_type):
     """Проверяет, включены ли уведомления типа notif_type для пользователя email."""
-    row = conn.execute('SELECT settings FROM notification_settings WHERE user_email=?', (email,)).fetchone()
+    row = conn.execute('SELECT settings FROM notification_settings WHERE user_email=%s', (email,)).fetchone()
     if not row or not row['settings']:
         return True  # по умолчанию всё включено
     try:
@@ -168,7 +168,7 @@ def _notify_admins(conn, type_, board_id, board_name, extra, card_id=0):
         if not _user_notif_enabled(conn, email, type_):
             continue
         conn.execute(
-            'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
+            'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (%s,%s,%s,%s,%s)',
             (email, type_, card_id, payload_json, board_id)
         )
 
@@ -189,11 +189,11 @@ def _sync_due_date_notifications(conn, user_email):
         JOIN card_members cm ON cm.card_id = ca.id
         JOIN columns col ON col.id = ca.column_id
         JOIN boards b ON b.id = col.board_id
-        WHERE cm.user_email = ?
+        WHERE cm.user_email = %s
           AND (ca.completed = 0 OR ca.completed IS NULL)
           AND (ca.archived = 0 OR ca.archived IS NULL)
           AND TRIM(COALESCE(ca.due_date, '')) != ''
-          AND (substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)) <= ?
+          AND (substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)) <= %s
     ''', (user_email, today_key)).fetchall()
 
     for r in rows:
@@ -212,7 +212,7 @@ def _sync_due_date_notifications(conn, user_email):
         if not _user_notif_enabled(conn, user_email, type_):
             continue
         exists = conn.execute(
-            "SELECT 1 FROM inbox_entries WHERE recipient_email=? AND type=? AND card_id=?",
+            "SELECT 1 FROM inbox_entries WHERE recipient_email=%s AND type=%s AND card_id=%s",
             (user_email, type_, r['card_id'])
         ).fetchone()
         if exists:
@@ -222,7 +222,7 @@ def _sync_due_date_notifications(conn, user_email):
             'board_id': r['board_id'], 'board_name': r['board_name'], 'due_date': r['due_date'],
         })
         conn.execute(
-            'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
+            'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (%s,%s,%s,%s,%s)',
             (user_email, type_, r['card_id'], payload, r['board_id'])
         )
 
@@ -230,7 +230,7 @@ def _sync_due_date_notifications(conn, user_email):
 def _log_activity(conn, card_id, event_type, detail=''):
     actor = (session.get('user') or {}).get('name', '') if session else ''
     conn.execute(
-        'INSERT INTO card_activity (card_id, event_type, actor_name, detail) VALUES (?,?,?,?)',
+        'INSERT INTO card_activity (card_id, event_type, actor_name, detail) VALUES (%s,%s,%s,%s)',
         (card_id, event_type, actor, detail)
     )
 
@@ -238,7 +238,7 @@ def _log_activity(conn, card_id, event_type, detail=''):
 def _log_column_entry(conn, card_id, column_id):
     """Фиксирует вход карточки в колонку (Nice №101 — cycle time)."""
     conn.execute(
-        "INSERT INTO card_column_history (card_id, column_id) VALUES (?,?)",
+        "INSERT INTO card_column_history (card_id, column_id) VALUES (%s,%s)",
         (card_id, column_id)
     )
 
@@ -246,7 +246,7 @@ def _log_column_entry(conn, card_id, column_id):
 def _log_column_exit(conn, card_id):
     """Фиксирует выход карточки из текущей колонки."""
     conn.execute(
-        "UPDATE card_column_history SET left_at=datetime('now','localtime') WHERE card_id=? AND left_at IS NULL",
+        "UPDATE card_column_history SET left_at=datetime('now','localtime') WHERE card_id=%s AND left_at IS NULL",
         (card_id,)
     )
 
@@ -260,16 +260,16 @@ def _check_automation_condition(conn, card_id, rule):
     cond_value = rule['condition_value'] or ''
     if cond_type == 'none' or not cond_type:
         return True
-    card = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+    card = conn.execute('SELECT * FROM cards WHERE id=%s', (card_id,)).fetchone()
     if not card:
         return False
     if cond_type == 'importance_is':
         return (card['importance'] or '') == cond_value
     elif cond_type == 'has_label':
-        labels = conn.execute('SELECT name FROM card_labels WHERE card_id=?', (card_id,)).fetchall()
+        labels = conn.execute('SELECT name FROM card_labels WHERE card_id=%s', (card_id,)).fetchall()
         return any(cond_value.lower() in (l['name'] or '').lower() for l in labels)
     elif cond_type == 'member_is':
-        members = conn.execute('SELECT user_email FROM card_members WHERE card_id=?', (card_id,)).fetchall()
+        members = conn.execute('SELECT user_email FROM card_members WHERE card_id=%s', (card_id,)).fetchall()
         return any(cond_value.lower() in (m['user_email'] or '').lower() for m in members)
     elif cond_type == 'not_completed':
         return not card['completed']
@@ -288,16 +288,16 @@ def _apply_automation_action(conn, card_id, rule):
     target_board_id = rule['target_board_id'] or 0
 
     if action == 'mark_complete':
-        conn.execute('UPDATE cards SET completed=1 WHERE id=?', (card_id,))
+        conn.execute('UPDATE cards SET completed=1 WHERE id=%s', (card_id,))
         _log_activity(conn, card_id, 'completed', tag)
     elif action == 'mark_incomplete':
-        conn.execute('UPDATE cards SET completed=0 WHERE id=?', (card_id,))
+        conn.execute('UPDATE cards SET completed=0 WHERE id=%s', (card_id,))
         _log_activity(conn, card_id, 'reopened', tag)
     elif action == 'archive_card':
-        conn.execute("UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE id=?", (card_id,))
+        conn.execute("UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE id=%s", (card_id,))
         _log_activity(conn, card_id, 'archived', tag)
     elif action == 'set_importance':
-        conn.execute('UPDATE cards SET importance=? WHERE id=?', (value, card_id))
+        conn.execute('UPDATE cards SET importance=%s WHERE id=%s', (value, card_id))
         _log_activity(conn, card_id, 'importance_set', value)
     elif action == 'add_label':
         try:
@@ -306,18 +306,18 @@ def _apply_automation_action(conn, card_id, rule):
         except (ValueError, TypeError, AttributeError):
             name, color = value.strip(), '#4361EE'
         if name:
-            conn.execute('INSERT OR IGNORE INTO card_labels (card_id, name, color) VALUES (?,?,?)', (card_id, name, color))
+            conn.execute('INSERT OR IGNORE INTO card_labels (card_id, name, color) VALUES (%s,%s,%s)', (card_id, name, color))
             _log_activity(conn, card_id, 'label_added', name)
     elif action == 'create_card_on_board' and target_board_id:
         # Кросс-досочная автоматизация (Should №57)
-        src = conn.execute('SELECT title, description FROM cards WHERE id=?', (card_id,)).fetchone()
+        src = conn.execute('SELECT title, description FROM cards WHERE id=%s', (card_id,)).fetchone()
         first_col = conn.execute(
-            'SELECT id FROM columns WHERE board_id=? ORDER BY position LIMIT 1', (target_board_id,)
+            'SELECT id FROM columns WHERE board_id=%s ORDER BY position LIMIT 1', (target_board_id,)
         ).fetchone()
         if first_col:
             title = value or (src['title'] if src else 'Задача с другой доски')
             conn.execute(
-                'INSERT INTO cards (column_id, title, description, position) VALUES (?,?,?,0)',
+                'INSERT INTO cards (column_id, title, description, position) VALUES (%s,%s,%s,0)',
                 (first_col['id'], title, src['description'] if src else '')
             )
     return {'rule_id': rule['id'], 'rule_name': rule['name'], 'action_type': action}
@@ -327,7 +327,7 @@ def _run_column_automations(conn, card_id, column_id):
     """Триггер «карточка попала в колонку X» — применяет все включённые правила
     этой колонки к карточке и возвращает список выполненных действий."""
     rules = conn.execute(
-        'SELECT * FROM automation_rules WHERE trigger_column_id=? AND enabled=1', (column_id,)
+        'SELECT * FROM automation_rules WHERE trigger_column_id=%s AND enabled=1', (column_id,)
     ).fetchall()
     results = []
     for rule in rules:
@@ -336,7 +336,7 @@ def _run_column_automations(conn, card_id, column_id):
         # Журнал автоматизаций (Should №59)
         details = f"{result.get('action_type', '')} | rule: {result.get('rule_name', '')}"
         conn.execute(
-            'INSERT INTO automation_log (rule_id, card_id, action, details) VALUES (?,?,?,?)',
+            'INSERT INTO automation_log (rule_id, card_id, action, details) VALUES (%s,%s,%s,%s)',
             (rule['id'], card_id, rule['action_type'], details)
         )
     return results
@@ -355,7 +355,7 @@ def _log_card_update_activity(conn, card_id, before, d):
         _log_activity(conn, card_id, 'completed' if d['completed'] else 'reopened')
     if 'column_id' in d and d['column_id'] and d['column_id'] != before['column_id']:
         cols = conn.execute(
-            'SELECT id, name FROM columns WHERE id IN (?,?)', (before['column_id'], d['column_id'])
+            'SELECT id, name FROM columns WHERE id IN (%s,%s)', (before['column_id'], d['column_id'])
         ).fetchall()
         names = {c['id']: c['name'] for c in cols}
         _log_activity(conn, card_id, 'moved_column',
@@ -408,7 +408,7 @@ def _create_repeat_card(conn, src, pattern):
     cur = conn.execute(
         '''INSERT INTO cards (column_id, title, description, label, label_color,
            due_date, start_date, position, completed, importance, repeat_pattern)
-           VALUES (?,?,?,?,?,?,?,?,0,?,?)''',
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s)''',
         (src['column_id'], src['title'], src['description'] or '',
          src['label'] or '', src['label_color'] or '',
          new_due, start, src['position'],
@@ -438,17 +438,17 @@ CUSTOM_FIELD_TYPES = {'text', 'number', 'date', 'list', 'checkbox'}
 
 def _card_custom_fields(conn, card_id):
     row = conn.execute(
-        'SELECT co.board_id FROM cards c JOIN columns co ON co.id=c.column_id WHERE c.id=?',
+        'SELECT co.board_id FROM cards c JOIN columns co ON co.id=c.column_id WHERE c.id=%s',
         (card_id,)
     ).fetchone()
     if not row:
         return []
     values = {v['field_id']: v['value'] for v in conn.execute(
-        'SELECT field_id, value FROM card_custom_field_values WHERE card_id=?', (card_id,)
+        'SELECT field_id, value FROM card_custom_field_values WHERE card_id=%s', (card_id,)
     )}
     out = []
     for f in conn.execute(
-        'SELECT * FROM custom_fields WHERE board_id=? ORDER BY position, id', (row['board_id'],)
+        'SELECT * FROM custom_fields WHERE board_id=%s ORDER BY position, id', (row['board_id'],)
     ):
         item = dict(f)
         item['value'] = values.get(f['id'], '')
@@ -461,11 +461,11 @@ def _card_custom_fields(conn, card_id):
 # оригинала, а не шаблон для копии.
 
 def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix='', field_id_map=None):
-    src = conn.execute('SELECT * FROM cards WHERE id=?', (src_card_id,)).fetchone()
+    src = conn.execute('SELECT * FROM cards WHERE id=%s', (src_card_id,)).fetchone()
     cur = conn.execute(
         '''INSERT INTO cards
            (column_id, title, description, label, label_color, due_date, start_date, position, cover_color, importance)
-           VALUES (?,?,?,?,?,?,?,?,?,?)''',
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
         (target_column_id, src['title'] + title_suffix, src['description'],
          src['label'], src['label_color'], src['due_date'], src['start_date'], position, src['cover_color'],
          src['importance'])
@@ -473,64 +473,64 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
     new_card_id = cur.lastrowid
 
     checklist_id_map = {}
-    for cl in conn.execute('SELECT * FROM checklists WHERE card_id=? ORDER BY position', (src_card_id,)):
+    for cl in conn.execute('SELECT * FROM checklists WHERE card_id=%s ORDER BY position', (src_card_id,)):
         new_cl = conn.execute(
-            'INSERT INTO checklists (card_id, title, position) VALUES (?,?,?)',
+            'INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s)',
             (new_card_id, cl['title'], cl['position'])
         )
         checklist_id_map[cl['id']] = new_cl.lastrowid
 
     for item in conn.execute(
-        'SELECT * FROM checklist_items WHERE card_id=? ORDER BY position', (src_card_id,)
+        'SELECT * FROM checklist_items WHERE card_id=%s ORDER BY position', (src_card_id,)
     ):
         conn.execute(
             '''INSERT INTO checklist_items
                (card_id, checklist_id, text, checked, position, due_date, assignee_email, assignee_name)
-               VALUES (?,?,?,?,?,?,?,?)''',
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)''',
             (new_card_id, checklist_id_map.get(item['checklist_id']), item['text'], item['checked'],
              item['position'], item['due_date'], item['assignee_email'], item['assignee_name'])
         )
-    for m in conn.execute('SELECT * FROM card_members WHERE card_id=?', (src_card_id,)):
+    for m in conn.execute('SELECT * FROM card_members WHERE card_id=%s', (src_card_id,)):
         conn.execute(
-            'INSERT OR IGNORE INTO card_members (card_id, user_email, user_name) VALUES (?,?,?)',
+            'INSERT OR IGNORE INTO card_members (card_id, user_email, user_name) VALUES (%s,%s,%s)',
             (new_card_id, m['user_email'], m['user_name'])
         )
-    for lbl in conn.execute('SELECT * FROM card_labels WHERE card_id=? ORDER BY position', (src_card_id,)):
+    for lbl in conn.execute('SELECT * FROM card_labels WHERE card_id=%s ORDER BY position', (src_card_id,)):
         conn.execute(
-            'INSERT OR IGNORE INTO card_labels (card_id, name, color, position) VALUES (?,?,?,?)',
+            'INSERT OR IGNORE INTO card_labels (card_id, name, color, position) VALUES (%s,%s,%s,%s)',
             (new_card_id, lbl['name'], lbl['color'], lbl['position'])
         )
-    for lnk in conn.execute('SELECT * FROM card_links WHERE card_id=? ORDER BY position', (src_card_id,)):
+    for lnk in conn.execute('SELECT * FROM card_links WHERE card_id=%s ORDER BY position', (src_card_id,)):
         conn.execute(
-            'INSERT INTO card_links (card_id, url, title, position) VALUES (?,?,?,?)',
+            'INSERT INTO card_links (card_id, url, title, position) VALUES (%s,%s,%s,%s)',
             (new_card_id, lnk['url'], lnk['title'], lnk['position'])
         )
 
     src_board_id = conn.execute(
-        'SELECT board_id FROM columns WHERE id=?', (src['column_id'],)
+        'SELECT board_id FROM columns WHERE id=%s', (src['column_id'],)
     ).fetchone()['board_id']
     target_board_id = conn.execute(
-        'SELECT board_id FROM columns WHERE id=?', (target_column_id,)
+        'SELECT board_id FROM columns WHERE id=%s', (target_column_id,)
     ).fetchone()['board_id']
     if field_id_map is not None or target_board_id == src_board_id:
-        for v in conn.execute('SELECT * FROM card_custom_field_values WHERE card_id=?', (src_card_id,)):
+        for v in conn.execute('SELECT * FROM card_custom_field_values WHERE card_id=%s', (src_card_id,)):
             new_field_id = field_id_map.get(v['field_id']) if field_id_map is not None else v['field_id']
             if new_field_id:
                 conn.execute(
-                    'INSERT INTO card_custom_field_values (card_id, field_id, value) VALUES (?,?,?)',
+                    'INSERT INTO card_custom_field_values (card_id, field_id, value) VALUES (%s,%s,%s)',
                     (new_card_id, new_field_id, v['value'])
                 )
     return new_card_id
 
 def _duplicate_column(conn, src_col_id, target_board_id, position, name_suffix='', field_id_map=None):
-    src = conn.execute('SELECT * FROM columns WHERE id=?', (src_col_id,)).fetchone()
+    src = conn.execute('SELECT * FROM columns WHERE id=%s', (src_col_id,)).fetchone()
     cur = conn.execute(
-        'INSERT INTO columns (board_id, name, position, wip_limit) VALUES (?,?,?,?)',
+        'INSERT INTO columns (board_id, name, position, wip_limit) VALUES (%s,%s,%s,%s)',
         (target_board_id, src['name'] + name_suffix, position, src['wip_limit'] or 0)
     )
     new_col_id = cur.lastrowid
     cards = conn.execute(
-        'SELECT id FROM cards WHERE column_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
+        'SELECT id FROM cards WHERE column_id=%s AND (archived=0 OR archived IS NULL) ORDER BY position',
         (src_col_id,)
     ).fetchall()
     for i, card in enumerate(cards):
@@ -538,30 +538,30 @@ def _duplicate_column(conn, src_col_id, target_board_id, position, name_suffix='
     return new_col_id
 
 def _duplicate_board(conn, src_board_id, name_suffix=' (копия)'):
-    src = conn.execute('SELECT * FROM boards WHERE id=?', (src_board_id,)).fetchone()
+    src = conn.execute('SELECT * FROM boards WHERE id=%s', (src_board_id,)).fetchone()
     cur = conn.execute(
-        'INSERT INTO boards (name, company, color, workspace_id, description) VALUES (?,?,?,?,?)',
+        'INSERT INTO boards (name, company, color, workspace_id, description) VALUES (%s,%s,%s,%s,%s)',
         (src['name'] + name_suffix, src['company'], src['color'], src['workspace_id'], src['description'])
     )
     new_board_id = cur.lastrowid
     field_id_map = {}
     for f in conn.execute(
-        'SELECT * FROM custom_fields WHERE board_id=? ORDER BY position, id', (src_board_id,)
+        'SELECT * FROM custom_fields WHERE board_id=%s ORDER BY position, id', (src_board_id,)
     ):
         cur2 = conn.execute(
-            'INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position) VALUES (?,?,?,?,?,?)',
+            'INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position) VALUES (%s,%s,%s,%s,%s,%s)',
             (new_board_id, f['name'], f['type'], f['options'], f['show_on_card'], f['position'])
         )
         field_id_map[f['id']] = cur2.lastrowid
     cols = conn.execute(
-        'SELECT id FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
+        'SELECT id FROM columns WHERE board_id=%s AND (archived=0 OR archived IS NULL) ORDER BY position',
         (src_board_id,)
     ).fetchall()
     for i, col in enumerate(cols):
         _duplicate_column(conn, col['id'], new_board_id, i, field_id_map=field_id_map)
-    for row in conn.execute('SELECT user_id, expires_at FROM board_access WHERE board_id=?', (src_board_id,)):
+    for row in conn.execute('SELECT user_id, expires_at FROM board_access WHERE board_id=%s', (src_board_id,)):
         conn.execute(
-            'INSERT OR IGNORE INTO board_access (user_id, board_id, expires_at) VALUES (?,?,?)',
+            'INSERT OR IGNORE INTO board_access (user_id, board_id, expires_at) VALUES (%s,%s,%s)',
             (row['user_id'], new_board_id, row['expires_at'])
         )
     return new_board_id
@@ -628,7 +628,7 @@ def login():
                 # Читаем локальный профиль — имя/аватар могут быть переопределены пользователем
                 with get_db() as conn:
                     local = conn.execute(
-                        'SELECT name, avatar_color, avatar_photo FROM users WHERE email=?', (email,)
+                        'SELECT name, avatar_color, avatar_photo FROM users WHERE email=%s', (email,)
                     ).fetchone()
                 session['user'] = {
                     'name':         (local['name'] if local and local['name'] else sheets_name),
@@ -643,7 +643,7 @@ def login():
         else:
             # Fallback: SQLite (если Google Sheets не настроен)
             with get_db() as conn:
-                user = conn.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone()
+                user = conn.execute('SELECT * FROM users WHERE email=%s', (email,)).fetchone()
             if user and check_password_hash(user['password_hash'], password):
                 if user['role'] == 'admin':
                     board_ids = None
@@ -651,7 +651,7 @@ def login():
                     with get_db() as conn:
                         board_ids = [r[0] for r in conn.execute('''
                             SELECT board_id FROM board_access
-                            WHERE user_id=? AND (expires_at IS NULL OR expires_at='' OR expires_at >= date('now','localtime'))
+                            WHERE user_id=%s AND (expires_at IS NULL OR expires_at='' OR expires_at >= date('now','localtime'))
                         ''', (user['id'],)).fetchall()]
                 session['user'] = {
                     'id':           user['id'],
@@ -698,7 +698,7 @@ def _get_board_ids():
     with get_db() as conn:
         rows = conn.execute('''
             SELECT board_id FROM board_access
-            WHERE user_id=? AND (expires_at IS NULL OR expires_at='' OR expires_at >= date('now','localtime'))
+            WHERE user_id=%s AND (expires_at IS NULL OR expires_at='' OR expires_at >= date('now','localtime'))
         ''', (user_id,)).fetchall()
     return [r[0] for r in rows]
 
@@ -721,7 +721,7 @@ def boards():
         elif len(board_ids) == 0:
             rows = []
         else:
-            ph   = ','.join('?' * len(board_ids))
+            ph   = ','.join(['%s'] * len(board_ids))
             rows = conn.execute(q + f' WHERE b.id IN ({ph}) ORDER BY w.name, b.id', board_ids).fetchall()
 
         all_workspaces = conn.execute('SELECT * FROM workspaces ORDER BY name').fetchall()
@@ -763,7 +763,7 @@ def board(board_id):
             SELECT b.*, w.name AS workspace_name, w.color AS workspace_color
             FROM boards b
             LEFT JOIN workspaces w ON w.id = b.workspace_id
-            WHERE b.id=?
+            WHERE b.id=%s
         ''', (board_id,)).fetchone()
         if not b:
             return redirect(url_for('boards'))
@@ -774,7 +774,7 @@ def board(board_id):
             SELECT cl.id, cl.card_id, cl.name, cl.color FROM card_labels cl
             JOIN cards ca ON ca.id = cl.card_id
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id=? ORDER BY cl.position, cl.id
+            WHERE co.board_id=%s ORDER BY cl.position, cl.id
         ''', (board_id,)):
             labels_by_card.setdefault(l['card_id'], []).append(dict(l))
 
@@ -783,24 +783,24 @@ def board(board_id):
             SELECT cm.card_id, cm.user_email, cm.user_name FROM card_members cm
             JOIN cards ca ON ca.id = cm.card_id
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id=? ORDER BY cm.id
+            WHERE co.board_id=%s ORDER BY cm.id
         ''', (board_id,)):
             members_by_card.setdefault(m['card_id'], []).append(dict(m))
 
         custom_field_defs = [dict(f) for f in conn.execute(
-            'SELECT * FROM custom_fields WHERE board_id=? ORDER BY position, id', (board_id,)
+            'SELECT * FROM custom_fields WHERE board_id=%s ORDER BY position, id', (board_id,)
         )]
         board_data['custom_fields'] = custom_field_defs
         visible_fields = [f for f in custom_field_defs if f['show_on_card']]
         cf_values_by_card = {}
         if visible_fields:
             field_ids = [f['id'] for f in visible_fields]
-            ph = ','.join('?' * len(field_ids))
+            ph = ','.join(['%s'] * len(field_ids))
             for v in conn.execute(f'''
                 SELECT v.card_id, v.field_id, v.value FROM card_custom_field_values v
                 JOIN cards ca ON ca.id = v.card_id
                 JOIN columns co ON co.id = ca.column_id
-                WHERE co.board_id=? AND v.field_id IN ({ph})
+                WHERE co.board_id=%s AND v.field_id IN ({ph})
             ''', [board_id] + field_ids):
                 cf_values_by_card.setdefault(v['card_id'], {})[v['field_id']] = v['value']
 
@@ -813,13 +813,13 @@ def board(board_id):
             JOIN columns src_col ON src_col.id = c.column_id
             JOIN boards src_b ON src_b.id = src_col.board_id
             JOIN columns target_col ON target_col.id = cmi.column_id
-            WHERE target_col.board_id=? AND (c.archived=0 OR c.archived IS NULL)
+            WHERE target_col.board_id=%s AND (c.archived=0 OR c.archived IS NULL)
             ORDER BY cmi.position
         ''', (board_id,)).fetchall()
         mirror_source_ids = [r['source_id'] for r in mirror_rows]
         mirror_labels_by_card = {}
         if mirror_source_ids:
-            ph = ','.join('?' * len(mirror_source_ids))
+            ph = ','.join(['%s'] * len(mirror_source_ids))
             for l in conn.execute(
                 f'SELECT * FROM card_labels WHERE card_id IN ({ph}) ORDER BY position, id', mirror_source_ids
             ):
@@ -832,13 +832,13 @@ def board(board_id):
             mirrors_by_column.setdefault(m['mirror_column_id'], []).append(m)
 
         for col in conn.execute(
-            'SELECT * FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
+            'SELECT * FROM columns WHERE board_id=%s AND (archived=0 OR archived IS NULL) ORDER BY position',
             (board_id,)
         ):
             col_dict = dict(col)
             col_dict['cards'] = []
             for c in conn.execute(
-                'SELECT * FROM cards WHERE column_id=? AND (archived=0 OR archived IS NULL) ORDER BY position', (col['id'],)
+                'SELECT * FROM cards WHERE column_id=%s AND (archived=0 OR archived IS NULL) ORDER BY position', (col['id'],)
             ):
                 card_dict = dict(c)
                 card_dict['labels'] = labels_by_card.get(c['id'], [])
@@ -862,7 +862,7 @@ def card_deep_link(card_id):
         return redirect(url_for('login'))
     with get_db() as conn:
         row = conn.execute(
-            'SELECT co.board_id FROM cards ca JOIN columns co ON co.id = ca.column_id WHERE ca.id=?',
+            'SELECT co.board_id FROM cards ca JOIN columns co ON co.id = ca.column_id WHERE ca.id=%s',
             (card_id,)
         ).fetchone()
     if not row:
@@ -879,7 +879,7 @@ def _attach_card_extras(conn, rows):
     card_ids       = [r['id'] for r in rows]
     labels_by_card = {}
     if card_ids:
-        ph = ','.join('?' * len(card_ids))
+        ph = ','.join(['%s'] * len(card_ids))
         for l in conn.execute(f'''
             SELECT * FROM card_labels WHERE card_id IN ({ph}) ORDER BY position, id
         ''', card_ids):
@@ -902,18 +902,18 @@ def workspace_tasks(ws_id):
     board_ids = _get_board_ids()
 
     with get_db() as conn:
-        ws = conn.execute('SELECT * FROM workspaces WHERE id=?', (ws_id,)).fetchone()
+        ws = conn.execute('SELECT * FROM workspaces WHERE id=%s', (ws_id,)).fetchone()
         if not ws:
             return redirect(url_for('boards'))
         all_workspaces = [dict(w) for w in conn.execute('SELECT * FROM workspaces ORDER BY name')]
 
-        bq     = 'SELECT id, name, color FROM boards WHERE workspace_id=?'
+        bq     = 'SELECT id, name, color FROM boards WHERE workspace_id=%s'
         params = [ws_id]
         if board_ids is not None:
             if len(board_ids) == 0:
                 board_rows = []
             else:
-                ph      = ','.join('?' * len(board_ids))
+                ph      = ','.join(['%s'] * len(board_ids))
                 bq     += f' AND id IN ({ph})'
                 params += board_ids
                 board_rows = conn.execute(bq, params).fetchall()
@@ -925,7 +925,7 @@ def workspace_tasks(ws_id):
 
         cards = []
         if ws_board_ids:
-            ph   = ','.join('?' * len(ws_board_ids))
+            ph   = ','.join(['%s'] * len(ws_board_ids))
             rows = conn.execute(f'''
                 SELECT ca.*, co.name AS column_name, b.name AS board_name, b.color AS board_color
                 FROM cards ca
@@ -963,11 +963,11 @@ def my_tasks():
                 JOIN columns co ON co.id = ca.column_id
                 JOIN boards b ON b.id = co.board_id
                 JOIN card_members cm ON cm.card_id = ca.id
-                WHERE cm.user_email=? AND (ca.archived=0 OR ca.archived IS NULL)
+                WHERE cm.user_email=%s AND (ca.archived=0 OR ca.archived IS NULL)
             '''
             params = [user_email]
             if board_ids is not None:
-                ph   = ','.join('?' * len(board_ids))
+                ph   = ','.join(['%s'] * len(board_ids))
                 sql += f' AND b.id IN ({ph})'
                 params += board_ids
             sql += '''
@@ -1004,12 +1004,12 @@ def reports_overdue():
         '''
         params = []
         if board_ids is not None:
-            ph = ','.join('?' * len(board_ids))
+            ph = ','.join(['%s'] * len(board_ids))
             sql += f' AND b.id IN ({ph})'
             params += board_ids
         sql += '''
             ORDER BY
-                CASE WHEN ca.due_date < ? THEN 0 ELSE 1 END,
+                CASE WHEN ca.due_date < %s THEN 0 ELSE 1 END,
                 substr(ca.due_date,7,4) || substr(ca.due_date,4,2) || substr(ca.due_date,1,2)
                     || substr(ca.due_date,12,5)
         '''
@@ -1058,7 +1058,7 @@ def api_get_boards():
         elif len(board_ids) == 0:
             return jsonify([])
         else:
-            ph   = ','.join('?' * len(board_ids))
+            ph   = ','.join(['%s'] * len(board_ids))
             rows = conn.execute(q + f' WHERE b.id IN ({ph}) ORDER BY w.name, b.name', board_ids).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -1076,12 +1076,12 @@ def api_create_board():
         company = ''
         ws_color = color
         if workspace_id:
-            ws = conn.execute('SELECT * FROM workspaces WHERE id=?', (workspace_id,)).fetchone()
+            ws = conn.execute('SELECT * FROM workspaces WHERE id=%s', (workspace_id,)).fetchone()
             if ws:
                 company  = ws['name']
                 ws_color = ws['color']
         cur = conn.execute(
-            'INSERT INTO boards (name,company,color,workspace_id,description) VALUES(?,?,?,?,?)',
+            'INSERT INTO boards (name,company,color,workspace_id,description) VALUES(%s,%s,%s,%s,%s)',
             (name, company, color, workspace_id, description)
         )
         bid = cur.lastrowid
@@ -1089,18 +1089,18 @@ def api_create_board():
         # Из шаблона доски (Should №9) — переносим колонки и кастомные поля, без карточек
         if template_id:
             for col in conn.execute(
-                'SELECT * FROM board_template_columns WHERE template_id=? ORDER BY position', (template_id,)
+                'SELECT * FROM board_template_columns WHERE template_id=%s ORDER BY position', (template_id,)
             ):
                 conn.execute(
-                    'INSERT INTO columns (board_id, name, position) VALUES (?,?,?)',
+                    'INSERT INTO columns (board_id, name, position) VALUES (%s,%s,%s)',
                     (bid, col['name'], col['position'])
                 )
             for f in conn.execute(
-                'SELECT * FROM board_template_custom_fields WHERE template_id=? ORDER BY position', (template_id,)
+                'SELECT * FROM board_template_custom_fields WHERE template_id=%s ORDER BY position', (template_id,)
             ):
                 conn.execute(
                     '''INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position)
-                       VALUES (?,?,?,?,?,?)''',
+                       VALUES (%s,%s,%s,%s,%s,%s)''',
                     (bid, f['name'], f['type'], f['options'], f['show_on_card'], f['position'])
                 )
     return jsonify({
@@ -1135,21 +1135,21 @@ def api_save_board_as_template(board_id):
     if board_ids is not None and board_id not in board_ids:
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        cur = conn.execute('INSERT INTO board_templates (name) VALUES (?)', (name,))
+        cur = conn.execute('INSERT INTO board_templates (name) VALUES (%s)', (name,))
         template_id = cur.lastrowid
 
         for col in conn.execute(
-            'SELECT * FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
+            'SELECT * FROM columns WHERE board_id=%s AND (archived=0 OR archived IS NULL) ORDER BY position',
             (board_id,)
         ):
             conn.execute(
-                'INSERT INTO board_template_columns (template_id, name, position) VALUES (?,?,?)',
+                'INSERT INTO board_template_columns (template_id, name, position) VALUES (%s,%s,%s)',
                 (template_id, col['name'], col['position'])
             )
-        for f in conn.execute('SELECT * FROM custom_fields WHERE board_id=? ORDER BY position', (board_id,)):
+        for f in conn.execute('SELECT * FROM custom_fields WHERE board_id=%s ORDER BY position', (board_id,)):
             conn.execute(
                 '''INSERT INTO board_template_custom_fields
-                   (template_id, name, type, options, show_on_card, position) VALUES (?,?,?,?,?,?)''',
+                   (template_id, name, type, options, show_on_card, position) VALUES (%s,%s,%s,%s,%s,%s)''',
                 (template_id, f['name'], f['type'], f['options'], f['show_on_card'], f['position'])
             )
     return jsonify({'id': template_id, 'name': name}), 201
@@ -1159,7 +1159,7 @@ def api_save_board_as_template(board_id):
 def api_delete_board_template(template_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('DELETE FROM board_templates WHERE id=?', (template_id,))
+        conn.execute('DELETE FROM board_templates WHERE id=%s', (template_id,))
     return jsonify({'ok': True})
 
 @app.route('/api/boards/<int:board_id>/duplicate', methods=['POST'])
@@ -1169,14 +1169,14 @@ def api_duplicate_board(board_id):
     if board_ids is not None and board_id not in board_ids:
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        src = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        src = conn.execute('SELECT * FROM boards WHERE id=%s', (board_id,)).fetchone()
         if not src: return jsonify({'error': 'not found'}), 404
         new_board_id = _duplicate_board(conn, board_id)
         b = conn.execute('''
             SELECT b.id, b.name, b.company, b.color, b.bg_image, b.workspace_id,
                    w.name AS workspace_name, w.color AS workspace_color
             FROM boards b LEFT JOIN workspaces w ON w.id = b.workspace_id
-            WHERE b.id=?
+            WHERE b.id=%s
         ''', (new_board_id,)).fetchone()
     return jsonify(dict(b))
 
@@ -1192,11 +1192,11 @@ def api_update_board(board_id):
     if not name and not color:
         return jsonify({'error': 'nothing to update'}), 400
     with get_db() as conn:
-        b = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        b = conn.execute('SELECT * FROM boards WHERE id=%s', (board_id,)).fetchone()
         if not b: return jsonify({'error': 'not found'}), 404
         new_name  = name  or b['name']
         new_color = color or b['color']
-        conn.execute('UPDATE boards SET name=?, color=? WHERE id=?', (new_name, new_color, board_id))
+        conn.execute('UPDATE boards SET name=%s, color=%s WHERE id=%s', (new_name, new_color, board_id))
     return jsonify({'ok': True, 'name': new_name, 'color': new_color})
 
 @app.route('/api/boards/<int:board_id>/workspace', methods=['PUT'])
@@ -1206,16 +1206,16 @@ def api_move_board_workspace(board_id):
     d = request.get_json() or {}
     workspace_id = d.get('workspace_id') or None
     with get_db() as conn:
-        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        board = conn.execute('SELECT * FROM boards WHERE id=%s', (board_id,)).fetchone()
         if not board:
             return jsonify({'error': 'not found'}), 404
         company, ws_color = '', board['color']
         if workspace_id:
-            ws = conn.execute('SELECT * FROM workspaces WHERE id=?', (workspace_id,)).fetchone()
+            ws = conn.execute('SELECT * FROM workspaces WHERE id=%s', (workspace_id,)).fetchone()
             if not ws:
                 return jsonify({'error': 'workspace not found'}), 404
             company, ws_color = ws['name'], ws['color']
-        conn.execute('UPDATE boards SET workspace_id=?, company=? WHERE id=?', (workspace_id, company, board_id))
+        conn.execute('UPDATE boards SET workspace_id=%s, company=%s WHERE id=%s', (workspace_id, company, board_id))
     return jsonify({
         'ok': True, 'workspace_id': workspace_id,
         'workspace_name': company, 'workspace_color': ws_color
@@ -1234,14 +1234,14 @@ def api_board_background_upload(board_id):
         return jsonify({'error': 'unsupported format'}), 400
     filename = f'{uuid.uuid4().hex}.{ext}'
     with get_db() as conn:
-        b = conn.execute('SELECT bg_image FROM boards WHERE id=?', (board_id,)).fetchone()
+        b = conn.execute('SELECT bg_image FROM boards WHERE id=%s', (board_id,)).fetchone()
         if not b: return jsonify({'error': 'not found'}), 404
         if b['bg_image']:
             old_path = os.path.join(BOARD_BG_FOLDER, b['bg_image'])
             if os.path.exists(old_path):
                 os.remove(old_path)
         f.save(os.path.join(BOARD_BG_FOLDER, filename))
-        conn.execute('UPDATE boards SET bg_image=? WHERE id=?', (filename, board_id))
+        conn.execute('UPDATE boards SET bg_image=%s WHERE id=%s', (filename, board_id))
     return jsonify({'ok': True, 'bg_url': f'/static/uploads/board-bg/{filename}'})
 
 @app.route('/api/boards/<int:board_id>/background', methods=['DELETE'])
@@ -1251,13 +1251,13 @@ def api_board_background_delete(board_id):
     if board_ids is not None and board_id not in board_ids:
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        b = conn.execute('SELECT bg_image FROM boards WHERE id=?', (board_id,)).fetchone()
+        b = conn.execute('SELECT bg_image FROM boards WHERE id=%s', (board_id,)).fetchone()
         if not b: return jsonify({'error': 'not found'}), 404
         if b['bg_image']:
             old_path = os.path.join(BOARD_BG_FOLDER, b['bg_image'])
             if os.path.exists(old_path):
                 os.remove(old_path)
-            conn.execute('UPDATE boards SET bg_image=NULL WHERE id=?', (board_id,))
+            conn.execute('UPDATE boards SET bg_image=NULL WHERE id=%s', (board_id,))
     return jsonify({'ok': True})
 
 
@@ -1266,27 +1266,27 @@ def api_delete_board(board_id):
     if 'user' not in session or session['user']['role'] != 'admin':
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        board = conn.execute('SELECT * FROM boards WHERE id=%s', (board_id,)).fetchone()
         if not board:
             return jsonify({'error': 'not found'}), 404
 
-        col_ids = [r[0] for r in conn.execute('SELECT id FROM columns WHERE board_id=?', (board_id,)).fetchall()]
+        col_ids = [r[0] for r in conn.execute('SELECT id FROM columns WHERE board_id=%s', (board_id,)).fetchall()]
         card_ids = []
         if col_ids:
-            ph = ','.join('?' * len(col_ids))
+            ph = ','.join(['%s'] * len(col_ids))
             card_ids = [r[0] for r in conn.execute(f'SELECT id FROM cards WHERE column_id IN ({ph})', col_ids).fetchall()]
         if card_ids:
-            ph = ','.join('?' * len(card_ids))
+            ph = ','.join(['%s'] * len(card_ids))
             conn.execute(f'DELETE FROM checklist_items WHERE card_id IN ({ph})', card_ids)
             conn.execute(f'DELETE FROM checklists WHERE card_id IN ({ph})', card_ids)
             conn.execute(f'DELETE FROM comments WHERE card_id IN ({ph})', card_ids)
             conn.execute(f'DELETE FROM attachments WHERE card_id IN ({ph})', card_ids)
             conn.execute(f'DELETE FROM card_members WHERE card_id IN ({ph})', card_ids)
             conn.execute(f'DELETE FROM cards WHERE id IN ({ph})', card_ids)
-        conn.execute('DELETE FROM columns WHERE board_id=?', (board_id,))
-        conn.execute('DELETE FROM board_access WHERE board_id=?', (board_id,))
+        conn.execute('DELETE FROM columns WHERE board_id=%s', (board_id,))
+        conn.execute('DELETE FROM board_access WHERE board_id=%s', (board_id,))
         bg_image = board['bg_image']
-        conn.execute('DELETE FROM boards WHERE id=?', (board_id,))
+        conn.execute('DELETE FROM boards WHERE id=%s', (board_id,))
 
     if bg_image:
         bg_path = os.path.join(BOARD_BG_FOLDER, bg_image)
@@ -1317,11 +1317,11 @@ def api_create_workspace():
     with get_db() as conn:
         try:
             cur = conn.execute(
-                'INSERT INTO workspaces (name, color) VALUES(?,?)',
+                'INSERT INTO workspaces (name, color) VALUES(%s,%s)',
                 (name, d.get('color', '#0052cc'))
             )
             wid = cur.lastrowid
-            ws  = dict(conn.execute('SELECT * FROM workspaces WHERE id=?', (wid,)).fetchone())
+            ws  = dict(conn.execute('SELECT * FROM workspaces WHERE id=%s', (wid,)).fetchone())
         except sqlite3.IntegrityError:
             return jsonify({'error': 'already exists'}), 409
     return jsonify(ws), 201
@@ -1334,12 +1334,12 @@ def api_update_workspace(ws_id):
     fields, values = [], []
     for f in ['name', 'color']:
         if f in d:
-            fields.append(f'{f}=?')
+            fields.append(f'{f}=%s')
             values.append(d[f])
     if fields:
         values.append(ws_id)
         with get_db() as conn:
-            conn.execute(f'UPDATE workspaces SET {",".join(fields)} WHERE id=?', values)
+            conn.execute(f'UPDATE workspaces SET {",".join(fields)} WHERE id=%s', values)
     return jsonify({'ok': True})
 
 @app.route('/api/workspaces/<int:ws_id>', methods=['DELETE'])
@@ -1348,8 +1348,8 @@ def api_delete_workspace(ws_id):
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
         # Отвязываем доски от workspace (не удаляем)
-        conn.execute('UPDATE boards SET workspace_id=NULL WHERE workspace_id=?', (ws_id,))
-        conn.execute('DELETE FROM workspaces WHERE id=?', (ws_id,))
+        conn.execute('UPDATE boards SET workspace_id=NULL WHERE workspace_id=%s', (ws_id,))
+        conn.execute('DELETE FROM workspaces WHERE id=%s', (ws_id,))
     return jsonify({'ok': True})
 
 
@@ -1403,17 +1403,17 @@ def api_create_user():
         return jsonify({'email': email, 'name': name, 'role': role, 'boards': boards}), 201
 
     with get_db() as conn:
-        if conn.execute('SELECT 1 FROM users WHERE email=?', (email,)).fetchone():
+        if conn.execute('SELECT 1 FROM users WHERE email=%s', (email,)).fetchone():
             return jsonify({'error': 'Пользователь с таким email уже существует'}), 409
         cur = conn.execute(
-            'INSERT INTO users (email, name, password_hash, role) VALUES (?,?,?,?)',
+            'INSERT INTO users (email, name, password_hash, role) VALUES (%s,%s,%s,%s)',
             (email, name, generate_password_hash(password), role)
         )
         user_id = cur.lastrowid
         if role != 'admin' and boards:
             for bid in (b.strip() for b in boards.split(',')):
                 if bid.isdigit():
-                    conn.execute('INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (?,?)', (user_id, int(bid)))
+                    conn.execute('INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (%s,%s)', (user_id, int(bid)))
     return jsonify({'email': email, 'name': name, 'role': role, 'boards': boards}), 201
 
 
@@ -1437,20 +1437,20 @@ def api_update_user(email):
         return jsonify({'ok': ok}) if ok else (jsonify({'error': 'не найден'}), 404)
 
     with get_db() as conn:
-        user = conn.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+        user = conn.execute('SELECT id FROM users WHERE email=%s', (email,)).fetchone()
         if not user:
             return jsonify({'error': 'не найден'}), 404
         if name is not None:
-            conn.execute('UPDATE users SET name=? WHERE email=?', (name, email))
+            conn.execute('UPDATE users SET name=%s WHERE email=%s', (name, email))
         if password is not None:
-            conn.execute('UPDATE users SET password_hash=? WHERE email=?', (generate_password_hash(password), email))
+            conn.execute('UPDATE users SET password_hash=%s WHERE email=%s', (generate_password_hash(password), email))
         if role is not None:
-            conn.execute('UPDATE users SET role=? WHERE email=?', (role, email))
+            conn.execute('UPDATE users SET role=%s WHERE email=%s', (role, email))
         if boards is not None:
-            conn.execute('DELETE FROM board_access WHERE user_id=?', (user['id'],))
+            conn.execute('DELETE FROM board_access WHERE user_id=%s', (user['id'],))
             for bid in (b.strip() for b in boards.split(',')):
                 if bid.isdigit():
-                    conn.execute('INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (?,?)', (user['id'], int(bid)))
+                    conn.execute('INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (%s,%s)', (user['id'], int(bid)))
     return jsonify({'ok': True})
 
 
@@ -1464,7 +1464,7 @@ def api_delete_user(email):
         if not ok:
             return jsonify({'error': 'не найден'}), 404
     with get_db() as conn:
-        conn.execute('DELETE FROM users WHERE email=?', (email,))
+        conn.execute('DELETE FROM users WHERE email=%s', (email,))
     return jsonify({'ok': True})
 
 
@@ -1499,7 +1499,7 @@ def api_create_invite():
     token = uuid.uuid4().hex[:16]
     with get_db() as conn:
         conn.execute(
-            'INSERT INTO invites (token, email, role, board_ids, created_by) VALUES (?,?,?,?,?)',
+            'INSERT INTO invites (token, email, role, board_ids, created_by) VALUES (%s,%s,%s,%s,%s)',
             (token, email, role, boards, session['user']['email'])
         )
     base = request.host_url.rstrip('/')
@@ -1510,7 +1510,7 @@ def api_create_invite():
 @app.route('/invite/<token>')
 def invite_page(token):
     with get_db() as conn:
-        inv = conn.execute('SELECT * FROM invites WHERE token=?', (token,)).fetchone()
+        inv = conn.execute('SELECT * FROM invites WHERE token=%s', (token,)).fetchone()
     if not inv:
         return render_template('invite.html', error='Ссылка недействительна', invite=None)
     if inv['used_at']:
@@ -1529,7 +1529,7 @@ def invite_page(token):
 @app.route('/invite/<token>', methods=['POST'])
 def invite_register(token):
     with get_db() as conn:
-        inv = conn.execute('SELECT * FROM invites WHERE token=?', (token,)).fetchone()
+        inv = conn.execute('SELECT * FROM invites WHERE token=%s', (token,)).fetchone()
     if not inv or inv['used_at']:
         return render_template('invite.html', error='Ссылка недействительна', invite=None)
     name = request.form.get('name', '').strip()
@@ -1542,26 +1542,26 @@ def invite_register(token):
     pw_hash = generate_password_hash(password)
     email = inv['email']
     with get_db() as conn:
-        existing = conn.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+        existing = conn.execute('SELECT id FROM users WHERE email=%s', (email,)).fetchone()
         if existing:
-            conn.execute('UPDATE users SET name=?, password_hash=? WHERE email=?', (name, pw_hash, email))
+            conn.execute('UPDATE users SET name=%s, password_hash=%s WHERE email=%s', (name, pw_hash, email))
         else:
             conn.execute(
-                'INSERT INTO users (email, name, password_hash, role) VALUES (?,?,?,?)',
+                'INSERT INTO users (email, name, password_hash, role) VALUES (%s,%s,%s,%s)',
                 (email, name, pw_hash, inv['role'])
             )
         if inv['board_ids']:
-            user = conn.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+            user = conn.execute('SELECT id FROM users WHERE email=%s', (email,)).fetchone()
             if user:
                 for bid in inv['board_ids'].split(','):
                     bid = bid.strip()
                     if bid.isdigit():
                         conn.execute(
-                            'INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (?,?)',
+                            'INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (%s,%s)',
                             (user['id'], int(bid))
                         )
         from datetime import datetime
-        conn.execute('UPDATE invites SET used_at=? WHERE token=?',
+        conn.execute('UPDATE invites SET used_at=%s WHERE token=%s',
                      (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), token))
     return redirect(url_for('login'))
 
@@ -1577,7 +1577,7 @@ def _notify_watchers(conn, card_id, actor_email, actor_name, change_type, extra_
         FROM cards ca
         JOIN columns co ON co.id = ca.column_id
         JOIN boards b ON b.id = co.board_id
-        WHERE ca.id = ?
+        WHERE ca.id = %s
     ''', (card_id,)).fetchone()
     if not card_row:
         return
@@ -1586,11 +1586,11 @@ def _notify_watchers(conn, card_id, actor_email, actor_name, change_type, extra_
 
     emails = set()
     # card watchers
-    for r in conn.execute('SELECT user_email FROM card_watchers WHERE card_id=?', (card_id,)).fetchall():
+    for r in conn.execute('SELECT user_email FROM card_watchers WHERE card_id=%s', (card_id,)).fetchall():
         emails.add(r['user_email'].strip().lower())
     # board watchers
     if board_id:
-        for r in conn.execute('SELECT user_email FROM board_watchers WHERE board_id=?', (board_id,)).fetchall():
+        for r in conn.execute('SELECT user_email FROM board_watchers WHERE board_id=%s', (board_id,)).fetchall():
             emails.add(r['user_email'].strip().lower())
 
     payload = json.dumps({
@@ -1610,7 +1610,7 @@ def _notify_watchers(conn, card_id, actor_email, actor_name, change_type, extra_
         if not _user_notif_enabled(conn, email, notif_type):
             continue
         conn.execute(
-            'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
+            'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (%s,%s,%s,%s,%s)',
             (email, notif_type, card_id, payload, board_id)
         )
 
@@ -1621,13 +1621,13 @@ def api_toggle_card_watch(card_id):
     email = session['user']['email']
     with get_db() as conn:
         existing = conn.execute(
-            'SELECT 1 FROM card_watchers WHERE card_id=? AND user_email=?', (card_id, email)
+            'SELECT 1 FROM card_watchers WHERE card_id=%s AND user_email=%s', (card_id, email)
         ).fetchone()
         if existing:
-            conn.execute('DELETE FROM card_watchers WHERE card_id=? AND user_email=?', (card_id, email))
+            conn.execute('DELETE FROM card_watchers WHERE card_id=%s AND user_email=%s', (card_id, email))
             watching = False
         else:
-            conn.execute('INSERT OR IGNORE INTO card_watchers (card_id, user_email) VALUES (?,?)', (card_id, email))
+            conn.execute('INSERT OR IGNORE INTO card_watchers (card_id, user_email) VALUES (%s,%s)', (card_id, email))
             watching = True
     return jsonify({'ok': True, 'watching': watching})
 
@@ -1638,13 +1638,13 @@ def api_toggle_board_watch(board_id):
     email = session['user']['email']
     with get_db() as conn:
         existing = conn.execute(
-            'SELECT 1 FROM board_watchers WHERE board_id=? AND user_email=?', (board_id, email)
+            'SELECT 1 FROM board_watchers WHERE board_id=%s AND user_email=%s', (board_id, email)
         ).fetchone()
         if existing:
-            conn.execute('DELETE FROM board_watchers WHERE board_id=? AND user_email=?', (board_id, email))
+            conn.execute('DELETE FROM board_watchers WHERE board_id=%s AND user_email=%s', (board_id, email))
             watching = False
         else:
-            conn.execute('INSERT OR IGNORE INTO board_watchers (board_id, user_email) VALUES (?,?)', (board_id, email))
+            conn.execute('INSERT OR IGNORE INTO board_watchers (board_id, user_email) VALUES (%s,%s)', (board_id, email))
             watching = True
     return jsonify({'ok': True, 'watching': watching})
 
@@ -1654,7 +1654,7 @@ def api_card_watchers(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         rows = conn.execute(
-            'SELECT user_email FROM card_watchers WHERE card_id=?', (card_id,)
+            'SELECT user_email FROM card_watchers WHERE card_id=%s', (card_id,)
         ).fetchall()
     return jsonify([r['user_email'] for r in rows])
 
@@ -1677,14 +1677,14 @@ def _get_user_from_token():
     token_hash = _hash_token(token)
     with get_db() as conn:
         row = conn.execute(
-            "SELECT user_email FROM api_tokens WHERE token_hash=?", (token_hash,)
+            "SELECT user_email FROM api_tokens WHERE token_hash=%s", (token_hash,)
         ).fetchone()
         if not row:
             return None
         # обновить last_used
-        conn.execute("UPDATE api_tokens SET last_used=datetime('now','localtime') WHERE token_hash=?",
+        conn.execute("UPDATE api_tokens SET last_used=datetime('now','localtime') WHERE token_hash=%s",
                      (token_hash,))
-        user_row = conn.execute("SELECT email, name, role FROM users WHERE email=?",
+        user_row = conn.execute("SELECT email, name, role FROM users WHERE email=%s",
                                 (row['user_email'],)).fetchone()
         if not user_row:
             return None
@@ -1705,7 +1705,7 @@ def api_list_tokens():
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, name, created_at, last_used FROM api_tokens WHERE user_email=?",
+            "SELECT id, name, created_at, last_used FROM api_tokens WHERE user_email=%s",
             (session['user']['email'],)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
@@ -1720,7 +1720,7 @@ def api_create_token():
     token_hash = _hash_token(token)
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO api_tokens (user_email, name, token_hash) VALUES (?,?,?)",
+            "INSERT INTO api_tokens (user_email, name, token_hash) VALUES (%s,%s,%s)",
             (session['user']['email'], name, token_hash)
         )
     return jsonify({'ok': True, 'token': token, 'name': name})
@@ -1730,7 +1730,7 @@ def api_create_token():
 def api_delete_token(token_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute("DELETE FROM api_tokens WHERE id=? AND user_email=?",
+        conn.execute("DELETE FROM api_tokens WHERE id=%s AND user_email=%s",
                      (token_id, session['user']['email']))
     return jsonify({'ok': True})
 
@@ -1825,7 +1825,7 @@ def api_create_webhook():
     fmt = data.get('format', 'raw')
     with get_db() as conn:
         cur = conn.execute(
-            'INSERT INTO webhooks (url, events, board_id, secret, created_by, format) VALUES (?,?,?,?,?,?)',
+            'INSERT INTO webhooks (url, events, board_id, secret, created_by, format) VALUES (%s,%s,%s,%s,%s,%s)',
             (url, events, board_id, secret, session['user']['email'], fmt)
         )
         wh_id = cur.lastrowid
@@ -1837,7 +1837,7 @@ def api_delete_webhook(wh_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        conn.execute('DELETE FROM webhooks WHERE id=?', (wh_id,))
+        conn.execute('DELETE FROM webhooks WHERE id=%s', (wh_id,))
     return jsonify({'ok': True})
 
 
@@ -1846,8 +1846,8 @@ def api_toggle_webhook(wh_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        conn.execute('UPDATE webhooks SET active = 1 - active WHERE id=?', (wh_id,))
-        row = conn.execute('SELECT active FROM webhooks WHERE id=?', (wh_id,)).fetchone()
+        conn.execute('UPDATE webhooks SET active = 1 - active WHERE id=%s', (wh_id,))
+        row = conn.execute('SELECT active FROM webhooks WHERE id=%s', (wh_id,)).fetchone()
     return jsonify({'ok': True, 'active': row['active'] if row else 0})
 
 
@@ -1876,7 +1876,7 @@ def board_ical(board_id):
         return jsonify({'error': 'forbidden'}), 403
 
     with get_db() as conn:
-        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        board = conn.execute('SELECT * FROM boards WHERE id=%s', (board_id,)).fetchone()
         if not board:
             return jsonify({'error': 'Not found'}), 404
         rows = conn.execute('''
@@ -1884,7 +1884,7 @@ def board_ical(board_id):
                    co.name AS col_name, ca.created_at
             FROM cards ca
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id = ? AND ca.due_date != '' AND ca.due_date IS NOT NULL
+            WHERE co.board_id = %s AND ca.due_date != '' AND ca.due_date IS NOT NULL
             ORDER BY ca.due_date
         ''', (board_id,)).fetchall()
 
@@ -1944,7 +1944,7 @@ def board_calendar(board_id):
     if board_ids is not None and board_id not in board_ids:
         return 'Access denied', 403
     with get_db() as conn:
-        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        board = conn.execute('SELECT * FROM boards WHERE id=%s', (board_id,)).fetchone()
         if not board:
             return 'Not found', 404
         # Get all cards with due dates for this board
@@ -1953,7 +1953,7 @@ def board_calendar(board_id):
                    ca.importance, co.name AS col_name, co.color AS col_color
             FROM cards ca
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id=? AND ca.due_date != '' AND ca.due_date IS NOT NULL
+            WHERE co.board_id=%s AND ca.due_date != '' AND ca.due_date IS NOT NULL
             ORDER BY ca.due_date
         ''', (board_id,)).fetchall()
     return render_template('calendar.html', board=board, cards=[dict(c) for c in cards])
@@ -1989,14 +1989,14 @@ def api_summarize_card(card_id):
     """AI-суммаризация карточки (Nice №75)."""
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        card = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+        card = conn.execute('SELECT * FROM cards WHERE id=%s', (card_id,)).fetchone()
         if not card: return jsonify({'error': 'not found'}), 404
         comments = conn.execute(
-            'SELECT text FROM comments WHERE card_id=? ORDER BY created_at', (card_id,)
+            'SELECT text FROM comments WHERE card_id=%s ORDER BY created_at', (card_id,)
         ).fetchall()
         text = (card['description'] or '') + '\n' + '\n'.join(c['text'] for c in comments if c['text'])
         summary = _summarize_text(text)
-        conn.execute('UPDATE cards SET ai_summary=? WHERE id=?', (summary, card_id))
+        conn.execute('UPDATE cards SET ai_summary=%s WHERE id=%s', (summary, card_id))
     return jsonify({'summary': summary})
 
 
@@ -2004,7 +2004,7 @@ def api_summarize_card(card_id):
 def api_get_summary(card_id):
     if 'user' not in session: return jsonify({'summary': ''})
     with get_db() as conn:
-        row = conn.execute('SELECT ai_summary FROM cards WHERE id=?', (card_id,)).fetchone()
+        row = conn.execute('SELECT ai_summary FROM cards WHERE id=%s', (card_id,)).fetchone()
     return jsonify({'summary': row['ai_summary'] if row and row['ai_summary'] else ''})
 
 
@@ -2073,13 +2073,13 @@ def api_save_slack():
     board_id = data.get('board_id', 0)
     events = data.get('events', '*').strip()
     with get_db() as conn:
-        existing = conn.execute('SELECT id FROM slack_settings WHERE board_id=?', (board_id,)).fetchone()
+        existing = conn.execute('SELECT id FROM slack_settings WHERE board_id=%s', (board_id,)).fetchone()
         if existing:
-            conn.execute('UPDATE slack_settings SET webhook_url=?, events=?, active=?, updated_at=datetime("now","localtime") WHERE id=?',
+            conn.execute('UPDATE slack_settings SET webhook_url=%s, events=%s, active=%s, updated_at=datetime("now","localtime") WHERE id=%s',
                          (url, events, 1 if url else 0, existing['id']))
             wh_id = existing['id']
         else:
-            cur = conn.execute('INSERT INTO slack_settings (webhook_url, board_id, events) VALUES (?,?,?)',
+            cur = conn.execute('INSERT INTO slack_settings (webhook_url, board_id, events) VALUES (%s,%s,%s)',
                                (url, board_id, events))
             wh_id = cur.lastrowid
     return jsonify({'ok': True, 'id': wh_id})
@@ -2090,7 +2090,7 @@ def api_delete_slack(sl_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        conn.execute('DELETE FROM slack_settings WHERE id=?', (sl_id,))
+        conn.execute('DELETE FROM slack_settings WHERE id=%s', (sl_id,))
     return jsonify({'ok': True})
 
 
@@ -2099,8 +2099,8 @@ def api_toggle_slack(sl_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     if session['user'].get('role') != 'admin': return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        conn.execute('UPDATE slack_settings SET active = 1 - active WHERE id=?', (sl_id,))
-        row = conn.execute('SELECT active FROM slack_settings WHERE id=?', (sl_id,)).fetchone()
+        conn.execute('UPDATE slack_settings SET active = 1 - active WHERE id=%s', (sl_id,))
+        row = conn.execute('SELECT active FROM slack_settings WHERE id=%s', (sl_id,)).fetchone()
     return jsonify({'ok': True, 'active': row['active'] if row else 0})
 
 
@@ -2125,8 +2125,8 @@ def api_create_column():
     board_id, name = d.get('board_id'), d.get('name', '').strip()
     if not board_id or not name: return jsonify({'error': 'missing fields'}), 400
     with get_db() as conn:
-        pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM columns WHERE board_id=?', (board_id,)).fetchone()[0]
-        cur = conn.execute('INSERT INTO columns (board_id,name,position) VALUES(?,?,?)', (board_id, name, pos))
+        pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM columns WHERE board_id=%s', (board_id,)).fetchone()[0]
+        cur = conn.execute('INSERT INTO columns (board_id,name,position) VALUES(%s,%s,%s)', (board_id, name, pos))
         cid = cur.lastrowid
     return jsonify({'id': cid, 'name': name})
 
@@ -2139,7 +2139,7 @@ def api_get_board_columns(board_id):
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
         rows = conn.execute(
-            'SELECT id, name FROM columns WHERE board_id=? AND (archived=0 OR archived IS NULL) ORDER BY position',
+            'SELECT id, name FROM columns WHERE board_id=%s AND (archived=0 OR archived IS NULL) ORDER BY position',
             (board_id,)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
@@ -2175,7 +2175,7 @@ def api_get_board_members(board_id):
             rows = conn.execute('''
                 SELECT DISTINCT u.email, u.name
                 FROM users u
-                LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = ?
+                LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = %s
                     AND (ba.expires_at IS NULL OR ba.expires_at='' OR ba.expires_at >= date('now','localtime'))
                 WHERE u.role = 'admin' OR ba.user_id IS NOT NULL
                 ORDER BY u.name
@@ -2184,7 +2184,7 @@ def api_get_board_members(board_id):
             rows = conn.execute('''
                 SELECT DISTINCT u.email, u.name
                 FROM users u
-                JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = ?
+                JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = %s
                     AND (ba.expires_at IS NULL OR ba.expires_at='' OR ba.expires_at >= date('now','localtime'))
                 WHERE u.role != 'admin'
                 ORDER BY u.name
@@ -2203,7 +2203,7 @@ def api_duplicate_column(col_id):
     d = request.get_json(silent=True) or {}
     target_board_id = d.get('target_board_id')
     with get_db() as conn:
-        src = conn.execute('SELECT * FROM columns WHERE id=?', (col_id,)).fetchone()
+        src = conn.execute('SELECT * FROM columns WHERE id=%s', (col_id,)).fetchone()
         if not src: return jsonify({'error': 'not found'}), 404
         target_board_id = int(target_board_id) if target_board_id else src['board_id']
         cross_board = target_board_id != src['board_id']
@@ -2211,17 +2211,17 @@ def api_duplicate_column(col_id):
             board_ids = _get_board_ids()
             if board_ids is not None and target_board_id not in board_ids:
                 return jsonify({'error': 'forbidden'}), 403
-            if not conn.execute('SELECT 1 FROM boards WHERE id=?', (target_board_id,)).fetchone():
+            if not conn.execute('SELECT 1 FROM boards WHERE id=%s', (target_board_id,)).fetchone():
                 return jsonify({'error': 'target board not found'}), 404
 
         pos = conn.execute(
-            'SELECT COALESCE(MAX(position),-1)+1 FROM columns WHERE board_id=?', (target_board_id,)
+            'SELECT COALESCE(MAX(position),-1)+1 FROM columns WHERE board_id=%s', (target_board_id,)
         ).fetchone()[0]
         name_suffix = '' if cross_board else ' (копия)'
         new_col_id = _duplicate_column(conn, col_id, target_board_id, pos, name_suffix=name_suffix)
-        new_col = dict(conn.execute('SELECT * FROM columns WHERE id=?', (new_col_id,)).fetchone())
+        new_col = dict(conn.execute('SELECT * FROM columns WHERE id=%s', (new_col_id,)).fetchone())
         new_col['cards'] = [dict(c) for c in conn.execute(
-            'SELECT * FROM cards WHERE column_id=? ORDER BY position', (new_col_id,)
+            'SELECT * FROM cards WHERE column_id=%s ORDER BY position', (new_col_id,)
         )]
     return jsonify(new_col)
 
@@ -2235,29 +2235,29 @@ def api_create_card():
     col_id, title = d.get('column_id'), d.get('title', '').strip()
     if not col_id or not title: return jsonify({'error': 'missing fields'}), 400
     with get_db() as conn:
-        pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=?', (col_id,)).fetchone()[0]
+        pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=%s', (col_id,)).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO cards (column_id,title,label,label_color,due_date,start_date,position) VALUES(?,?,?,?,?,?,?)',
+            'INSERT INTO cards (column_id,title,label,label_color,due_date,start_date,position) VALUES(%s,%s,%s,%s,%s,%s,%s)',
             (col_id, title, d.get('label',''), d.get('label_color',''), d.get('due_date',''), d.get('start_date',''), pos)
         )
         card_id = cur.lastrowid
         _log_activity(conn, card_id, 'created')
         _log_column_entry(conn, card_id, col_id)
-        card = dict(conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone())
+        card = dict(conn.execute('SELECT * FROM cards WHERE id=%s', (card_id,)).fetchone())
     return jsonify(card)
 
 @app.route('/api/cards/<int:card_id>', methods=['GET'])
 def api_get_card(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        card = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+        card = conn.execute('SELECT * FROM cards WHERE id=%s', (card_id,)).fetchone()
         if not card: return jsonify({'error': 'not found'}), 404
         card_dict = dict(card)
         comments = []
-        for c in conn.execute('SELECT * FROM comments WHERE card_id=? ORDER BY created_at', (card_id,)):
+        for c in conn.execute('SELECT * FROM comments WHERE card_id=%s ORDER BY created_at', (card_id,)):
             comment_dict = dict(c)
             mention_rows = conn.execute(
-                'SELECT mentioned_email, mentioned_name FROM comment_mentions WHERE comment_id=? ORDER BY id',
+                'SELECT mentioned_email, mentioned_name FROM comment_mentions WHERE comment_id=%s ORDER BY id',
                 (c['id'],)
             ).fetchall()
             allowed_emails = {row['mentioned_email'] for row in mention_rows}
@@ -2268,43 +2268,43 @@ def api_get_card(card_id):
             comment_dict['mentions'] = resolved_mentions
             comments.append(comment_dict)
         attachments = [dict(a) for a in conn.execute(
-            'SELECT * FROM attachments WHERE card_id=? ORDER BY uploaded_at', (card_id,)
+            'SELECT * FROM attachments WHERE card_id=%s ORDER BY uploaded_at', (card_id,)
         )]
         checklist_rows = conn.execute(
-            'SELECT * FROM checklists WHERE card_id=? ORDER BY position', (card_id,)
+            'SELECT * FROM checklists WHERE card_id=%s ORDER BY position', (card_id,)
         ).fetchall()
         item_rows = conn.execute(
-            'SELECT * FROM checklist_items WHERE card_id=? ORDER BY position', (card_id,)
+            'SELECT * FROM checklist_items WHERE card_id=%s ORDER BY position', (card_id,)
         ).fetchall()
         items_by_checklist = {}
         for it in item_rows:
             items_by_checklist.setdefault(it['checklist_id'], []).append(dict(it))
         checklists = [{**dict(cl), 'items': items_by_checklist.get(cl['id'], [])} for cl in checklist_rows]
         members = [dict(m) for m in conn.execute(
-            'SELECT * FROM card_members WHERE card_id=? ORDER BY id', (card_id,)
+            'SELECT * FROM card_members WHERE card_id=%s ORDER BY id', (card_id,)
         )]
         labels = [dict(l) for l in conn.execute(
-            'SELECT * FROM card_labels WHERE card_id=? ORDER BY position, id', (card_id,)
+            'SELECT * FROM card_labels WHERE card_id=%s ORDER BY position, id', (card_id,)
         )]
         links = [dict(l) for l in conn.execute(
-            'SELECT * FROM card_links WHERE card_id=? ORDER BY position, id', (card_id,)
+            'SELECT * FROM card_links WHERE card_id=%s ORDER BY position, id', (card_id,)
         )]
         relations = [dict(r) for r in conn.execute('''
             SELECT c.id, c.title, c.completed, col.name AS column_name,
                    b.id AS board_id, b.name AS board_name, b.color AS board_color
             FROM card_relations rel
-            JOIN cards c ON c.id = (CASE WHEN rel.card_a_id=? THEN rel.card_b_id ELSE rel.card_a_id END)
+            JOIN cards c ON c.id = (CASE WHEN rel.card_a_id=%s THEN rel.card_b_id ELSE rel.card_a_id END)
             JOIN columns col ON col.id = c.column_id
             JOIN boards b ON b.id = col.board_id
-            WHERE rel.card_a_id=? OR rel.card_b_id=?
+            WHERE rel.card_a_id=%s OR rel.card_b_id=%s
             ORDER BY b.name, col.name, c.title
         ''', (card_id, card_id, card_id))]
         activity = [dict(a) for a in conn.execute(
-            'SELECT * FROM card_activity WHERE card_id=? ORDER BY created_at DESC, id DESC', (card_id,)
+            'SELECT * FROM card_activity WHERE card_id=%s ORDER BY created_at DESC, id DESC', (card_id,)
         )]
         custom_fields = _card_custom_fields(conn, card_id)
         if card_dict.get('linked_board_id'):
-            lb = conn.execute('SELECT id, name, color FROM boards WHERE id=?',
+            lb = conn.execute('SELECT id, name, color FROM boards WHERE id=%s',
                               (card_dict['linked_board_id'],)).fetchone()
             if lb:
                 card_dict['linked_board_name']  = lb['name']
@@ -2322,14 +2322,14 @@ def api_update_card(card_id):
     fields, values = [], []
     for f in allowed:
         if f in d:
-            fields.append(f'{f}=?')
+            fields.append(f'{f}=%s')
             values.append(d[f])
     automations = []
     if fields:
         with get_db() as conn:
-            before = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+            before = conn.execute('SELECT * FROM cards WHERE id=%s', (card_id,)).fetchone()
             values.append(card_id)
-            conn.execute(f'UPDATE cards SET {",".join(fields)} WHERE id=?', values)
+            conn.execute(f'UPDATE cards SET {",".join(fields)} WHERE id=%s', values)
             if before:
                 _log_card_update_activity(conn, card_id, before, d)
                 _notify_watchers(conn, card_id, session['user']['email'], session['user']['name'], 'card_updated',
@@ -2352,7 +2352,7 @@ def api_delete_card(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         conn.execute(
-            "UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE id=?",
+            "UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE id=%s",
             (card_id,)
         )
         _log_activity(conn, card_id, 'archived')
@@ -2360,7 +2360,7 @@ def api_delete_card(card_id):
         card_row = conn.execute('''
             SELECT c.title AS card_title, col.board_id, b.name AS board_name
             FROM cards c JOIN columns col ON col.id=c.column_id JOIN boards b ON b.id=col.board_id
-            WHERE c.id=?
+            WHERE c.id=%s
         ''', (card_id,)).fetchone()
         if card_row:
             _notify_admins(conn, 'card_archived', card_row['board_id'], card_row['board_name'],
@@ -2371,7 +2371,7 @@ def api_delete_card(card_id):
 def api_restore_card(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('UPDATE cards SET archived=0, archived_at=NULL WHERE id=?', (card_id,))
+        conn.execute('UPDATE cards SET archived=0, archived_at=NULL WHERE id=%s', (card_id,))
         _log_activity(conn, card_id, 'restored')
     return jsonify({'ok': True})
 
@@ -2408,7 +2408,7 @@ def api_archive():
         '''
         params = []
         if board_ids is not None:
-            ph = ','.join('?' * len(board_ids))
+            ph = ','.join(['%s'] * len(board_ids))
             cards_sql   += f' AND b.id IN ({ph})'
             columns_sql += f' AND b.id IN ({ph})'
             params = board_ids
@@ -2425,12 +2425,12 @@ def api_reorder_cards():
     automations = []
     with get_db() as conn:
         for item in request.get_json().get('cards', []):
-            before = conn.execute('SELECT column_id FROM cards WHERE id=?', (item['id'],)).fetchone()
-            conn.execute('UPDATE cards SET column_id=?,position=? WHERE id=?',
+            before = conn.execute('SELECT column_id FROM cards WHERE id=%s', (item['id'],)).fetchone()
+            conn.execute('UPDATE cards SET column_id=%s,position=%s WHERE id=%s',
                          (item['column_id'], item['position'], item['id']))
             if before and before['column_id'] != item['column_id']:
                 cols = conn.execute(
-                    'SELECT id, name FROM columns WHERE id IN (?,?)', (before['column_id'], item['column_id'])
+                    'SELECT id, name FROM columns WHERE id IN (%s,%s)', (before['column_id'], item['column_id'])
                 ).fetchall()
                 names = {c['id']: c['name'] for c in cols}
                 _log_activity(conn, item['id'], 'moved_column',
@@ -2447,9 +2447,9 @@ def api_create_checklist(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     title = request.get_json().get('title', '').strip() or 'Чек-лист'
     with get_db() as conn:
-        pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM checklists WHERE card_id=?', (card_id,)).fetchone()[0]
-        cur = conn.execute('INSERT INTO checklists (card_id, title, position) VALUES (?,?,?)', (card_id, title, pos))
-        cl  = dict(conn.execute('SELECT * FROM checklists WHERE id=?', (cur.lastrowid,)).fetchone())
+        pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM checklists WHERE card_id=%s', (card_id,)).fetchone()[0]
+        cur = conn.execute('INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s)', (card_id, title, pos))
+        cl  = dict(conn.execute('SELECT * FROM checklists WHERE id=%s', (cur.lastrowid,)).fetchone())
     cl['items'] = []
     return jsonify(cl), 201
 
@@ -2467,7 +2467,7 @@ def api_get_board_checklists(board_id):
             FROM checklists cl
             JOIN cards ca ON ca.id = cl.card_id
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id=? AND (ca.archived=0 OR ca.archived IS NULL)
+            WHERE co.board_id=%s AND (ca.archived=0 OR ca.archived IS NULL)
             ORDER BY ca.title, cl.position
         ''', (board_id,)).fetchall()
     return jsonify([dict(r) for r in rows])
@@ -2481,40 +2481,40 @@ def api_copy_checklist(card_id):
     if not src_checklist_id:
         return jsonify({'error': 'source_checklist_id required'}), 400
     with get_db() as conn:
-        src_cl = conn.execute('SELECT * FROM checklists WHERE id=?', (src_checklist_id,)).fetchone()
+        src_cl = conn.execute('SELECT * FROM checklists WHERE id=%s', (src_checklist_id,)).fetchone()
         if not src_cl:
             return jsonify({'error': 'not found'}), 404
 
         src_board = conn.execute('''
-            SELECT co.board_id FROM cards ca JOIN columns co ON co.id=ca.column_id WHERE ca.id=?
+            SELECT co.board_id FROM cards ca JOIN columns co ON co.id=ca.column_id WHERE ca.id=%s
         ''', (src_cl['card_id'],)).fetchone()
         board_ids = _get_board_ids()
         if src_board and board_ids is not None and src_board['board_id'] not in board_ids:
             return jsonify({'error': 'forbidden'}), 403
 
         pos = conn.execute(
-            'SELECT COALESCE(MAX(position),-1)+1 FROM checklists WHERE card_id=?', (card_id,)
+            'SELECT COALESCE(MAX(position),-1)+1 FROM checklists WHERE card_id=%s', (card_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO checklists (card_id, title, position) VALUES (?,?,?)',
+            'INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s)',
             (card_id, src_cl['title'], pos)
         )
         new_cl_id = cur.lastrowid
 
         items = []
         for item in conn.execute(
-            'SELECT * FROM checklist_items WHERE checklist_id=? ORDER BY position', (src_checklist_id,)
+            'SELECT * FROM checklist_items WHERE checklist_id=%s ORDER BY position', (src_checklist_id,)
         ):
             item_cur = conn.execute(
-                'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (?,?,?,?)',
+                'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (%s,%s,%s,%s)',
                 (card_id, new_cl_id, item['text'], item['position'])
             )
             items.append(dict(conn.execute(
-                'SELECT * FROM checklist_items WHERE id=?', (item_cur.lastrowid,)
+                'SELECT * FROM checklist_items WHERE id=%s', (item_cur.lastrowid,)
             ).fetchone()))
 
         _log_activity(conn, card_id, 'checklist_copied', src_cl['title'])
-        new_cl = dict(conn.execute('SELECT * FROM checklists WHERE id=?', (new_cl_id,)).fetchone())
+        new_cl = dict(conn.execute('SELECT * FROM checklists WHERE id=%s', (new_cl_id,)).fetchone())
     new_cl['items'] = items
     return jsonify(new_cl), 201
 
@@ -2525,20 +2525,20 @@ def api_update_checklist(checklist_id):
     fields, values = [], []
     for f in ['title', 'position']:
         if f in d:
-            fields.append(f'{f}=?')
+            fields.append(f'{f}=%s')
             values.append(d[f])
     if fields:
         values.append(checklist_id)
         with get_db() as conn:
-            conn.execute(f'UPDATE checklists SET {",".join(fields)} WHERE id=?', values)
+            conn.execute(f'UPDATE checklists SET {",".join(fields)} WHERE id=%s', values)
     return jsonify({'ok': True})
 
 @app.route('/api/checklists/<int:checklist_id>', methods=['DELETE'])
 def api_delete_checklist(checklist_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('DELETE FROM checklist_items WHERE checklist_id=?', (checklist_id,))
-        conn.execute('DELETE FROM checklists WHERE id=?', (checklist_id,))
+        conn.execute('DELETE FROM checklist_items WHERE checklist_id=%s', (checklist_id,))
+        conn.execute('DELETE FROM checklists WHERE id=%s', (checklist_id,))
     return jsonify({'ok': True})
 
 @app.route('/api/checklists/<int:checklist_id>/items', methods=['POST'])
@@ -2547,16 +2547,16 @@ def api_add_checklist_item(checklist_id):
     text = request.get_json().get('text', '').strip()
     if not text: return jsonify({'error': 'empty'}), 400
     with get_db() as conn:
-        cl = conn.execute('SELECT card_id FROM checklists WHERE id=?', (checklist_id,)).fetchone()
+        cl = conn.execute('SELECT card_id FROM checklists WHERE id=%s', (checklist_id,)).fetchone()
         if not cl: return jsonify({'error': 'not found'}), 404
         pos = conn.execute(
-            'SELECT COALESCE(MAX(position),-1)+1 FROM checklist_items WHERE checklist_id=?', (checklist_id,)
+            'SELECT COALESCE(MAX(position),-1)+1 FROM checklist_items WHERE checklist_id=%s', (checklist_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (?,?,?,?)',
+            'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (%s,%s,%s,%s)',
             (cl['card_id'], checklist_id, text, pos)
         )
-        row = dict(conn.execute('SELECT * FROM checklist_items WHERE id=?', (cur.lastrowid,)).fetchone())
+        row = dict(conn.execute('SELECT * FROM checklist_items WHERE id=%s', (cur.lastrowid,)).fetchone())
     return jsonify(row), 201
 
 @app.route('/api/checklist/<int:item_id>', methods=['PUT'])
@@ -2566,13 +2566,13 @@ def api_update_checklist_item(item_id):
     fields, values = [], []
     for f in ['text', 'checked', 'due_date', 'assignee_email', 'assignee_name', 'position', 'checklist_id']:
         if f in d:
-            fields.append(f'{f}=?')
+            fields.append(f'{f}=%s')
             values.append(d[f])
     if fields:
         with get_db() as conn:
-            before = conn.execute('SELECT * FROM checklist_items WHERE id=?', (item_id,)).fetchone()
+            before = conn.execute('SELECT * FROM checklist_items WHERE id=%s', (item_id,)).fetchone()
             values.append(item_id)
-            conn.execute(f'UPDATE checklist_items SET {",".join(fields)} WHERE id=?', values)
+            conn.execute(f'UPDATE checklist_items SET {",".join(fields)} WHERE id=%s', values)
             if before and 'checked' in d and bool(d['checked']) != bool(before['checked']):
                 _log_activity(conn, before['card_id'],
                               'checklist_item_checked' if d['checked'] else 'checklist_item_unchecked',
@@ -2583,7 +2583,7 @@ def api_update_checklist_item(item_id):
 def api_delete_checklist_item(item_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('DELETE FROM checklist_items WHERE id=?', (item_id,))
+        conn.execute('DELETE FROM checklist_items WHERE id=%s', (item_id,))
     return jsonify({'ok': True})
 
 
@@ -2597,11 +2597,11 @@ def api_add_comment(card_id):
     if not text: return jsonify({'error': 'empty'}), 400
     with get_db() as conn:
         cur = conn.execute(
-            'INSERT INTO comments (card_id,author,text) VALUES(?,?,?)',
+            'INSERT INTO comments (card_id,author,text) VALUES(%s,%s,%s)',
             (card_id, session['user']['name'], text)
         )
         comment_id = cur.lastrowid
-        row = dict(conn.execute('SELECT * FROM comments WHERE id=?', (comment_id,)).fetchone())
+        row = dict(conn.execute('SELECT * FROM comments WHERE id=%s', (comment_id,)).fetchone())
         mentions = _create_comment_mentions(
             conn,
             card_id,
@@ -2621,7 +2621,7 @@ def api_add_comment(card_id):
 def api_delete_comment(comment_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('DELETE FROM comments WHERE id=?', (comment_id,))
+        conn.execute('DELETE FROM comments WHERE id=%s', (comment_id,))
     return jsonify({'ok': True})
 
 
@@ -2632,7 +2632,7 @@ def api_get_reactions(comment_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         rows = conn.execute(
-            'SELECT emoji, user_email, user_name FROM comment_reactions cr LEFT JOIN users u ON u.email = cr.user_email WHERE cr.comment_id=? ORDER BY cr.id',
+            'SELECT emoji, user_email, user_name FROM comment_reactions cr LEFT JOIN users u ON u.email = cr.user_email WHERE cr.comment_id=%s ORDER BY cr.id',
             (comment_id,)
         ).fetchall()
     # Группируем по эмодзи
@@ -2655,14 +2655,14 @@ def api_add_reaction(comment_id):
     email = session['user'].get('email', '')
     with get_db() as conn:
         existing = conn.execute(
-            'SELECT id FROM comment_reactions WHERE comment_id=? AND user_email=? AND emoji=?',
+            'SELECT id FROM comment_reactions WHERE comment_id=%s AND user_email=%s AND emoji=%s',
             (comment_id, email, emoji)
         ).fetchone()
         if existing:
-            conn.execute('DELETE FROM comment_reactions WHERE id=?', (existing['id'],))
+            conn.execute('DELETE FROM comment_reactions WHERE id=%s', (existing['id'],))
             return jsonify({'removed': True})
         conn.execute(
-            'INSERT INTO comment_reactions (comment_id, user_email, emoji) VALUES (?,?,?)',
+            'INSERT INTO comment_reactions (comment_id, user_email, emoji) VALUES (%s,%s,%s)',
             (comment_id, email, emoji)
         )
     return jsonify({'added': True})
@@ -2677,7 +2677,7 @@ def api_card_cycle_time(card_id):
             SELECT cch.column_id, col.name AS column_name, cch.entered_at, cch.left_at
             FROM card_column_history cch
             JOIN columns col ON col.id = cch.column_id
-            WHERE cch.card_id=? ORDER BY cch.entered_at
+            WHERE cch.card_id=%s ORDER BY cch.entered_at
         ''', (card_id,)).fetchall()
     result = []
     now = datetime.now()
@@ -2718,7 +2718,7 @@ def api_board_workload(board_id):
             FROM card_members cm
             JOIN cards c ON c.id = cm.card_id
             JOIN columns col ON col.id = c.column_id
-            WHERE col.board_id=? AND (c.archived=0 OR c.archived IS NULL)
+            WHERE col.board_id=%s AND (c.archived=0 OR c.archived IS NULL)
             GROUP BY cm.user_email
             ORDER BY total DESC
         ''', (board_id,)).fetchall()
@@ -2737,14 +2737,14 @@ def api_get_inbox():
     with get_db() as conn:
         _sync_due_date_notifications(conn, email)
 
-        sql = 'SELECT * FROM inbox_entries WHERE recipient_email=?'
+        sql = 'SELECT * FROM inbox_entries WHERE recipient_email=%s'
         params = [email]
         if unread_only:
             sql += ' AND is_read=0'
         if board_id:
-            sql += " AND (board_id=? OR json_extract(payload,'$.board_id')=?)"
+            sql += " AND (board_id=%s OR json_extract(payload,'$.board_id')=%s)"
             params += [board_id, board_id]
-        sql += ' ORDER BY created_at DESC, id DESC LIMIT ?'
+        sql += ' ORDER BY created_at DESC, id DESC LIMIT %s'
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
         items = []
@@ -2756,7 +2756,7 @@ def api_get_inbox():
                 item['payload'] = {}
             items.append(item)
         unread_count = conn.execute(
-            'SELECT COUNT(*) FROM inbox_entries WHERE recipient_email=? AND is_read=0',
+            'SELECT COUNT(*) FROM inbox_entries WHERE recipient_email=%s AND is_read=0',
             (email,)
         ).fetchone()[0]
     return jsonify({'items': items, 'unread_count': unread_count})
@@ -2768,7 +2768,7 @@ def api_mark_inbox_entry_read(entry_id):
     email = (session['user'].get('email') or '').strip().lower()
     with get_db() as conn:
         conn.execute(
-            'UPDATE inbox_entries SET is_read=1 WHERE id=? AND recipient_email=?',
+            'UPDATE inbox_entries SET is_read=1 WHERE id=%s AND recipient_email=%s',
             (entry_id, email)
         )
     return jsonify({'ok': True})
@@ -2780,7 +2780,7 @@ def api_get_notification_settings():
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     email = (session['user'].get('email') or '').strip().lower()
     with get_db() as conn:
-        row = conn.execute('SELECT settings FROM notification_settings WHERE user_email=?', (email,)).fetchone()
+        row = conn.execute('SELECT settings FROM notification_settings WHERE user_email=%s', (email,)).fetchone()
     defaults = {
         'member_added': True, 'card_overdue': True, 'card_due_today': True,
         'card_archived': True, 'column_archived': True,
@@ -2807,8 +2807,8 @@ def api_update_notification_settings():
     with get_db() as conn:
         conn.execute('''
             INSERT INTO notification_settings (user_email, settings, updated_at)
-            VALUES (?, ?, datetime('now','localtime'))
-            ON CONFLICT(user_email) DO UPDATE SET settings=?, updated_at=datetime('now','localtime')
+            VALUES (%s, %s, datetime('now','localtime'))
+            ON CONFLICT(user_email) DO UPDATE SET settings=%s, updated_at=datetime('now','localtime')
         ''', (email, json.dumps(settings), json.dumps(settings)))
     return jsonify({'ok': True})
 
@@ -2817,16 +2817,16 @@ def api_update_notification_settings():
 def api_duplicate_card(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        src = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+        src = conn.execute('SELECT * FROM cards WHERE id=%s', (card_id,)).fetchone()
         if not src: return jsonify({'error': 'not found'}), 404
-        pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=?', (src['column_id'],)).fetchone()[0]
+        pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=%s', (src['column_id'],)).fetchone()[0]
         new_card_id = _duplicate_card(conn, card_id, src['column_id'], pos, title_suffix=' (копия)')
-        new_card = dict(conn.execute('SELECT * FROM cards WHERE id=?', (new_card_id,)).fetchone())
+        new_card = dict(conn.execute('SELECT * FROM cards WHERE id=%s', (new_card_id,)).fetchone())
         checklist_rows = conn.execute(
-            'SELECT * FROM checklists WHERE card_id=? ORDER BY position', (new_card_id,)
+            'SELECT * FROM checklists WHERE card_id=%s ORDER BY position', (new_card_id,)
         ).fetchall()
         item_rows = conn.execute(
-            'SELECT * FROM checklist_items WHERE card_id=? ORDER BY position', (new_card_id,)
+            'SELECT * FROM checklist_items WHERE card_id=%s ORDER BY position', (new_card_id,)
         ).fetchall()
         items_by_checklist = {}
         for it in item_rows:
@@ -2835,7 +2835,7 @@ def api_duplicate_card(card_id):
             {**dict(cl), 'items': items_by_checklist.get(cl['id'], [])} for cl in checklist_rows
         ]
         new_card['labels'] = [dict(l) for l in conn.execute(
-            'SELECT * FROM card_labels WHERE card_id=? ORDER BY position, id', (new_card_id,)
+            'SELECT * FROM card_labels WHERE card_id=%s ORDER BY position, id', (new_card_id,)
         )]
     return jsonify(new_card)
 
@@ -2858,18 +2858,18 @@ def api_upload_attachment(card_id):
     ftype = _file_type(original)
     with get_db() as conn:
         cur = conn.execute(
-            'INSERT INTO attachments (card_id,filename,filesize,filetype,filepath) VALUES(?,?,?,?,?)',
+            'INSERT INTO attachments (card_id,filename,filesize,filetype,filepath) VALUES(%s,%s,%s,%s,%s)',
             (card_id, original, size_str, ftype, filepath)
         )
         _log_activity(conn, card_id, 'attachment_added', original)
-        row = dict(conn.execute('SELECT * FROM attachments WHERE id=?', (cur.lastrowid,)).fetchone())
+        row = dict(conn.execute('SELECT * FROM attachments WHERE id=%s', (cur.lastrowid,)).fetchone())
     return jsonify(row), 201
 
 @app.route('/api/attachments/<int:att_id>', methods=['GET'])
 def api_get_attachment(att_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        att = conn.execute('SELECT * FROM attachments WHERE id=?', (att_id,)).fetchone()
+        att = conn.execute('SELECT * FROM attachments WHERE id=%s', (att_id,)).fetchone()
     if not att or not os.path.exists(att['filepath']):
         return jsonify({'error': 'not found'}), 404
     inline = request.args.get('inline') == '1'
@@ -2880,9 +2880,9 @@ def api_get_attachment(att_id):
 def api_delete_attachment(att_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        att = conn.execute('SELECT * FROM attachments WHERE id=?', (att_id,)).fetchone()
+        att = conn.execute('SELECT * FROM attachments WHERE id=%s', (att_id,)).fetchone()
         if not att: return jsonify({'error': 'not found'}), 404
-        conn.execute('DELETE FROM attachments WHERE id=?', (att_id,))
+        conn.execute('DELETE FROM attachments WHERE id=%s', (att_id,))
         _log_activity(conn, att['card_id'], 'attachment_removed', att['filename'])
     try:
         os.remove(att['filepath'])
@@ -2898,7 +2898,7 @@ def api_get_card_members(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         rows = conn.execute(
-            'SELECT * FROM card_members WHERE card_id=? ORDER BY id', (card_id,)
+            'SELECT * FROM card_members WHERE card_id=%s ORDER BY id', (card_id,)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -2911,7 +2911,7 @@ def api_assign_card_member(card_id):
     if not email: return jsonify({'error': 'email required'}), 400
     with get_db() as conn:
         conn.execute(
-            'INSERT OR IGNORE INTO card_members (card_id, user_email, user_name) VALUES (?,?,?)',
+            'INSERT OR IGNORE INTO card_members (card_id, user_email, user_name) VALUES (%s,%s,%s)',
             (card_id, email, name)
         )
         _log_activity(conn, card_id, 'member_added', name or email)
@@ -2923,7 +2923,7 @@ def api_assign_card_member(card_id):
                 card_row = conn.execute('''
                     SELECT c.title AS card_title, col.board_id, b.name AS board_name
                     FROM cards c JOIN columns col ON col.id=c.column_id JOIN boards b ON b.id=col.board_id
-                    WHERE c.id=?
+                    WHERE c.id=%s
                 ''', (card_id,)).fetchone()
                 if card_row:
                     payload = json.dumps({
@@ -2932,7 +2932,7 @@ def api_assign_card_member(card_id):
                         'actor_email': actor.get('email'), 'actor_name': actor.get('name'),
                     })
                     conn.execute(
-                        'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (?,?,?,?,?)',
+                        'INSERT INTO inbox_entries (recipient_email, type, card_id, payload, board_id) VALUES (%s,%s,%s,%s,%s)',
                         (recipient_email, 'member_added', card_id, payload, card_row['board_id'])
                     )
     return jsonify({'ok': True})
@@ -2942,10 +2942,10 @@ def api_remove_card_member(card_id, email):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         member = conn.execute(
-            'SELECT user_name FROM card_members WHERE card_id=? AND user_email=?', (card_id, email)
+            'SELECT user_name FROM card_members WHERE card_id=%s AND user_email=%s', (card_id, email)
         ).fetchone()
         conn.execute(
-            'DELETE FROM card_members WHERE card_id=? AND user_email=?', (card_id, email)
+            'DELETE FROM card_members WHERE card_id=%s AND user_email=%s', (card_id, email)
         )
         _log_activity(conn, card_id, 'member_removed', (member['user_name'] if member else '') or email)
     return jsonify({'ok': True})
@@ -2958,7 +2958,7 @@ def api_get_card_labels(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         rows = conn.execute(
-            'SELECT * FROM card_labels WHERE card_id=? ORDER BY position, id', (card_id,)
+            'SELECT * FROM card_labels WHERE card_id=%s ORDER BY position, id', (card_id,)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -2971,15 +2971,15 @@ def api_add_card_label(card_id):
     if not name: return jsonify({'error': 'name required'}), 400
     with get_db() as conn:
         pos = conn.execute(
-            'SELECT COALESCE(MAX(position),-1)+1 FROM card_labels WHERE card_id=?', (card_id,)
+            'SELECT COALESCE(MAX(position),-1)+1 FROM card_labels WHERE card_id=%s', (card_id,)
         ).fetchone()[0]
         conn.execute(
-            '''INSERT INTO card_labels (card_id, name, color, position) VALUES (?,?,?,?)
+            '''INSERT INTO card_labels (card_id, name, color, position) VALUES (%s,%s,%s,%s)
                ON CONFLICT(card_id, name) DO UPDATE SET color=excluded.color''',
             (card_id, name, color, pos)
         )
         row = dict(conn.execute(
-            'SELECT * FROM card_labels WHERE card_id=? AND name=?', (card_id, name)
+            'SELECT * FROM card_labels WHERE card_id=%s AND name=%s', (card_id, name)
         ).fetchone())
         _log_activity(conn, card_id, 'label_added', name)
     return jsonify(row), 201
@@ -2988,8 +2988,8 @@ def api_add_card_label(card_id):
 def api_remove_card_label(card_id, label_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        label = conn.execute('SELECT name FROM card_labels WHERE id=? AND card_id=?', (label_id, card_id)).fetchone()
-        conn.execute('DELETE FROM card_labels WHERE id=? AND card_id=?', (label_id, card_id))
+        label = conn.execute('SELECT name FROM card_labels WHERE id=%s AND card_id=%s', (label_id, card_id)).fetchone()
+        conn.execute('DELETE FROM card_labels WHERE id=%s AND card_id=%s', (label_id, card_id))
         if label:
             _log_activity(conn, card_id, 'label_removed', label['name'])
     return jsonify({'ok': True})
@@ -3001,7 +3001,7 @@ def api_remove_card_label(card_id, label_id):
 def api_get_card_importance(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        row = conn.execute('SELECT importance FROM cards WHERE id=?', (card_id,)).fetchone()
+        row = conn.execute('SELECT importance FROM cards WHERE id=%s', (card_id,)).fetchone()
     name = row['importance'] if row else ''
     return jsonify({'name': name or '', 'color': IMPORTANCE_COLORS.get(name, '')})
 
@@ -3013,11 +3013,11 @@ def api_set_card_importance(card_id):
     if name and name not in IMPORTANCE_COLORS:
         return jsonify({'error': 'invalid importance'}), 400
     with get_db() as conn:
-        current = conn.execute('SELECT importance FROM cards WHERE id=?', (card_id,)).fetchone()['importance']
+        current = conn.execute('SELECT importance FROM cards WHERE id=%s', (card_id,)).fetchone()['importance']
         if name and name == current:
             name = ''  # повторный клик по активному уровню — снимаем важность
         color = IMPORTANCE_COLORS.get(name, '')
-        conn.execute('UPDATE cards SET importance=?, cover_color=? WHERE id=?', (name, color, card_id))
+        conn.execute('UPDATE cards SET importance=%s, cover_color=%s WHERE id=%s', (name, color, card_id))
         _log_activity(conn, card_id, 'importance_set' if name else 'importance_cleared', name or current)
     return jsonify({'name': name, 'color': color})
 
@@ -3029,7 +3029,7 @@ def api_get_custom_fields(board_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         rows = conn.execute(
-            'SELECT * FROM custom_fields WHERE board_id=? ORDER BY position, id', (board_id,)
+            'SELECT * FROM custom_fields WHERE board_id=%s ORDER BY position, id', (board_id,)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -3045,13 +3045,13 @@ def api_create_custom_field(board_id):
     show_on_card = 1 if d.get('show_on_card') else 0
     with get_db() as conn:
         pos = conn.execute(
-            'SELECT COALESCE(MAX(position),-1)+1 FROM custom_fields WHERE board_id=?', (board_id,)
+            'SELECT COALESCE(MAX(position),-1)+1 FROM custom_fields WHERE board_id=%s', (board_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position) VALUES (?,?,?,?,?,?)',
+            'INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position) VALUES (%s,%s,%s,%s,%s,%s)',
             (board_id, name, ftype, options, show_on_card, pos)
         )
-        row = dict(conn.execute('SELECT * FROM custom_fields WHERE id=?', (cur.lastrowid,)).fetchone())
+        row = dict(conn.execute('SELECT * FROM custom_fields WHERE id=%s', (cur.lastrowid,)).fetchone())
     return jsonify(row), 201
 
 @app.route('/api/custom-fields/<int:field_id>', methods=['PUT'])
@@ -3060,24 +3060,24 @@ def api_update_custom_field(field_id):
     d = request.get_json() or {}
     fields, values = [], []
     if 'name' in d:
-        fields.append('name=?'); values.append((d['name'] or '').strip())
+        fields.append('name=%s'); values.append((d['name'] or '').strip())
     if 'options' in d:
-        fields.append('options=?'); values.append(json.dumps(d['options'] or []))
+        fields.append('options=%s'); values.append(json.dumps(d['options'] or []))
     if 'show_on_card' in d:
-        fields.append('show_on_card=?'); values.append(1 if d['show_on_card'] else 0)
+        fields.append('show_on_card=%s'); values.append(1 if d['show_on_card'] else 0)
     if 'position' in d:
-        fields.append('position=?'); values.append(d['position'])
+        fields.append('position=%s'); values.append(d['position'])
     if fields:
         values.append(field_id)
         with get_db() as conn:
-            conn.execute(f'UPDATE custom_fields SET {",".join(fields)} WHERE id=?', values)
+            conn.execute(f'UPDATE custom_fields SET {",".join(fields)} WHERE id=%s', values)
     return jsonify({'ok': True})
 
 @app.route('/api/custom-fields/<int:field_id>', methods=['DELETE'])
 def api_delete_custom_field(field_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('DELETE FROM custom_fields WHERE id=?', (field_id,))
+        conn.execute('DELETE FROM custom_fields WHERE id=%s', (field_id,))
     return jsonify({'ok': True})
 
 @app.route('/api/cards/<int:card_id>/custom-fields/<int:field_id>', methods=['PUT'])
@@ -3088,10 +3088,10 @@ def api_set_custom_field_value(card_id, field_id):
     if not isinstance(value, str):
         value = str(value)
     with get_db() as conn:
-        field = conn.execute('SELECT name FROM custom_fields WHERE id=?', (field_id,)).fetchone()
+        field = conn.execute('SELECT name FROM custom_fields WHERE id=%s', (field_id,)).fetchone()
         if not field: return jsonify({'error': 'not found'}), 404
         conn.execute(
-            '''INSERT INTO card_custom_field_values (card_id, field_id, value) VALUES (?,?,?)
+            '''INSERT INTO card_custom_field_values (card_id, field_id, value) VALUES (%s,%s,%s)
                ON CONFLICT(card_id, field_id) DO UPDATE SET value=excluded.value''',
             (card_id, field_id, value)
         )
@@ -3110,7 +3110,7 @@ def api_get_card_templates(board_id):
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
         rows = conn.execute(
-            'SELECT id, name, title FROM card_templates WHERE board_id=? ORDER BY name', (board_id,)
+            'SELECT id, name, title FROM card_templates WHERE board_id=%s ORDER BY name', (board_id,)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -3124,45 +3124,45 @@ def api_save_card_as_template(card_id):
     if not name:
         return jsonify({'error': 'name required'}), 400
     with get_db() as conn:
-        card = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+        card = conn.execute('SELECT * FROM cards WHERE id=%s', (card_id,)).fetchone()
         if not card:
             return jsonify({'error': 'not found'}), 404
         board_id = conn.execute(
-            'SELECT board_id FROM columns WHERE id=?', (card['column_id'],)
+            'SELECT board_id FROM columns WHERE id=%s', (card['column_id'],)
         ).fetchone()['board_id']
         board_ids = _get_board_ids()
         if board_ids is not None and board_id not in board_ids:
             return jsonify({'error': 'forbidden'}), 403
 
         cur = conn.execute(
-            'INSERT INTO card_templates (board_id, name, title, description, importance) VALUES (?,?,?,?,?)',
+            'INSERT INTO card_templates (board_id, name, title, description, importance) VALUES (%s,%s,%s,%s,%s)',
             (board_id, name, card['title'], card['description'], card['importance'])
         )
         template_id = cur.lastrowid
 
-        for lbl in conn.execute('SELECT * FROM card_labels WHERE card_id=? ORDER BY position', (card_id,)):
+        for lbl in conn.execute('SELECT * FROM card_labels WHERE card_id=%s ORDER BY position', (card_id,)):
             conn.execute(
-                'INSERT INTO card_template_labels (template_id, name, color) VALUES (?,?,?)',
+                'INSERT INTO card_template_labels (template_id, name, color) VALUES (%s,%s,%s)',
                 (template_id, lbl['name'], lbl['color'])
             )
 
-        for cl in conn.execute('SELECT * FROM checklists WHERE card_id=? ORDER BY position', (card_id,)):
+        for cl in conn.execute('SELECT * FROM checklists WHERE card_id=%s ORDER BY position', (card_id,)):
             cl_cur = conn.execute(
-                'INSERT INTO card_template_checklists (template_id, title, position) VALUES (?,?,?)',
+                'INSERT INTO card_template_checklists (template_id, title, position) VALUES (%s,%s,%s)',
                 (template_id, cl['title'], cl['position'])
             )
             new_tpl_cl_id = cl_cur.lastrowid
             for item in conn.execute(
-                'SELECT * FROM checklist_items WHERE checklist_id=? ORDER BY position', (cl['id'],)
+                'SELECT * FROM checklist_items WHERE checklist_id=%s ORDER BY position', (cl['id'],)
             ):
                 conn.execute(
-                    'INSERT INTO card_template_checklist_items (template_checklist_id, text, position) VALUES (?,?,?)',
+                    'INSERT INTO card_template_checklist_items (template_checklist_id, text, position) VALUES (%s,%s,%s)',
                     (new_tpl_cl_id, item['text'], item['position'])
                 )
 
-        for v in conn.execute('SELECT * FROM card_custom_field_values WHERE card_id=?', (card_id,)):
+        for v in conn.execute('SELECT * FROM card_custom_field_values WHERE card_id=%s', (card_id,)):
             conn.execute(
-                'INSERT INTO card_template_custom_fields (template_id, field_id, value) VALUES (?,?,?)',
+                'INSERT INTO card_template_custom_fields (template_id, field_id, value) VALUES (%s,%s,%s)',
                 (template_id, v['field_id'], v['value'])
             )
     return jsonify({'id': template_id, 'name': name}), 201
@@ -3176,10 +3176,10 @@ def api_instantiate_card_template(template_id):
     if not column_id:
         return jsonify({'error': 'column_id required'}), 400
     with get_db() as conn:
-        tpl = conn.execute('SELECT * FROM card_templates WHERE id=?', (template_id,)).fetchone()
+        tpl = conn.execute('SELECT * FROM card_templates WHERE id=%s', (template_id,)).fetchone()
         if not tpl:
             return jsonify({'error': 'not found'}), 404
-        col = conn.execute('SELECT board_id FROM columns WHERE id=?', (column_id,)).fetchone()
+        col = conn.execute('SELECT board_id FROM columns WHERE id=%s', (column_id,)).fetchone()
         if not col:
             return jsonify({'error': 'column not found'}), 404
         board_ids = _get_board_ids()
@@ -3187,53 +3187,53 @@ def api_instantiate_card_template(template_id):
             return jsonify({'error': 'forbidden'}), 403
 
         pos = conn.execute(
-            'SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=?', (column_id,)
+            'SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=%s', (column_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO cards (column_id, title, description, importance, position) VALUES (?,?,?,?,?)',
+            'INSERT INTO cards (column_id, title, description, importance, position) VALUES (%s,%s,%s,%s,%s)',
             (column_id, tpl['title'] or tpl['name'], tpl['description'], tpl['importance'], pos)
         )
         new_card_id = cur.lastrowid
         _log_activity(conn, new_card_id, 'created')
 
-        for lbl in conn.execute('SELECT * FROM card_template_labels WHERE template_id=?', (template_id,)):
+        for lbl in conn.execute('SELECT * FROM card_template_labels WHERE template_id=%s', (template_id,)):
             conn.execute(
-                'INSERT OR IGNORE INTO card_labels (card_id, name, color) VALUES (?,?,?)',
+                'INSERT OR IGNORE INTO card_labels (card_id, name, color) VALUES (%s,%s,%s)',
                 (new_card_id, lbl['name'], lbl['color'])
             )
 
         checklist_id_map = {}
         for cl in conn.execute(
-            'SELECT * FROM card_template_checklists WHERE template_id=? ORDER BY position', (template_id,)
+            'SELECT * FROM card_template_checklists WHERE template_id=%s ORDER BY position', (template_id,)
         ):
             new_cl = conn.execute(
-                'INSERT INTO checklists (card_id, title, position) VALUES (?,?,?)',
+                'INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s)',
                 (new_card_id, cl['title'], cl['position'])
             )
             checklist_id_map[cl['id']] = new_cl.lastrowid
         for item in conn.execute('''
             SELECT ti.* FROM card_template_checklist_items ti
             JOIN card_template_checklists tc ON tc.id = ti.template_checklist_id
-            WHERE tc.template_id=? ORDER BY ti.position
+            WHERE tc.template_id=%s ORDER BY ti.position
         ''', (template_id,)):
             new_cl_id = checklist_id_map.get(item['template_checklist_id'])
             if new_cl_id:
                 conn.execute(
-                    'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (?,?,?,?)',
+                    'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (%s,%s,%s,%s)',
                     (new_card_id, new_cl_id, item['text'], item['position'])
                 )
 
-        for v in conn.execute('SELECT * FROM card_template_custom_fields WHERE template_id=?', (template_id,)):
+        for v in conn.execute('SELECT * FROM card_template_custom_fields WHERE template_id=%s', (template_id,)):
             # переносим значение, только если кастомное поле всё ещё существует на доске
-            if conn.execute('SELECT 1 FROM custom_fields WHERE id=?', (v['field_id'],)).fetchone():
+            if conn.execute('SELECT 1 FROM custom_fields WHERE id=%s', (v['field_id'],)).fetchone():
                 conn.execute(
-                    'INSERT INTO card_custom_field_values (card_id, field_id, value) VALUES (?,?,?)',
+                    'INSERT INTO card_custom_field_values (card_id, field_id, value) VALUES (%s,%s,%s)',
                     (new_card_id, v['field_id'], v['value'])
                 )
 
-        card_dict = dict(conn.execute('SELECT * FROM cards WHERE id=?', (new_card_id,)).fetchone())
+        card_dict = dict(conn.execute('SELECT * FROM cards WHERE id=%s', (new_card_id,)).fetchone())
         card_dict['labels'] = [dict(l) for l in conn.execute(
-            'SELECT * FROM card_labels WHERE card_id=? ORDER BY position, id', (new_card_id,)
+            'SELECT * FROM card_labels WHERE card_id=%s ORDER BY position, id', (new_card_id,)
         )]
         card_dict['importance_color'] = IMPORTANCE_COLORS.get(card_dict.get('importance') or '', '')
     return jsonify(card_dict), 201
@@ -3243,7 +3243,7 @@ def api_instantiate_card_template(template_id):
 def api_delete_card_template(template_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('DELETE FROM card_templates WHERE id=?', (template_id,))
+        conn.execute('DELETE FROM card_templates WHERE id=%s', (template_id,))
     return jsonify({'ok': True})
 
 
@@ -3257,7 +3257,7 @@ def api_get_automations(board_id):
             SELECT ar.*, col.name AS trigger_column_name
             FROM automation_rules ar
             JOIN columns col ON col.id = ar.trigger_column_id
-            WHERE ar.board_id=? ORDER BY ar.id
+            WHERE ar.board_id=%s ORDER BY ar.id
         ''', (board_id,)).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -3284,18 +3284,18 @@ def api_create_automation(board_id):
             return jsonify({'error': 'invalid'}), 400
     with get_db() as conn:
         if trigger_type != 'due_approaching':
-            col = conn.execute('SELECT board_id FROM columns WHERE id=?', (trigger_column_id,)).fetchone()
+            col = conn.execute('SELECT board_id FROM columns WHERE id=%s', (trigger_column_id,)).fetchone()
             if not col or col['board_id'] != board_id:
                 return jsonify({'error': 'колонка не принадлежит этой доске'}), 400
         cur = conn.execute(
             '''INSERT INTO automation_rules (board_id, name, trigger_column_id, action_type, action_value, trigger_type, trigger_value, condition_type, condition_value, target_board_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?)''',
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
             (board_id, name, trigger_column_id or 0, action_type, action_value, trigger_type, trigger_value, condition_type, condition_value, target_board_id)
         )
         row = dict(conn.execute('''
             SELECT ar.*, col.name AS trigger_column_name
             FROM automation_rules ar LEFT JOIN columns col ON col.id = ar.trigger_column_id
-            WHERE ar.id=?
+            WHERE ar.id=%s
         ''', (cur.lastrowid,)).fetchone())
     return jsonify(row), 201
 
@@ -3306,14 +3306,14 @@ def api_update_automation(rule_id):
     if 'enabled' not in d:
         return jsonify({'error': 'nothing to update'}), 400
     with get_db() as conn:
-        conn.execute('UPDATE automation_rules SET enabled=? WHERE id=?', (1 if d['enabled'] else 0, rule_id))
+        conn.execute('UPDATE automation_rules SET enabled=%s WHERE id=%s', (1 if d['enabled'] else 0, rule_id))
     return jsonify({'ok': True})
 
 @app.route('/api/automations/<int:rule_id>', methods=['DELETE'])
 def api_delete_automation(rule_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('DELETE FROM automation_rules WHERE id=?', (rule_id,))
+        conn.execute('DELETE FROM automation_rules WHERE id=%s', (rule_id,))
     return jsonify({'ok': True})
 
 
@@ -3333,9 +3333,9 @@ def api_automation_log():
         '''
         params = []
         if board_id:
-            sql += ' WHERE co.board_id = ?'
+            sql += ' WHERE co.board_id = %s'
             params.append(board_id)
-        sql += ' ORDER BY al.created_at DESC LIMIT ?'
+        sql += ' ORDER BY al.created_at DESC LIMIT %s'
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
     return jsonify([dict(r) for r in rows])
@@ -3353,7 +3353,7 @@ def api_list_scheduled(board_id):
             '''SELECT sa.*, col.name AS target_column_name
                FROM scheduled_automations sa
                LEFT JOIN columns col ON col.id = sa.target_column_id
-               WHERE sa.board_id=? ORDER BY sa.id''', (board_id,)
+               WHERE sa.board_id=%s ORDER BY sa.id''', (board_id,)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -3371,13 +3371,13 @@ def api_create_scheduled(board_id):
     with get_db() as conn:
         cur = conn.execute(
             '''INSERT INTO scheduled_automations (board_id, name, action_type, action_value, target_column_id, schedule)
-               VALUES (?,?,?,?,?,?)''',
+               VALUES (%s,%s,%s,%s,%s,%s)''',
             (board_id, name, action_type, action_value, target_column_id or 0, schedule)
         )
         row = dict(conn.execute(
             '''SELECT sa.*, col.name AS target_column_name
                FROM scheduled_automations sa LEFT JOIN columns col ON col.id = sa.target_column_id
-               WHERE sa.id=?''', (cur.lastrowid,)
+               WHERE sa.id=%s''', (cur.lastrowid,)
         ).fetchone())
     return jsonify(row), 201
 
@@ -3388,14 +3388,14 @@ def api_update_scheduled(sched_id):
     if 'enabled' not in d:
         return jsonify({'error': 'nothing to update'}), 400
     with get_db() as conn:
-        conn.execute('UPDATE scheduled_automations SET enabled=? WHERE id=?', (1 if d['enabled'] else 0, sched_id))
+        conn.execute('UPDATE scheduled_automations SET enabled=%s WHERE id=%s', (1 if d['enabled'] else 0, sched_id))
     return jsonify({'ok': True})
 
 @app.route('/api/scheduled/<int:sched_id>', methods=['DELETE'])
 def api_delete_scheduled(sched_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('DELETE FROM scheduled_automations WHERE id=?', (sched_id,))
+        conn.execute('DELETE FROM scheduled_automations WHERE id=%s', (sched_id,))
     return jsonify({'ok': True})
 
 
@@ -3406,7 +3406,7 @@ def api_get_card_links(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         rows = conn.execute(
-            'SELECT * FROM card_links WHERE card_id=? ORDER BY position, id', (card_id,)
+            'SELECT * FROM card_links WHERE card_id=%s ORDER BY position, id', (card_id,)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -3421,13 +3421,13 @@ def api_add_card_link(card_id):
         url = 'https://' + url
     with get_db() as conn:
         pos = conn.execute(
-            'SELECT COALESCE(MAX(position),-1)+1 FROM card_links WHERE card_id=?', (card_id,)
+            'SELECT COALESCE(MAX(position),-1)+1 FROM card_links WHERE card_id=%s', (card_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO card_links (card_id, url, title, position) VALUES (?,?,?,?)',
+            'INSERT INTO card_links (card_id, url, title, position) VALUES (%s,%s,%s,%s)',
             (card_id, url, title, pos)
         )
-        row = dict(conn.execute('SELECT * FROM card_links WHERE id=?', (cur.lastrowid,)).fetchone())
+        row = dict(conn.execute('SELECT * FROM card_links WHERE id=%s', (cur.lastrowid,)).fetchone())
         _log_activity(conn, card_id, 'link_added', title or url)
     return jsonify(row), 201
 
@@ -3435,8 +3435,8 @@ def api_add_card_link(card_id):
 def api_remove_card_link(card_id, link_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        link = conn.execute('SELECT url, title FROM card_links WHERE id=? AND card_id=?', (link_id, card_id)).fetchone()
-        conn.execute('DELETE FROM card_links WHERE id=? AND card_id=?', (link_id, card_id))
+        link = conn.execute('SELECT url, title FROM card_links WHERE id=%s AND card_id=%s', (link_id, card_id)).fetchone()
+        conn.execute('DELETE FROM card_links WHERE id=%s AND card_id=%s', (link_id, card_id))
         if link:
             _log_activity(conn, card_id, 'link_removed', link['title'] or link['url'])
     return jsonify({'ok': True})
@@ -3452,19 +3452,19 @@ def api_create_card_mirror(card_id):
     column_id = (request.get_json() or {}).get('column_id')
     if not column_id: return jsonify({'error': 'column_id required'}), 400
     with get_db() as conn:
-        src = conn.execute('SELECT * FROM cards WHERE id=?', (card_id,)).fetchone()
+        src = conn.execute('SELECT * FROM cards WHERE id=%s', (card_id,)).fetchone()
         if not src: return jsonify({'error': 'not found'}), 404
-        col = conn.execute('SELECT board_id FROM columns WHERE id=?', (column_id,)).fetchone()
+        col = conn.execute('SELECT board_id FROM columns WHERE id=%s', (column_id,)).fetchone()
         if not col: return jsonify({'error': 'column not found'}), 404
         board_ids = _get_board_ids()
         if board_ids is not None and col['board_id'] not in board_ids:
             return jsonify({'error': 'forbidden'}), 403
 
         pos = conn.execute(
-            'SELECT COALESCE(MAX(position),-1)+1 FROM card_mirrors WHERE column_id=?', (column_id,)
+            'SELECT COALESCE(MAX(position),-1)+1 FROM card_mirrors WHERE column_id=%s', (column_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO card_mirrors (source_card_id, column_id, position) VALUES (?,?,?)',
+            'INSERT INTO card_mirrors (source_card_id, column_id, position) VALUES (%s,%s,%s)',
             (card_id, column_id, pos)
         )
         mirror_id = cur.lastrowid
@@ -3476,7 +3476,7 @@ def api_delete_card_mirror(mirror_id):
     """Убирает зеркало из колонки — исходная карточка не затрагивается."""
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('DELETE FROM card_mirrors WHERE id=?', (mirror_id,))
+        conn.execute('DELETE FROM card_mirrors WHERE id=%s', (mirror_id,))
     return jsonify({'ok': True})
 
 
@@ -3490,10 +3490,10 @@ def api_get_card_relations(card_id):
             SELECT c.id, c.title, c.completed, col.name AS column_name,
                    b.id AS board_id, b.name AS board_name, b.color AS board_color
             FROM card_relations r
-            JOIN cards c ON c.id = (CASE WHEN r.card_a_id=? THEN r.card_b_id ELSE r.card_a_id END)
+            JOIN cards c ON c.id = (CASE WHEN r.card_a_id=%s THEN r.card_b_id ELSE r.card_a_id END)
             JOIN columns col ON col.id = c.column_id
             JOIN boards b ON b.id = col.board_id
-            WHERE r.card_a_id=? OR r.card_b_id=?
+            WHERE r.card_a_id=%s OR r.card_b_id=%s
             ORDER BY b.name, col.name, c.title
         ''', (card_id, card_id, card_id)).fetchall()
     return jsonify([dict(r) for r in rows])
@@ -3511,9 +3511,9 @@ def api_add_card_relation(card_id):
     if other_id == card_id: return jsonify({'error': 'cannot relate a card to itself'}), 400
     a, b = min(card_id, other_id), max(card_id, other_id)
     with get_db() as conn:
-        other = conn.execute('SELECT title FROM cards WHERE id=?', (other_id,)).fetchone()
+        other = conn.execute('SELECT title FROM cards WHERE id=%s', (other_id,)).fetchone()
         if not other: return jsonify({'error': 'not found'}), 404
-        conn.execute('INSERT OR IGNORE INTO card_relations (card_a_id, card_b_id, relation_type) VALUES (?,?,?)', (a, b, relation_type))
+        conn.execute('INSERT OR IGNORE INTO card_relations (card_a_id, card_b_id, relation_type) VALUES (%s,%s,%s)', (a, b, relation_type))
         _log_activity(conn, card_id, 'relation_added', f"{other['title']} ({relation_type})")
     return jsonify({'ok': True}), 201
 
@@ -3522,8 +3522,8 @@ def api_remove_card_relation(card_id, other_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     a, b = min(card_id, other_id), max(card_id, other_id)
     with get_db() as conn:
-        other = conn.execute('SELECT title FROM cards WHERE id=?', (other_id,)).fetchone()
-        conn.execute('DELETE FROM card_relations WHERE card_a_id=? AND card_b_id=?', (a, b))
+        other = conn.execute('SELECT title FROM cards WHERE id=%s', (other_id,)).fetchone()
+        conn.execute('DELETE FROM card_relations WHERE card_a_id=%s AND card_b_id=%s', (a, b))
         if other:
             _log_activity(conn, card_id, 'relation_removed', other['title'])
     return jsonify({'ok': True})
@@ -3538,18 +3538,18 @@ def api_vote_card(card_id):
     vote_val = int(d.get('vote', 1))
     if vote_val not in (1, -1): vote_val = 1
     with get_db() as conn:
-        existing = conn.execute('SELECT vote FROM card_votes WHERE card_id=? AND user_email=?', (card_id, email)).fetchone()
+        existing = conn.execute('SELECT vote FROM card_votes WHERE card_id=%s AND user_email=%s', (card_id, email)).fetchone()
         if existing:
             if existing['vote'] == vote_val:
-                conn.execute('DELETE FROM card_votes WHERE card_id=? AND user_email=?', (card_id, email))
+                conn.execute('DELETE FROM card_votes WHERE card_id=%s AND user_email=%s', (card_id, email))
                 voted = False
             else:
-                conn.execute('UPDATE card_votes SET vote=? WHERE card_id=? AND user_email=?', (vote_val, card_id, email))
+                conn.execute('UPDATE card_votes SET vote=%s WHERE card_id=%s AND user_email=%s', (vote_val, card_id, email))
                 voted = True
         else:
-            conn.execute('INSERT INTO card_votes (card_id, user_email, vote) VALUES (?,?,?)', (card_id, email, vote_val))
+            conn.execute('INSERT INTO card_votes (card_id, user_email, vote) VALUES (%s,%s,%s)', (card_id, email, vote_val))
             voted = True
-        row = conn.execute('SELECT SUM(vote) AS score FROM card_votes WHERE card_id=?', (card_id,)).fetchone()
+        row = conn.execute('SELECT SUM(vote) AS score FROM card_votes WHERE card_id=%s', (card_id,)).fetchone()
         score = row['score'] or 0
     return jsonify({'score': score, 'voted': voted})
 
@@ -3560,8 +3560,8 @@ def api_get_votes(card_id):
     if 'user' not in session: return jsonify({'score': 0, 'my_vote': 0})
     email = session['user']['email']
     with get_db() as conn:
-        row = conn.execute('SELECT SUM(vote) AS score FROM card_votes WHERE card_id=?', (card_id,)).fetchone()
-        my = conn.execute('SELECT vote FROM card_votes WHERE card_id=? AND user_email=?', (card_id, email)).fetchone()
+        row = conn.execute('SELECT SUM(vote) AS score FROM card_votes WHERE card_id=%s', (card_id,)).fetchone()
+        my = conn.execute('SELECT vote FROM card_votes WHERE card_id=%s AND user_email=%s', (card_id, email)).fetchone()
     return jsonify({'score': row['score'] or 0, 'my_vote': my['vote'] if my else 0})
 
 
@@ -3579,7 +3579,7 @@ def api_get_board_access(board_id):
                    CASE WHEN ba.expires_at IS NOT NULL AND ba.expires_at != '' AND ba.expires_at < date('now','localtime')
                         THEN 1 ELSE 0 END AS is_expired
             FROM users u
-            LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = ?
+            LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = %s
             WHERE u.role != 'admin'
             ORDER BY u.name
         ''', (board_id,)).fetchall()
@@ -3596,7 +3596,7 @@ def api_grant_access(board_id):
         return jsonify({'error': 'user_id required'}), 400
     with get_db() as conn:
         conn.execute('''
-            INSERT INTO board_access (user_id, board_id, expires_at) VALUES (?,?,?)
+            INSERT INTO board_access (user_id, board_id, expires_at) VALUES (%s,%s,%s)
             ON CONFLICT(user_id, board_id) DO UPDATE SET expires_at=excluded.expires_at
         ''', (user_id, board_id, expires_at))
     return jsonify({'ok': True})
@@ -3606,7 +3606,7 @@ def api_revoke_access(board_id, user_id):
     if 'user' not in session or session['user']['role'] != 'admin':
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        conn.execute('DELETE FROM board_access WHERE user_id=? AND board_id=?', (user_id, board_id))
+        conn.execute('DELETE FROM board_access WHERE user_id=%s AND board_id=%s', (user_id, board_id))
     return jsonify({'ok': True})
 
 
@@ -3617,7 +3617,7 @@ def api_reorder_columns():
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         for item in request.get_json().get('columns', []):
-            conn.execute('UPDATE columns SET position=? WHERE id=?',
+            conn.execute('UPDATE columns SET position=%s WHERE id=%s',
                          (item['position'], item['id']))
     return jsonify({'ok': True})
 
@@ -3631,19 +3631,19 @@ def api_update_column(col_id):
     if 'name' in d:
         name = (d.get('name') or '').strip()
         if not name: return jsonify({'error': 'name required'}), 400
-        fields.append('name=?'); values.append(name)
+        fields.append('name=%s'); values.append(name)
     if 'wip_limit' in d:
         wip_limit = d.get('wip_limit')
         try:
             wip_limit = max(0, int(wip_limit)) if wip_limit not in (None, '') else 0
         except (TypeError, ValueError):
             return jsonify({'error': 'invalid wip_limit'}), 400
-        fields.append('wip_limit=?'); values.append(wip_limit)
+        fields.append('wip_limit=%s'); values.append(wip_limit)
     if not fields:
         return jsonify({'error': 'nothing to update'}), 400
     values.append(col_id)
     with get_db() as conn:
-        conn.execute(f'UPDATE columns SET {",".join(fields)} WHERE id=?', values)
+        conn.execute(f'UPDATE columns SET {",".join(fields)} WHERE id=%s', values)
     return jsonify({'ok': True})
 
 
@@ -3651,13 +3651,13 @@ def api_update_column(col_id):
 def api_delete_column(col_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        col = conn.execute('SELECT name, board_id FROM columns WHERE id=?', (col_id,)).fetchone()
+        col = conn.execute('SELECT name, board_id FROM columns WHERE id=%s', (col_id,)).fetchone()
         conn.execute(
-            "UPDATE columns SET archived=1, archived_at=datetime('now','localtime') WHERE id=?",
+            "UPDATE columns SET archived=1, archived_at=datetime('now','localtime') WHERE id=%s",
             (col_id,)
         )
         if col:
-            board = conn.execute('SELECT name FROM boards WHERE id=?', (col['board_id'],)).fetchone()
+            board = conn.execute('SELECT name FROM boards WHERE id=%s', (col['board_id'],)).fetchone()
             _notify_admins(conn, 'column_archived', col['board_id'], board['name'] if board else '',
                             {'column_name': col['name']})
     return jsonify({'ok': True})
@@ -3666,7 +3666,7 @@ def api_delete_column(col_id):
 def api_restore_column(col_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
-        conn.execute('UPDATE columns SET archived=0, archived_at=NULL WHERE id=?', (col_id,))
+        conn.execute('UPDATE columns SET archived=0, archived_at=NULL WHERE id=%s', (col_id,))
     return jsonify({'ok': True})
 
 
@@ -3680,22 +3680,22 @@ def api_profile_update():
     email = session['user']['email']
 
     with get_db() as conn:
-        user = conn.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone()
+        user = conn.execute('SELECT * FROM users WHERE email=%s', (email,)).fetchone()
         if not user:
             # Google Sheets пользователь — создаём SQLite-запись для хранения настроек профиля
             conn.execute(
-                "INSERT OR IGNORE INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO users (email, name, password_hash, role) VALUES (%s, %s, %s, %s)",
                 (email, session['user'].get('name', email), 'sheets-auth', session['user'].get('role', 'user'))
             )
-            user = conn.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone()
+            user = conn.execute('SELECT * FROM users WHERE email=%s', (email,)).fetchone()
 
         name = (data.get('name') or '').strip()
         if name:
-            conn.execute('UPDATE users SET name=? WHERE email=?', (name, email))
+            conn.execute('UPDATE users SET name=%s WHERE email=%s', (name, email))
 
         color = (data.get('avatar_color') or '').strip()
         if color:
-            conn.execute('UPDATE users SET avatar_color=? WHERE email=?', (color, email))
+            conn.execute('UPDATE users SET avatar_color=%s WHERE email=%s', (color, email))
 
         if data.get('remove_photo'):
             old_photo = user['avatar_photo']
@@ -3703,7 +3703,7 @@ def api_profile_update():
                 old_path = os.path.join(AVATARS_FOLDER, old_photo)
                 if os.path.exists(old_path):
                     os.remove(old_path)
-            conn.execute('UPDATE users SET avatar_photo=NULL WHERE email=?', (email,))
+            conn.execute('UPDATE users SET avatar_photo=NULL WHERE email=%s', (email,))
             session['user']['avatar_photo'] = None
             session.modified = True
             return jsonify({'ok': True})
@@ -3712,10 +3712,10 @@ def api_profile_update():
             if not check_password_hash(user['password_hash'], data.get('current_password', '')):
                 return jsonify({'error': 'Неверный текущий пароль'}), 400
             from werkzeug.security import generate_password_hash
-            conn.execute('UPDATE users SET password_hash=? WHERE email=?',
+            conn.execute('UPDATE users SET password_hash=%s WHERE email=%s',
                          (generate_password_hash(data['new_password']), email))
 
-        updated = conn.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone()
+        updated = conn.execute('SELECT * FROM users WHERE email=%s', (email,)).fetchone()
         session['user']['name']         = updated['name']
         session['user']['avatar_color'] = updated['avatar_color'] or '#4361EE'
         session.modified = True
@@ -3747,15 +3747,15 @@ def api_profile_photo():
     with get_db() as conn:
         # Создаём запись если пользователь только через Google Sheets
         conn.execute(
-            "INSERT OR IGNORE INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO users (email, name, password_hash, role) VALUES (%s, %s, %s, %s)",
             (email, session['user'].get('name', email), 'sheets-auth', session['user'].get('role', 'user'))
         )
-        old = conn.execute('SELECT avatar_photo FROM users WHERE email=?', (email,)).fetchone()
+        old = conn.execute('SELECT avatar_photo FROM users WHERE email=%s', (email,)).fetchone()
         if old and old['avatar_photo']:
             old_path = os.path.join(AVATARS_FOLDER, old['avatar_photo'])
             if os.path.exists(old_path):
                 os.remove(old_path)
-        conn.execute('UPDATE users SET avatar_photo=? WHERE email=?', (filename, email))
+        conn.execute('UPDATE users SET avatar_photo=%s WHERE email=%s', (filename, email))
 
     session['user']['avatar_photo'] = filename
     session.modified = True
@@ -3779,7 +3779,7 @@ def export_board(board_id):
     if board_ids is not None and board_id not in board_ids:
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        board = conn.execute('SELECT * FROM boards WHERE id=%s', (board_id,)).fetchone()
         if not board:
             return jsonify({'error': 'Not found'}), 404
         rows = conn.execute('''
@@ -3788,7 +3788,7 @@ def export_board(board_id):
                    CASE WHEN ca.completed=1 THEN 'Выполнена' ELSE 'Активна' END AS status
             FROM cards ca
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id = ?
+            WHERE co.board_id = %s
             ORDER BY co.position, ca.position
         ''', (board_id,)).fetchall()
         members_rows = conn.execute('''
@@ -3796,14 +3796,14 @@ def export_board(board_id):
             FROM card_members cm
             JOIN cards ca ON ca.id = cm.card_id
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id = ?
+            WHERE co.board_id = %s
         ''', (board_id,)).fetchall()
         labels_rows = conn.execute('''
             SELECT cl.card_id, cl.name
             FROM card_labels cl
             JOIN cards ca ON ca.id = cl.card_id
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id = ?
+            WHERE co.board_id = %s
             ORDER BY cl.position, cl.id
         ''', (board_id,)).fetchall()
 
@@ -3844,7 +3844,7 @@ def export_board_zip(board_id):
         return jsonify({'error': 'forbidden'}), 403
 
     with get_db() as conn:
-        board = conn.execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+        board = conn.execute('SELECT * FROM boards WHERE id=%s', (board_id,)).fetchone()
         if not board:
             return jsonify({'error': 'Not found'}), 404
         rows = conn.execute('''
@@ -3853,7 +3853,7 @@ def export_board_zip(board_id):
                    CASE WHEN ca.completed=1 THEN 'Выполнена' ELSE 'Активна' END AS status
             FROM cards ca
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id = ?
+            WHERE co.board_id = %s
             ORDER BY co.position, ca.position
         ''', (board_id,)).fetchall()
         members_rows = conn.execute('''
@@ -3861,14 +3861,14 @@ def export_board_zip(board_id):
             FROM card_members cm
             JOIN cards ca ON ca.id = cm.card_id
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id = ?
+            WHERE co.board_id = %s
         ''', (board_id,)).fetchall()
         labels_rows = conn.execute('''
             SELECT cl.card_id, cl.name
             FROM card_labels cl
             JOIN cards ca ON ca.id = cl.card_id
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id = ?
+            WHERE co.board_id = %s
             ORDER BY cl.position, cl.id
         ''', (board_id,)).fetchall()
         att_rows = conn.execute('''
@@ -3876,7 +3876,7 @@ def export_board_zip(board_id):
             FROM attachments a
             JOIN cards ca ON ca.id = a.card_id
             JOIN columns co ON co.id = ca.column_id
-            WHERE co.board_id = ?
+            WHERE co.board_id = %s
         ''', (board_id,)).fetchall()
 
     cm_map = {}
@@ -3919,7 +3919,7 @@ def export_workspace(ws_id):
     if session['user'].get('role') != 'admin':
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        ws = conn.execute('SELECT * FROM workspaces WHERE id=?', (ws_id,)).fetchone()
+        ws = conn.execute('SELECT * FROM workspaces WHERE id=%s', (ws_id,)).fetchone()
         if not ws:
             return jsonify({'error': 'Not found'}), 404
         rows = conn.execute('''
@@ -3929,7 +3929,7 @@ def export_workspace(ws_id):
             FROM cards ca
             JOIN columns co ON co.id = ca.column_id
             JOIN boards b ON b.id = co.board_id
-            WHERE b.workspace_id = ?
+            WHERE b.workspace_id = %s
             ORDER BY b.name, co.position, ca.position
         ''', (ws_id,)).fetchall()
         members_rows = conn.execute('''
@@ -3938,7 +3938,7 @@ def export_workspace(ws_id):
             JOIN cards ca ON ca.id = cm.card_id
             JOIN columns co ON co.id = ca.column_id
             JOIN boards b ON b.id = co.board_id
-            WHERE b.workspace_id = ?
+            WHERE b.workspace_id = %s
         ''', (ws_id,)).fetchall()
         labels_rows = conn.execute('''
             SELECT cl.card_id, cl.name
@@ -3946,7 +3946,7 @@ def export_workspace(ws_id):
             JOIN cards ca ON ca.id = cl.card_id
             JOIN columns co ON co.id = ca.column_id
             JOIN boards b ON b.id = co.board_id
-            WHERE b.workspace_id = ?
+            WHERE b.workspace_id = %s
             ORDER BY cl.position, cl.id
         ''', (ws_id,)).fetchall()
 
@@ -4038,7 +4038,7 @@ def migrate_db():
         ).fetchall()
         for row in companies:
             conn.execute(
-                'INSERT OR IGNORE INTO workspaces (name, color) VALUES (?, ?)',
+                'INSERT OR IGNORE INTO workspaces (name, color) VALUES (%s, %s)',
                 (row['company'], row['color'])
             )
 
@@ -4080,11 +4080,11 @@ def migrate_db():
         for row in orphan_cards:
             cid = row['card_id']
             cur = conn.execute(
-                "INSERT INTO checklists (card_id, title, position) VALUES (?,?,0)",
+                "INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,0)",
                 (cid, 'Чек-лист')
             )
             conn.execute(
-                'UPDATE checklist_items SET checklist_id=? WHERE card_id=? AND checklist_id IS NULL',
+                'UPDATE checklist_items SET checklist_id=%s WHERE card_id=%s AND checklist_id IS NULL',
                 (cur.lastrowid, cid)
             )
 
@@ -4303,7 +4303,7 @@ def migrate_db():
         # Метки-приоритеты когда-то хранились в card_labels наравне с обычными метками;
         # теперь важность — отдельное поле карточки, а card_labels снова свободен для
         # произвольных пользовательских меток.
-        placeholders = ','.join('?' * len(IMPORTANCE_LEVELS))
+        placeholders = ','.join(['%s'] * len(IMPORTANCE_LEVELS))
         importance_rows = conn.execute(
             f'SELECT card_id, name FROM card_labels WHERE name IN ({placeholders}) ORDER BY id DESC',
             [l['name'] for l in IMPORTANCE_LEVELS]
@@ -4313,7 +4313,7 @@ def migrate_db():
             if row['card_id'] in seen_cards:
                 continue  # на карточке уже была только одна метка-приоритет, но на всякий случай
             seen_cards.add(row['card_id'])
-            conn.execute('UPDATE cards SET importance=? WHERE id=?', (row['name'], row['card_id']))
+            conn.execute('UPDATE cards SET importance=%s WHERE id=%s', (row['name'], row['card_id']))
         conn.execute(
             f'DELETE FROM card_labels WHERE name IN ({placeholders})',
             [l['name'] for l in IMPORTANCE_LEVELS]
@@ -4500,28 +4500,28 @@ def api_search():
 
         if op_member:
             sql += ' JOIN card_members cm ON cm.card_id = c.id'
-            wheres.append('(LOWER(cm.user_email) LIKE ? OR LOWER(cm.user_name) LIKE ?)')
+            wheres.append('(LOWER(cm.user_email) LIKE %s OR LOWER(cm.user_name) LIKE %s)')
             like_m = f'%{op_member.lower()}%'
             params += [like_m, like_m]
 
         if free_text:
             variants = _search_text_variants(free_text)
-            ors = ' OR '.join(['c.title LIKE ? OR c.description LIKE ?'] * len(variants))
+            ors = ' OR '.join(['c.title LIKE %s OR c.description LIKE %s'] * len(variants))
             wheres.append(f'({ors})')
             for v in variants:
                 params += [f'%{v}%', f'%{v}%']
 
         if op_board:
-            wheres.append('LOWER(b.name) LIKE ?')
+            wheres.append('LOWER(b.name) LIKE %s')
             params.append(f'%{op_board.lower()}%')
 
         if op_due == 'overdue':
-            wheres.append("TRIM(COALESCE(c.due_date,'')) != '' AND (substr(c.due_date,7,4)||substr(c.due_date,4,2)||substr(c.due_date,1,2)) < ?")
+            wheres.append("TRIM(COALESCE(c.due_date,'')) != '' AND (substr(c.due_date,7,4)||substr(c.due_date,4,2)||substr(c.due_date,1,2)) < %s")
             params.append(datetime.now().strftime('%Y%m%d'))
         elif op_due in ('today', 'soon'):
             today_key = datetime.now().strftime('%Y%m%d')
             tomorrow_key = (datetime.now() + timedelta(days=1)).strftime('%Y%m%d')
-            wheres.append("TRIM(COALESCE(c.due_date,'')) != '' AND (substr(c.due_date,7,4)||substr(c.due_date,4,2)||substr(c.due_date,1,2)) IN (?,?)")
+            wheres.append("TRIM(COALESCE(c.due_date,'')) != '' AND (substr(c.due_date,7,4)||substr(c.due_date,4,2)||substr(c.due_date,1,2)) IN (%s,%s)")
             params += [today_key, tomorrow_key]
 
         if op_is in ('done', 'complete', 'completed'):
@@ -4530,7 +4530,7 @@ def api_search():
             wheres.append('(c.completed=0 OR c.completed IS NULL)')
 
         if board_ids is not None:
-            ph = ','.join('?' * len(board_ids))
+            ph = ','.join(['%s'] * len(board_ids))
             wheres.append(f'b.id IN ({ph})')
             params += board_ids
 
@@ -4569,13 +4569,13 @@ def _check_due_approaching():
                     target = today + timedelta(days=days)
                     target_str = target.strftime('%d.%m.%Y')
                     cards = conn.execute(
-                        "SELECT id FROM cards WHERE due_date=? AND (completed=0 OR completed IS NULL) AND (archived=0 OR archived IS NULL)",
+                        "SELECT id FROM cards WHERE due_date=%s AND (completed=0 OR completed IS NULL) AND (archived=0 OR archived IS NULL)",
                         (target_str,)
                     ).fetchall()
                     for card in cards:
                         _apply_automation_action(conn, card['id'], rule)
                         conn.execute(
-                            'INSERT INTO automation_log (rule_id, card_id, action, details) VALUES (?,?,?,?)',
+                            'INSERT INTO automation_log (rule_id, card_id, action, details) VALUES (%s,%s,%s,%s)',
                             (rule['id'], card['id'], rule['action_type'], f'due_approaching {days}d → {target_str}')
                         )
     except Exception as e:
@@ -4657,7 +4657,7 @@ def _check_scheduled_automations():
                     continue
                 _execute_scheduled_action(conn, row)
                 conn.execute(
-                    "UPDATE scheduled_automations SET last_run=? WHERE id=?",
+                    "UPDATE scheduled_automations SET last_run=%s WHERE id=%s",
                     (now_key, row['id'])
                 )
     except Exception as e:
@@ -4677,18 +4677,18 @@ def _execute_scheduled_action(conn, sched):
             return
         cur = conn.execute(
             '''INSERT INTO cards (column_id, title, description, due_date, position)
-               VALUES (?,?,?,?,0)''',
+               VALUES (%s,%s,%s,%s,0)''',
             (target_col, value or 'Задача по расписанию', '', '')
         )
         _log_activity(conn, cur.lastrowid, 'created', log_msg)
     elif action == 'archive_completed':
         if not target_col:
             col_ids = [c['id'] for c in conn.execute(
-                'SELECT id FROM columns WHERE board_id=?', (board_id,)
+                'SELECT id FROM columns WHERE board_id=%s', (board_id,)
             ).fetchall()]
         else:
             col_ids = [target_col]
-        ph = ','.join('?' * len(col_ids))
+        ph = ','.join(['%s'] * len(col_ids))
         conn.execute(
             f"UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE column_id IN ({ph}) AND completed=1 AND (archived=0 OR archived IS NULL)",
             col_ids
@@ -4701,7 +4701,7 @@ def _execute_scheduled_action(conn, sched):
         if not src_col_id:
             return
         conn.execute(
-            'UPDATE cards SET column_id=? WHERE column_id=? AND (archived=0 OR archived IS NULL)',
+            'UPDATE cards SET column_id=%s WHERE column_id=%s AND (archived=0 OR archived IS NULL)',
             (target_col, src_col_id)
         )
 
