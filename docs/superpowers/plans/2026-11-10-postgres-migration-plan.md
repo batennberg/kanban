@@ -858,7 +858,12 @@ Replace from `# ── История активности карточки` thr
         ''')
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Syntax check**
+
+Run: `python -m py_compile app.py`
+Expected: no output, exit code 0.
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add app.py
@@ -951,7 +956,12 @@ Replace from `# ── Шаблоны досок (Should №9)` through `card_te
         ''')
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Syntax check**
+
+Run: `python -m py_compile app.py`
+Expected: no output, exit code 0.
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add app.py
@@ -1004,7 +1014,12 @@ Replace from `# ── Разовый перенос меток-приорите
 
 Note: `placeholders` here is already a Python variable name used in the *original* code — this is the 15th dynamic-placeholder site from Task 3 Step 1 (`app.py:4306`), already fixed there. Confirm it reads `','.join(['%s'] * len(...))` when you reach this line — don't re-fix it.
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Syntax check**
+
+Run: `python -m py_compile app.py`
+Expected: no output, exit code 0.
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add app.py
@@ -1067,7 +1082,12 @@ Replace from `# ── Реакции на комментариях` through the
         conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS ai_summary TEXT")
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Syntax check**
+
+Run: `python -m py_compile app.py`
+Expected: no output, exit code 0.
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add app.py
