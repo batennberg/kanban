@@ -4497,7 +4497,12 @@ def api_search():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok'})
+    try:
+        with get_db() as conn:
+            conn.execute('SELECT 1')
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'detail': str(e)}), 503
 
 
 # ===== Автоматизация по приближению срока (Should №55) =====
