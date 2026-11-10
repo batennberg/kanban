@@ -4461,7 +4461,7 @@ def api_search():
 
         if free_text:
             variants = _search_text_variants(free_text)
-            ors = ' OR '.join(['c.title LIKE %s OR c.description LIKE %s'] * len(variants))
+            ors = ' OR '.join(['c.title ILIKE %s OR c.description ILIKE %s'] * len(variants))
             wheres.append(f'({ors})')
             for v in variants:
                 params += [f'%{v}%', f'%{v}%']
