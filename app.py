@@ -4199,17 +4199,17 @@ def migrate_db():
             )
         ''')
 
-        # ── Шаблоны досок (Should №9) — глобальные, не привязаны к workspace ──
+        # ── Шаблоны досок (Should №9) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS board_templates (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 name       TEXT    NOT NULL,
-                created_at TEXT    DEFAULT (datetime('now','localtime'))
+                created_at TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS board_template_columns (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 template_id INTEGER NOT NULL REFERENCES board_templates(id) ON DELETE CASCADE,
                 name        TEXT    NOT NULL,
                 position    INTEGER DEFAULT 0
@@ -4217,7 +4217,7 @@ def migrate_db():
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS board_template_custom_fields (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id           INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 template_id  INTEGER NOT NULL REFERENCES board_templates(id) ON DELETE CASCADE,
                 name         TEXT    NOT NULL,
                 type         TEXT    NOT NULL,
@@ -4230,18 +4230,18 @@ def migrate_db():
         # ── Шаблоны карточек (Should №10) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_templates (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
                 name        TEXT    NOT NULL,
                 title       TEXT    NOT NULL DEFAULT '',
                 description TEXT    DEFAULT '',
                 importance  TEXT    DEFAULT '',
-                created_at  TEXT    DEFAULT (datetime('now','localtime'))
+                created_at  TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_template_labels (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 template_id INTEGER NOT NULL REFERENCES card_templates(id) ON DELETE CASCADE,
                 name        TEXT    NOT NULL DEFAULT '',
                 color       TEXT    NOT NULL DEFAULT ''
@@ -4249,7 +4249,7 @@ def migrate_db():
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_template_checklists (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 template_id INTEGER NOT NULL REFERENCES card_templates(id) ON DELETE CASCADE,
                 title       TEXT    NOT NULL DEFAULT 'Чек-лист',
                 position    INTEGER DEFAULT 0
@@ -4257,7 +4257,7 @@ def migrate_db():
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_template_checklist_items (
-                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                     INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 template_checklist_id  INTEGER NOT NULL REFERENCES card_template_checklists(id) ON DELETE CASCADE,
                 text                   TEXT    NOT NULL,
                 position               INTEGER DEFAULT 0
@@ -4265,7 +4265,7 @@ def migrate_db():
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_template_custom_fields (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 template_id INTEGER NOT NULL REFERENCES card_templates(id) ON DELETE CASCADE,
                 field_id    INTEGER NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
                 value       TEXT    DEFAULT ''
