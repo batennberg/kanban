@@ -5,7 +5,7 @@ from flask import Flask, render_template, redirect, url_for, session, request, j
 from models import get_db, init_db
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
-import sqlite3, os, uuid, csv, io, shutil, re, json
+import os, uuid, csv, io, shutil, re, json
 from datetime import timedelta, datetime
 from urllib.parse import quote as url_quote
 
@@ -4351,26 +4351,26 @@ def migrate_db():
             CREATE TABLE IF NOT EXISTS notification_settings (
                 user_email TEXT PRIMARY KEY,
                 settings   TEXT DEFAULT '{}',
-                updated_at TEXT DEFAULT (datetime('now','localtime'))
+                updated_at TEXT DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
 
         # ── Журнал автоматизаций (Should №59) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS automation_log (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 rule_id    INTEGER,
                 card_id    INTEGER,
                 action     TEXT NOT NULL,
                 details    TEXT DEFAULT '',
-                created_at TEXT DEFAULT (datetime('now','localtime'))
+                created_at TEXT DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
 
         # ── Автоматизация по расписанию (Should №54) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS scheduled_automations (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id           INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 board_id     INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
                 name         TEXT    NOT NULL DEFAULT '',
                 action_type  TEXT    NOT NULL,
@@ -4379,7 +4379,7 @@ def migrate_db():
                 schedule     TEXT    NOT NULL,
                 enabled      INTEGER DEFAULT 1,
                 last_run     TEXT,
-                created_at   TEXT DEFAULT (datetime('now','localtime'))
+                created_at   TEXT DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
 
