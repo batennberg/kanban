@@ -2856,14 +2856,15 @@ def api_upload_attachment(card_id):
     stored = uuid.uuid4().hex + ext
     card_dir = os.path.join(UPLOAD_FOLDER, str(card_id))
     os.makedirs(card_dir, exist_ok=True)
-    filepath = os.path.join(card_dir, stored)
-    f.save(filepath)
-    size_str = _fmt_size(os.path.getsize(filepath))
+    abs_filepath = os.path.join(card_dir, stored)
+    f.save(abs_filepath)
+    rel_filepath = f'{card_id}/{stored}'
+    size_str = _fmt_size(os.path.getsize(abs_filepath))
     ftype = _file_type(original)
     with get_db() as conn:
         cur = conn.execute(
             'INSERT INTO attachments (card_id,filename,filesize,filetype,filepath) VALUES(%s,%s,%s,%s,%s) RETURNING id',
-            (card_id, original, size_str, ftype, filepath)
+            (card_id, original, size_str, ftype, rel_filepath)
         )
         new_att_id = cur.fetchone()['id']
         _log_activity(conn, card_id, 'attachment_added', original)
@@ -2875,10 +2876,11 @@ def api_get_attachment(att_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         att = conn.execute('SELECT * FROM attachments WHERE id=%s', (att_id,)).fetchone()
-    if not att or not os.path.exists(att['filepath']):
+    abs_path = os.path.join(UPLOAD_FOLDER, att['filepath']) if att else None
+    if not att or not os.path.exists(abs_path):
         return jsonify({'error': 'not found'}), 404
     inline = request.args.get('inline') == '1'
-    return send_file(att['filepath'], download_name=att['filename'],
+    return send_file(abs_path, download_name=att['filename'],
                      as_attachment=not inline)
 
 @app.route('/api/attachments/<int:att_id>', methods=['DELETE'])
@@ -2890,7 +2892,7 @@ def api_delete_attachment(att_id):
         conn.execute('DELETE FROM attachments WHERE id=%s', (att_id,))
         _log_activity(conn, att['card_id'], 'attachment_removed', att['filename'])
     try:
-        os.remove(att['filepath'])
+        os.remove(os.path.join(UPLOAD_FOLDER, att['filepath']))
     except OSError:
         pass
     return jsonify({'ok': True})
@@ -3910,9 +3912,10 @@ def export_board_zip(board_id):
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr('export.csv', csv_bytes)
         for att in att_rows:
-            if os.path.isfile(att['filepath']):
+            abs_path = os.path.join(UPLOAD_FOLDER, att['filepath'])
+            if os.path.isfile(abs_path):
                 arcname = f"attachments/{att['card_id']}/{att['filename']}"
-                zf.write(att['filepath'], arcname)
+                zf.write(abs_path, arcname)
     buf.seek(0)
 
     encoded = url_quote(board['name'] + '.zip')
