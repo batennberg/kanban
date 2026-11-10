@@ -4045,44 +4045,40 @@ def migrate_db():
         # ── Множественные именованные чек-листы + срок/исполнитель на пункт ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS checklists (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 title      TEXT NOT NULL DEFAULT 'Чек-лист',
                 position   INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT (datetime('now','localtime'))
+                created_at TEXT DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
         for col_stmt in [
-            "ALTER TABLE checklist_items ADD COLUMN checklist_id   INTEGER REFERENCES checklists(id) ON DELETE CASCADE",
-            "ALTER TABLE checklist_items ADD COLUMN due_date       TEXT DEFAULT ''",
-            "ALTER TABLE checklist_items ADD COLUMN assignee_email TEXT DEFAULT ''",
-            "ALTER TABLE checklist_items ADD COLUMN assignee_name  TEXT DEFAULT ''",
+            "ALTER TABLE checklist_items ADD COLUMN IF NOT EXISTS checklist_id   INTEGER REFERENCES checklists(id) ON DELETE CASCADE",
+            "ALTER TABLE checklist_items ADD COLUMN IF NOT EXISTS due_date       TEXT DEFAULT ''",
+            "ALTER TABLE checklist_items ADD COLUMN IF NOT EXISTS assignee_email TEXT DEFAULT ''",
+            "ALTER TABLE checklist_items ADD COLUMN IF NOT EXISTS assignee_name  TEXT DEFAULT ''",
         ]:
-            try:
-                conn.execute(col_stmt)
-            except sqlite3.OperationalError:
-                pass
+            conn.execute(col_stmt)
 
-        # Пункты, добавленные до появления группировки, разбираем по одному
-        # дефолтному чек-листу на карточку (данные не теряются)
         orphan_cards = conn.execute(
             'SELECT DISTINCT card_id FROM checklist_items WHERE checklist_id IS NULL'
         ).fetchall()
         for row in orphan_cards:
             cid = row['card_id']
             cur = conn.execute(
-                "INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,0)",
+                "INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,0) RETURNING id",
                 (cid, 'Чек-лист')
             )
+            new_checklist_id = cur.fetchone()['id']
             conn.execute(
                 'UPDATE checklist_items SET checklist_id=%s WHERE card_id=%s AND checklist_id IS NULL',
-                (cur.lastrowid, cid)
+                (new_checklist_id, cid)
             )
 
         # ── Множественные метки на карточке ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_labels (
-                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                id       INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 card_id  INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 name     TEXT NOT NULL DEFAULT '',
                 color    TEXT NOT NULL DEFAULT '',
@@ -4090,58 +4086,48 @@ def migrate_db():
                 UNIQUE(card_id, name)
             )
         ''')
-        # Разовый перенос старой одиночной метки (cards.label/label_color) в card_labels.
-        # Колонки cards.label/label_color оставлены как есть — ими больше никто не пишет,
-        # но существующие значения не теряем.
         conn.execute('''
-            INSERT OR IGNORE INTO card_labels (card_id, name, color, position)
+            INSERT INTO card_labels (card_id, name, color, position)
             SELECT id, label, label_color, 0 FROM cards
             WHERE TRIM(COALESCE(label, '')) != ''
+            ON CONFLICT (card_id, name) DO NOTHING
         ''')
 
         # ── Несколько ссылок на карточке (Google Drive и т.п.) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_links (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 url        TEXT    NOT NULL,
                 title      TEXT    NOT NULL DEFAULT '',
                 position   INTEGER DEFAULT 0,
-                created_at TEXT    DEFAULT (datetime('now','localtime'))
+                created_at TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS comment_mentions (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 comment_id        INTEGER NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
                 mentioned_email  TEXT    NOT NULL,
                 mentioned_name   TEXT    NOT NULL DEFAULT '',
-                created_at       TEXT    DEFAULT (datetime('now','localtime')),
+                created_at       TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')),
                 UNIQUE(comment_id, mentioned_email)
             )
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS inbox_entries (
-                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                id             INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 recipient_email TEXT    NOT NULL,
                 type           TEXT    NOT NULL DEFAULT 'comment_mention',
                 card_id        INTEGER NOT NULL,
                 comment_id     INTEGER,
                 payload        TEXT,
                 is_read        INTEGER DEFAULT 0,
-                created_at     TEXT    DEFAULT (datetime('now','localtime'))
+                created_at     TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
-        try:
-            conn.execute('ALTER TABLE inbox_entries ADD COLUMN board_id INTEGER')
-        except sqlite3.OperationalError:
-            pass
-
-        # Временный/гостевой доступ к доске — дата истечения (Must №78)
-        try:
-            conn.execute('ALTER TABLE board_access ADD COLUMN expires_at TEXT')
-        except sqlite3.OperationalError:
-            pass
+        conn.execute('ALTER TABLE inbox_entries ADD COLUMN IF NOT EXISTS board_id INTEGER')
+        conn.execute('ALTER TABLE board_access ADD COLUMN IF NOT EXISTS expires_at TEXT')
 
         # ── История активности карточки (audit) ──
         conn.execute('''
