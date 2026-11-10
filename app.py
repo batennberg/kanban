@@ -106,7 +106,7 @@ def _create_comment_mentions(conn, card_id, comment_id, text, actor_email, actor
         if not _user_notif_enabled(conn, user['email'], 'comment_mention'):
             continue
         conn.execute(
-            'INSERT OR IGNORE INTO comment_mentions (comment_id, mentioned_email, mentioned_name) VALUES (%s,%s,%s)',
+            'INSERT INTO comment_mentions (comment_id, mentioned_email, mentioned_name) VALUES (%s,%s,%s) ON CONFLICT (comment_id, mentioned_email) DO NOTHING',
             (comment_id, user['email'], user['name'])
         )
         payload = json.dumps({
@@ -307,7 +307,7 @@ def _apply_automation_action(conn, card_id, rule):
         except (ValueError, TypeError, AttributeError):
             name, color = value.strip(), '#4361EE'
         if name:
-            conn.execute('INSERT OR IGNORE INTO card_labels (card_id, name, color) VALUES (%s,%s,%s)', (card_id, name, color))
+            conn.execute('INSERT INTO card_labels (card_id, name, color) VALUES (%s,%s,%s) ON CONFLICT (card_id, name) DO NOTHING', (card_id, name, color))
             _log_activity(conn, card_id, 'label_added', name)
     elif action == 'create_card_on_board' and target_board_id:
         # Кросс-досочная автоматизация (Should №57)
@@ -493,12 +493,12 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
         )
     for m in conn.execute('SELECT * FROM card_members WHERE card_id=%s', (src_card_id,)):
         conn.execute(
-            'INSERT OR IGNORE INTO card_members (card_id, user_email, user_name) VALUES (%s,%s,%s)',
+            'INSERT INTO card_members (card_id, user_email, user_name) VALUES (%s,%s,%s) ON CONFLICT (card_id, user_email) DO NOTHING',
             (new_card_id, m['user_email'], m['user_name'])
         )
     for lbl in conn.execute('SELECT * FROM card_labels WHERE card_id=%s ORDER BY position', (src_card_id,)):
         conn.execute(
-            'INSERT OR IGNORE INTO card_labels (card_id, name, color, position) VALUES (%s,%s,%s,%s)',
+            'INSERT INTO card_labels (card_id, name, color, position) VALUES (%s,%s,%s,%s) ON CONFLICT (card_id, name) DO NOTHING',
             (new_card_id, lbl['name'], lbl['color'], lbl['position'])
         )
     for lnk in conn.execute('SELECT * FROM card_links WHERE card_id=%s ORDER BY position', (src_card_id,)):
@@ -562,7 +562,7 @@ def _duplicate_board(conn, src_board_id, name_suffix=' (копия)'):
         _duplicate_column(conn, col['id'], new_board_id, i, field_id_map=field_id_map)
     for row in conn.execute('SELECT user_id, expires_at FROM board_access WHERE board_id=%s', (src_board_id,)):
         conn.execute(
-            'INSERT OR IGNORE INTO board_access (user_id, board_id, expires_at) VALUES (%s,%s,%s)',
+            'INSERT INTO board_access (user_id, board_id, expires_at) VALUES (%s,%s,%s) ON CONFLICT (user_id, board_id) DO NOTHING',
             (row['user_id'], new_board_id, row['expires_at'])
         )
     return new_board_id
@@ -1414,7 +1414,7 @@ def api_create_user():
         if role != 'admin' and boards:
             for bid in (b.strip() for b in boards.split(',')):
                 if bid.isdigit():
-                    conn.execute('INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (%s,%s)', (user_id, int(bid)))
+                    conn.execute('INSERT INTO board_access (user_id, board_id) VALUES (%s,%s) ON CONFLICT (user_id, board_id) DO NOTHING', (user_id, int(bid)))
     return jsonify({'email': email, 'name': name, 'role': role, 'boards': boards}), 201
 
 
@@ -1451,7 +1451,7 @@ def api_update_user(email):
             conn.execute('DELETE FROM board_access WHERE user_id=%s', (user['id'],))
             for bid in (b.strip() for b in boards.split(',')):
                 if bid.isdigit():
-                    conn.execute('INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (%s,%s)', (user['id'], int(bid)))
+                    conn.execute('INSERT INTO board_access (user_id, board_id) VALUES (%s,%s) ON CONFLICT (user_id, board_id) DO NOTHING', (user['id'], int(bid)))
     return jsonify({'ok': True})
 
 
@@ -1558,7 +1558,7 @@ def invite_register(token):
                     bid = bid.strip()
                     if bid.isdigit():
                         conn.execute(
-                            'INSERT OR IGNORE INTO board_access (user_id, board_id) VALUES (%s,%s)',
+                            'INSERT INTO board_access (user_id, board_id) VALUES (%s,%s) ON CONFLICT (user_id, board_id) DO NOTHING',
                             (user['id'], int(bid))
                         )
         from datetime import datetime
@@ -1628,7 +1628,7 @@ def api_toggle_card_watch(card_id):
             conn.execute('DELETE FROM card_watchers WHERE card_id=%s AND user_email=%s', (card_id, email))
             watching = False
         else:
-            conn.execute('INSERT OR IGNORE INTO card_watchers (card_id, user_email) VALUES (%s,%s)', (card_id, email))
+            conn.execute('INSERT INTO card_watchers (card_id, user_email) VALUES (%s,%s) ON CONFLICT (card_id, user_email) DO NOTHING', (card_id, email))
             watching = True
     return jsonify({'ok': True, 'watching': watching})
 
@@ -1645,7 +1645,7 @@ def api_toggle_board_watch(board_id):
             conn.execute('DELETE FROM board_watchers WHERE board_id=%s AND user_email=%s', (board_id, email))
             watching = False
         else:
-            conn.execute('INSERT OR IGNORE INTO board_watchers (board_id, user_email) VALUES (%s,%s)', (board_id, email))
+            conn.execute('INSERT INTO board_watchers (board_id, user_email) VALUES (%s,%s) ON CONFLICT (board_id, user_email) DO NOTHING', (board_id, email))
             watching = True
     return jsonify({'ok': True, 'watching': watching})
 
@@ -2916,7 +2916,7 @@ def api_assign_card_member(card_id):
     if not email: return jsonify({'error': 'email required'}), 400
     with get_db() as conn:
         conn.execute(
-            'INSERT OR IGNORE INTO card_members (card_id, user_email, user_name) VALUES (%s,%s,%s)',
+            'INSERT INTO card_members (card_id, user_email, user_name) VALUES (%s,%s,%s) ON CONFLICT (card_id, user_email) DO NOTHING',
             (card_id, email, name)
         )
         _log_activity(conn, card_id, 'member_added', name or email)
@@ -3204,7 +3204,7 @@ def api_instantiate_card_template(template_id):
 
         for lbl in conn.execute('SELECT * FROM card_template_labels WHERE template_id=%s', (template_id,)):
             conn.execute(
-                'INSERT OR IGNORE INTO card_labels (card_id, name, color) VALUES (%s,%s,%s)',
+                'INSERT INTO card_labels (card_id, name, color) VALUES (%s,%s,%s) ON CONFLICT (card_id, name) DO NOTHING',
                 (new_card_id, lbl['name'], lbl['color'])
             )
 
@@ -3522,7 +3522,7 @@ def api_add_card_relation(card_id):
     with get_db() as conn:
         other = conn.execute('SELECT title FROM cards WHERE id=%s', (other_id,)).fetchone()
         if not other: return jsonify({'error': 'not found'}), 404
-        conn.execute('INSERT OR IGNORE INTO card_relations (card_a_id, card_b_id, relation_type) VALUES (%s,%s,%s)', (a, b, relation_type))
+        conn.execute('INSERT INTO card_relations (card_a_id, card_b_id, relation_type) VALUES (%s,%s,%s) ON CONFLICT (card_a_id, card_b_id) DO NOTHING', (a, b, relation_type))
         _log_activity(conn, card_id, 'relation_added', f"{other['title']} ({relation_type})")
     return jsonify({'ok': True}), 201
 
@@ -3693,7 +3693,7 @@ def api_profile_update():
         if not user:
             # Google Sheets пользователь — создаём SQLite-запись для хранения настроек профиля
             conn.execute(
-                "INSERT OR IGNORE INTO users (email, name, password_hash, role) VALUES (%s, %s, %s, %s)",
+                "INSERT INTO users (email, name, password_hash, role) VALUES (%s, %s, %s, %s) ON CONFLICT (email) DO NOTHING",
                 (email, session['user'].get('name', email), 'sheets-auth', session['user'].get('role', 'user'))
             )
             user = conn.execute('SELECT * FROM users WHERE email=%s', (email,)).fetchone()
@@ -3756,7 +3756,7 @@ def api_profile_photo():
     with get_db() as conn:
         # Создаём запись если пользователь только через Google Sheets
         conn.execute(
-            "INSERT OR IGNORE INTO users (email, name, password_hash, role) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO users (email, name, password_hash, role) VALUES (%s, %s, %s, %s) ON CONFLICT (email) DO NOTHING",
             (email, session['user'].get('name', email), 'sheets-auth', session['user'].get('role', 'user'))
         )
         old = conn.execute('SELECT avatar_photo FROM users WHERE email=%s', (email,)).fetchone()
