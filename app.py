@@ -3,6 +3,7 @@ load_dotenv()
 
 from flask import Flask, render_template, redirect, url_for, session, request, jsonify, send_file
 from models import get_db, init_db
+import psycopg2
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 import os, uuid, csv, io, shutil, re, json
@@ -408,13 +409,13 @@ def _create_repeat_card(conn, src, pattern):
     cur = conn.execute(
         '''INSERT INTO cards (column_id, title, description, label, label_color,
            due_date, start_date, position, completed, importance, repeat_pattern)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s)''',
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s) RETURNING id''',
         (src['column_id'], src['title'], src['description'] or '',
          src['label'] or '', src['label_color'] or '',
          new_due, start, src['position'],
          src['importance'] or '', pattern)
     )
-    new_id = cur.lastrowid
+    new_id = cur.fetchone()['id']
     _log_activity(conn, new_id, 'created', f'создана автоматически (повтор {pattern})')
     return new_id
 
@@ -465,20 +466,20 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
     cur = conn.execute(
         '''INSERT INTO cards
            (column_id, title, description, label, label_color, due_date, start_date, position, cover_color, importance)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id''',
         (target_column_id, src['title'] + title_suffix, src['description'],
          src['label'], src['label_color'], src['due_date'], src['start_date'], position, src['cover_color'],
          src['importance'])
     )
-    new_card_id = cur.lastrowid
+    new_card_id = cur.fetchone()['id']
 
     checklist_id_map = {}
     for cl in conn.execute('SELECT * FROM checklists WHERE card_id=%s ORDER BY position', (src_card_id,)):
         new_cl = conn.execute(
-            'INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s)',
+            'INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s) RETURNING id',
             (new_card_id, cl['title'], cl['position'])
         )
-        checklist_id_map[cl['id']] = new_cl.lastrowid
+        checklist_id_map[cl['id']] = new_cl.fetchone()['id']
 
     for item in conn.execute(
         'SELECT * FROM checklist_items WHERE card_id=%s ORDER BY position', (src_card_id,)
@@ -525,10 +526,10 @@ def _duplicate_card(conn, src_card_id, target_column_id, position, title_suffix=
 def _duplicate_column(conn, src_col_id, target_board_id, position, name_suffix='', field_id_map=None):
     src = conn.execute('SELECT * FROM columns WHERE id=%s', (src_col_id,)).fetchone()
     cur = conn.execute(
-        'INSERT INTO columns (board_id, name, position, wip_limit) VALUES (%s,%s,%s,%s)',
+        'INSERT INTO columns (board_id, name, position, wip_limit) VALUES (%s,%s,%s,%s) RETURNING id',
         (target_board_id, src['name'] + name_suffix, position, src['wip_limit'] or 0)
     )
-    new_col_id = cur.lastrowid
+    new_col_id = cur.fetchone()['id']
     cards = conn.execute(
         'SELECT id FROM cards WHERE column_id=%s AND (archived=0 OR archived IS NULL) ORDER BY position',
         (src_col_id,)
@@ -540,19 +541,19 @@ def _duplicate_column(conn, src_col_id, target_board_id, position, name_suffix='
 def _duplicate_board(conn, src_board_id, name_suffix=' (копия)'):
     src = conn.execute('SELECT * FROM boards WHERE id=%s', (src_board_id,)).fetchone()
     cur = conn.execute(
-        'INSERT INTO boards (name, company, color, workspace_id, description) VALUES (%s,%s,%s,%s,%s)',
+        'INSERT INTO boards (name, company, color, workspace_id, description) VALUES (%s,%s,%s,%s,%s) RETURNING id',
         (src['name'] + name_suffix, src['company'], src['color'], src['workspace_id'], src['description'])
     )
-    new_board_id = cur.lastrowid
+    new_board_id = cur.fetchone()['id']
     field_id_map = {}
     for f in conn.execute(
         'SELECT * FROM custom_fields WHERE board_id=%s ORDER BY position, id', (src_board_id,)
     ):
         cur2 = conn.execute(
-            'INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position) VALUES (%s,%s,%s,%s,%s,%s)',
+            'INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id',
             (new_board_id, f['name'], f['type'], f['options'], f['show_on_card'], f['position'])
         )
-        field_id_map[f['id']] = cur2.lastrowid
+        field_id_map[f['id']] = cur2.fetchone()['id']
     cols = conn.execute(
         'SELECT id FROM columns WHERE board_id=%s AND (archived=0 OR archived IS NULL) ORDER BY position',
         (src_board_id,)
@@ -1081,10 +1082,10 @@ def api_create_board():
                 company  = ws['name']
                 ws_color = ws['color']
         cur = conn.execute(
-            'INSERT INTO boards (name,company,color,workspace_id,description) VALUES(%s,%s,%s,%s,%s)',
+            'INSERT INTO boards (name,company,color,workspace_id,description) VALUES(%s,%s,%s,%s,%s) RETURNING id',
             (name, company, color, workspace_id, description)
         )
-        bid = cur.lastrowid
+        bid = cur.fetchone()['id']
 
         # Из шаблона доски (Should №9) — переносим колонки и кастомные поля, без карточек
         if template_id:
@@ -1135,8 +1136,8 @@ def api_save_board_as_template(board_id):
     if board_ids is not None and board_id not in board_ids:
         return jsonify({'error': 'forbidden'}), 403
     with get_db() as conn:
-        cur = conn.execute('INSERT INTO board_templates (name) VALUES (%s)', (name,))
-        template_id = cur.lastrowid
+        cur = conn.execute('INSERT INTO board_templates (name) VALUES (%s) RETURNING id', (name,))
+        template_id = cur.fetchone()['id']
 
         for col in conn.execute(
             'SELECT * FROM columns WHERE board_id=%s AND (archived=0 OR archived IS NULL) ORDER BY position',
@@ -1317,12 +1318,12 @@ def api_create_workspace():
     with get_db() as conn:
         try:
             cur = conn.execute(
-                'INSERT INTO workspaces (name, color) VALUES(%s,%s)',
+                'INSERT INTO workspaces (name, color) VALUES(%s,%s) RETURNING id',
                 (name, d.get('color', '#0052cc'))
             )
-            wid = cur.lastrowid
+            wid = cur.fetchone()['id']
             ws  = dict(conn.execute('SELECT * FROM workspaces WHERE id=%s', (wid,)).fetchone())
-        except sqlite3.IntegrityError:
+        except psycopg2.IntegrityError:
             return jsonify({'error': 'already exists'}), 409
     return jsonify(ws), 201
 
@@ -1406,10 +1407,10 @@ def api_create_user():
         if conn.execute('SELECT 1 FROM users WHERE email=%s', (email,)).fetchone():
             return jsonify({'error': 'Пользователь с таким email уже существует'}), 409
         cur = conn.execute(
-            'INSERT INTO users (email, name, password_hash, role) VALUES (%s,%s,%s,%s)',
+            'INSERT INTO users (email, name, password_hash, role) VALUES (%s,%s,%s,%s) RETURNING id',
             (email, name, generate_password_hash(password), role)
         )
-        user_id = cur.lastrowid
+        user_id = cur.fetchone()['id']
         if role != 'admin' and boards:
             for bid in (b.strip() for b in boards.split(',')):
                 if bid.isdigit():
@@ -1825,10 +1826,10 @@ def api_create_webhook():
     fmt = data.get('format', 'raw')
     with get_db() as conn:
         cur = conn.execute(
-            'INSERT INTO webhooks (url, events, board_id, secret, created_by, format) VALUES (%s,%s,%s,%s,%s,%s)',
+            'INSERT INTO webhooks (url, events, board_id, secret, created_by, format) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id',
             (url, events, board_id, secret, session['user']['email'], fmt)
         )
-        wh_id = cur.lastrowid
+        wh_id = cur.fetchone()['id']
     return jsonify({'ok': True, 'id': wh_id, 'secret': secret})
 
 
@@ -2079,9 +2080,9 @@ def api_save_slack():
                          (url, events, 1 if url else 0, existing['id']))
             wh_id = existing['id']
         else:
-            cur = conn.execute('INSERT INTO slack_settings (webhook_url, board_id, events) VALUES (%s,%s,%s)',
+            cur = conn.execute('INSERT INTO slack_settings (webhook_url, board_id, events) VALUES (%s,%s,%s) RETURNING id',
                                (url, board_id, events))
-            wh_id = cur.lastrowid
+            wh_id = cur.fetchone()['id']
     return jsonify({'ok': True, 'id': wh_id})
 
 
@@ -2126,8 +2127,8 @@ def api_create_column():
     if not board_id or not name: return jsonify({'error': 'missing fields'}), 400
     with get_db() as conn:
         pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM columns WHERE board_id=%s', (board_id,)).fetchone()[0]
-        cur = conn.execute('INSERT INTO columns (board_id,name,position) VALUES(%s,%s,%s)', (board_id, name, pos))
-        cid = cur.lastrowid
+        cur = conn.execute('INSERT INTO columns (board_id,name,position) VALUES(%s,%s,%s) RETURNING id', (board_id, name, pos))
+        cid = cur.fetchone()['id']
     return jsonify({'id': cid, 'name': name})
 
 
@@ -2237,10 +2238,10 @@ def api_create_card():
     with get_db() as conn:
         pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=%s', (col_id,)).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO cards (column_id,title,label,label_color,due_date,start_date,position) VALUES(%s,%s,%s,%s,%s,%s,%s)',
+            'INSERT INTO cards (column_id,title,label,label_color,due_date,start_date,position) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING id',
             (col_id, title, d.get('label',''), d.get('label_color',''), d.get('due_date',''), d.get('start_date',''), pos)
         )
-        card_id = cur.lastrowid
+        card_id = cur.fetchone()['id']
         _log_activity(conn, card_id, 'created')
         _log_column_entry(conn, card_id, col_id)
         card = dict(conn.execute('SELECT * FROM cards WHERE id=%s', (card_id,)).fetchone())
@@ -2448,8 +2449,9 @@ def api_create_checklist(card_id):
     title = request.get_json().get('title', '').strip() or 'Чек-лист'
     with get_db() as conn:
         pos = conn.execute('SELECT COALESCE(MAX(position),-1)+1 FROM checklists WHERE card_id=%s', (card_id,)).fetchone()[0]
-        cur = conn.execute('INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s)', (card_id, title, pos))
-        cl  = dict(conn.execute('SELECT * FROM checklists WHERE id=%s', (cur.lastrowid,)).fetchone())
+        cur = conn.execute('INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s) RETURNING id', (card_id, title, pos))
+        new_checklist_id = cur.fetchone()['id']
+        cl  = dict(conn.execute('SELECT * FROM checklists WHERE id=%s', (new_checklist_id,)).fetchone())
     cl['items'] = []
     return jsonify(cl), 201
 
@@ -2496,21 +2498,22 @@ def api_copy_checklist(card_id):
             'SELECT COALESCE(MAX(position),-1)+1 FROM checklists WHERE card_id=%s', (card_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s)',
+            'INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s) RETURNING id',
             (card_id, src_cl['title'], pos)
         )
-        new_cl_id = cur.lastrowid
+        new_cl_id = cur.fetchone()['id']
 
         items = []
         for item in conn.execute(
             'SELECT * FROM checklist_items WHERE checklist_id=%s ORDER BY position', (src_checklist_id,)
         ):
             item_cur = conn.execute(
-                'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (%s,%s,%s,%s)',
+                'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (%s,%s,%s,%s) RETURNING id',
                 (card_id, new_cl_id, item['text'], item['position'])
             )
+            new_item_id = item_cur.fetchone()['id']
             items.append(dict(conn.execute(
-                'SELECT * FROM checklist_items WHERE id=%s', (item_cur.lastrowid,)
+                'SELECT * FROM checklist_items WHERE id=%s', (new_item_id,)
             ).fetchone()))
 
         _log_activity(conn, card_id, 'checklist_copied', src_cl['title'])
@@ -2553,10 +2556,11 @@ def api_add_checklist_item(checklist_id):
             'SELECT COALESCE(MAX(position),-1)+1 FROM checklist_items WHERE checklist_id=%s', (checklist_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (%s,%s,%s,%s)',
+            'INSERT INTO checklist_items (card_id, checklist_id, text, position) VALUES (%s,%s,%s,%s) RETURNING id',
             (cl['card_id'], checklist_id, text, pos)
         )
-        row = dict(conn.execute('SELECT * FROM checklist_items WHERE id=%s', (cur.lastrowid,)).fetchone())
+        new_item_id = cur.fetchone()['id']
+        row = dict(conn.execute('SELECT * FROM checklist_items WHERE id=%s', (new_item_id,)).fetchone())
     return jsonify(row), 201
 
 @app.route('/api/checklist/<int:item_id>', methods=['PUT'])
@@ -2597,10 +2601,10 @@ def api_add_comment(card_id):
     if not text: return jsonify({'error': 'empty'}), 400
     with get_db() as conn:
         cur = conn.execute(
-            'INSERT INTO comments (card_id,author,text) VALUES(%s,%s,%s)',
+            'INSERT INTO comments (card_id,author,text) VALUES(%s,%s,%s) RETURNING id',
             (card_id, session['user']['name'], text)
         )
-        comment_id = cur.lastrowid
+        comment_id = cur.fetchone()['id']
         row = dict(conn.execute('SELECT * FROM comments WHERE id=%s', (comment_id,)).fetchone())
         mentions = _create_comment_mentions(
             conn,
@@ -2858,11 +2862,12 @@ def api_upload_attachment(card_id):
     ftype = _file_type(original)
     with get_db() as conn:
         cur = conn.execute(
-            'INSERT INTO attachments (card_id,filename,filesize,filetype,filepath) VALUES(%s,%s,%s,%s,%s)',
+            'INSERT INTO attachments (card_id,filename,filesize,filetype,filepath) VALUES(%s,%s,%s,%s,%s) RETURNING id',
             (card_id, original, size_str, ftype, filepath)
         )
+        new_att_id = cur.fetchone()['id']
         _log_activity(conn, card_id, 'attachment_added', original)
-        row = dict(conn.execute('SELECT * FROM attachments WHERE id=%s', (cur.lastrowid,)).fetchone())
+        row = dict(conn.execute('SELECT * FROM attachments WHERE id=%s', (new_att_id,)).fetchone())
     return jsonify(row), 201
 
 @app.route('/api/attachments/<int:att_id>', methods=['GET'])
@@ -3048,10 +3053,11 @@ def api_create_custom_field(board_id):
             'SELECT COALESCE(MAX(position),-1)+1 FROM custom_fields WHERE board_id=%s', (board_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position) VALUES (%s,%s,%s,%s,%s,%s)',
+            'INSERT INTO custom_fields (board_id, name, type, options, show_on_card, position) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id',
             (board_id, name, ftype, options, show_on_card, pos)
         )
-        row = dict(conn.execute('SELECT * FROM custom_fields WHERE id=%s', (cur.lastrowid,)).fetchone())
+        new_field_id = cur.fetchone()['id']
+        row = dict(conn.execute('SELECT * FROM custom_fields WHERE id=%s', (new_field_id,)).fetchone())
     return jsonify(row), 201
 
 @app.route('/api/custom-fields/<int:field_id>', methods=['PUT'])
@@ -3135,10 +3141,10 @@ def api_save_card_as_template(card_id):
             return jsonify({'error': 'forbidden'}), 403
 
         cur = conn.execute(
-            'INSERT INTO card_templates (board_id, name, title, description, importance) VALUES (%s,%s,%s,%s,%s)',
+            'INSERT INTO card_templates (board_id, name, title, description, importance) VALUES (%s,%s,%s,%s,%s) RETURNING id',
             (board_id, name, card['title'], card['description'], card['importance'])
         )
-        template_id = cur.lastrowid
+        template_id = cur.fetchone()['id']
 
         for lbl in conn.execute('SELECT * FROM card_labels WHERE card_id=%s ORDER BY position', (card_id,)):
             conn.execute(
@@ -3148,10 +3154,10 @@ def api_save_card_as_template(card_id):
 
         for cl in conn.execute('SELECT * FROM checklists WHERE card_id=%s ORDER BY position', (card_id,)):
             cl_cur = conn.execute(
-                'INSERT INTO card_template_checklists (template_id, title, position) VALUES (%s,%s,%s)',
+                'INSERT INTO card_template_checklists (template_id, title, position) VALUES (%s,%s,%s) RETURNING id',
                 (template_id, cl['title'], cl['position'])
             )
-            new_tpl_cl_id = cl_cur.lastrowid
+            new_tpl_cl_id = cl_cur.fetchone()['id']
             for item in conn.execute(
                 'SELECT * FROM checklist_items WHERE checklist_id=%s ORDER BY position', (cl['id'],)
             ):
@@ -3190,10 +3196,10 @@ def api_instantiate_card_template(template_id):
             'SELECT COALESCE(MAX(position),-1)+1 FROM cards WHERE column_id=%s', (column_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO cards (column_id, title, description, importance, position) VALUES (%s,%s,%s,%s,%s)',
+            'INSERT INTO cards (column_id, title, description, importance, position) VALUES (%s,%s,%s,%s,%s) RETURNING id',
             (column_id, tpl['title'] or tpl['name'], tpl['description'], tpl['importance'], pos)
         )
-        new_card_id = cur.lastrowid
+        new_card_id = cur.fetchone()['id']
         _log_activity(conn, new_card_id, 'created')
 
         for lbl in conn.execute('SELECT * FROM card_template_labels WHERE template_id=%s', (template_id,)):
@@ -3207,10 +3213,10 @@ def api_instantiate_card_template(template_id):
             'SELECT * FROM card_template_checklists WHERE template_id=%s ORDER BY position', (template_id,)
         ):
             new_cl = conn.execute(
-                'INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s)',
+                'INSERT INTO checklists (card_id, title, position) VALUES (%s,%s,%s) RETURNING id',
                 (new_card_id, cl['title'], cl['position'])
             )
-            checklist_id_map[cl['id']] = new_cl.lastrowid
+            checklist_id_map[cl['id']] = new_cl.fetchone()['id']
         for item in conn.execute('''
             SELECT ti.* FROM card_template_checklist_items ti
             JOIN card_template_checklists tc ON tc.id = ti.template_checklist_id
@@ -3289,14 +3295,15 @@ def api_create_automation(board_id):
                 return jsonify({'error': 'колонка не принадлежит этой доске'}), 400
         cur = conn.execute(
             '''INSERT INTO automation_rules (board_id, name, trigger_column_id, action_type, action_value, trigger_type, trigger_value, condition_type, condition_value, target_board_id)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id''',
             (board_id, name, trigger_column_id or 0, action_type, action_value, trigger_type, trigger_value, condition_type, condition_value, target_board_id)
         )
+        new_rule_id = cur.fetchone()['id']
         row = dict(conn.execute('''
             SELECT ar.*, col.name AS trigger_column_name
             FROM automation_rules ar LEFT JOIN columns col ON col.id = ar.trigger_column_id
             WHERE ar.id=%s
-        ''', (cur.lastrowid,)).fetchone())
+        ''', (new_rule_id,)).fetchone())
     return jsonify(row), 201
 
 @app.route('/api/automations/<int:rule_id>', methods=['PUT'])
@@ -3371,13 +3378,14 @@ def api_create_scheduled(board_id):
     with get_db() as conn:
         cur = conn.execute(
             '''INSERT INTO scheduled_automations (board_id, name, action_type, action_value, target_column_id, schedule)
-               VALUES (%s,%s,%s,%s,%s,%s)''',
+               VALUES (%s,%s,%s,%s,%s,%s) RETURNING id''',
             (board_id, name, action_type, action_value, target_column_id or 0, schedule)
         )
+        new_sched_id = cur.fetchone()['id']
         row = dict(conn.execute(
             '''SELECT sa.*, col.name AS target_column_name
                FROM scheduled_automations sa LEFT JOIN columns col ON col.id = sa.target_column_id
-               WHERE sa.id=%s''', (cur.lastrowid,)
+               WHERE sa.id=%s''', (new_sched_id,)
         ).fetchone())
     return jsonify(row), 201
 
@@ -3424,10 +3432,11 @@ def api_add_card_link(card_id):
             'SELECT COALESCE(MAX(position),-1)+1 FROM card_links WHERE card_id=%s', (card_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO card_links (card_id, url, title, position) VALUES (%s,%s,%s,%s)',
+            'INSERT INTO card_links (card_id, url, title, position) VALUES (%s,%s,%s,%s) RETURNING id',
             (card_id, url, title, pos)
         )
-        row = dict(conn.execute('SELECT * FROM card_links WHERE id=%s', (cur.lastrowid,)).fetchone())
+        new_link_id = cur.fetchone()['id']
+        row = dict(conn.execute('SELECT * FROM card_links WHERE id=%s', (new_link_id,)).fetchone())
         _log_activity(conn, card_id, 'link_added', title or url)
     return jsonify(row), 201
 
@@ -3464,10 +3473,10 @@ def api_create_card_mirror(card_id):
             'SELECT COALESCE(MAX(position),-1)+1 FROM card_mirrors WHERE column_id=%s', (column_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            'INSERT INTO card_mirrors (source_card_id, column_id, position) VALUES (%s,%s,%s)',
+            'INSERT INTO card_mirrors (source_card_id, column_id, position) VALUES (%s,%s,%s) RETURNING id',
             (card_id, column_id, pos)
         )
-        mirror_id = cur.lastrowid
+        mirror_id = cur.fetchone()['id']
         _log_activity(conn, card_id, 'mirror_added', '')
     return jsonify({'mirror_id': mirror_id}), 201
 
@@ -4620,10 +4629,10 @@ def _execute_scheduled_action(conn, sched):
             return
         cur = conn.execute(
             '''INSERT INTO cards (column_id, title, description, due_date, position)
-               VALUES (%s,%s,%s,%s,0)''',
+               VALUES (%s,%s,%s,%s,0) RETURNING id''',
             (target_col, value or 'Задача по расписанию', '', '')
         )
-        _log_activity(conn, cur.lastrowid, 'created', log_msg)
+        _log_activity(conn, cur.fetchone()['id'], 'created', log_msg)
     elif action == 'archive_completed':
         if not target_col:
             col_ids = [c['id'] for c in conn.execute(
