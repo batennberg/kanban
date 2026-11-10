@@ -247,7 +247,7 @@ def _log_column_entry(conn, card_id, column_id):
 def _log_column_exit(conn, card_id):
     """Фиксирует выход карточки из текущей колонки."""
     conn.execute(
-        "UPDATE card_column_history SET left_at=datetime('now','localtime') WHERE card_id=%s AND left_at IS NULL",
+        "UPDATE card_column_history SET left_at=(to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')) WHERE card_id=%s AND left_at IS NULL",
         (card_id,)
     )
 
@@ -295,7 +295,7 @@ def _apply_automation_action(conn, card_id, rule):
         conn.execute('UPDATE cards SET completed=0 WHERE id=%s', (card_id,))
         _log_activity(conn, card_id, 'reopened', tag)
     elif action == 'archive_card':
-        conn.execute("UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE id=%s", (card_id,))
+        conn.execute("UPDATE cards SET archived=1, archived_at=(to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')) WHERE id=%s", (card_id,))
         _log_activity(conn, card_id, 'archived', tag)
     elif action == 'set_importance':
         conn.execute('UPDATE cards SET importance=%s WHERE id=%s', (value, card_id))
@@ -1683,7 +1683,7 @@ def _get_user_from_token():
         if not row:
             return None
         # обновить last_used
-        conn.execute("UPDATE api_tokens SET last_used=datetime('now','localtime') WHERE token_hash=%s",
+        conn.execute("UPDATE api_tokens SET last_used=(to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')) WHERE token_hash=%s",
                      (token_hash,))
         user_row = conn.execute("SELECT email, name, role FROM users WHERE email=%s",
                                 (row['user_email'],)).fetchone()
@@ -2353,7 +2353,7 @@ def api_delete_card(card_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         conn.execute(
-            "UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE id=%s",
+            "UPDATE cards SET archived=1, archived_at=(to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')) WHERE id=%s",
             (card_id,)
         )
         _log_activity(conn, card_id, 'archived')
@@ -2811,8 +2811,8 @@ def api_update_notification_settings():
     with get_db() as conn:
         conn.execute('''
             INSERT INTO notification_settings (user_email, settings, updated_at)
-            VALUES (%s, %s, datetime('now','localtime'))
-            ON CONFLICT(user_email) DO UPDATE SET settings=%s, updated_at=datetime('now','localtime')
+            VALUES (%s, %s, (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')))
+            ON CONFLICT(user_email) DO UPDATE SET settings=%s, updated_at=(to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
         ''', (email, json.dumps(settings), json.dumps(settings)))
     return jsonify({'ok': True})
 
@@ -3662,7 +3662,7 @@ def api_delete_column(col_id):
     with get_db() as conn:
         col = conn.execute('SELECT name, board_id FROM columns WHERE id=%s', (col_id,)).fetchone()
         conn.execute(
-            "UPDATE columns SET archived=1, archived_at=datetime('now','localtime') WHERE id=%s",
+            "UPDATE columns SET archived=1, archived_at=(to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')) WHERE id=%s",
             (col_id,)
         )
         if col:
@@ -4642,7 +4642,7 @@ def _execute_scheduled_action(conn, sched):
             col_ids = [target_col]
         ph = ','.join(['%s'] * len(col_ids))
         conn.execute(
-            f"UPDATE cards SET archived=1, archived_at=datetime('now','localtime') WHERE column_id IN ({ph}) AND completed=1 AND (archived=0 OR archived IS NULL)",
+            f"UPDATE cards SET archived=1, archived_at=(to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')) WHERE column_id IN ({ph}) AND completed=1 AND (archived=0 OR archived IS NULL)",
             col_ids
         )
     elif action == 'move_to_column':
