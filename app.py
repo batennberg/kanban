@@ -4132,19 +4132,19 @@ def migrate_db():
         # ── История активности карточки (audit) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_activity (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 event_type TEXT    NOT NULL,
                 actor_name TEXT    NOT NULL DEFAULT '',
                 detail     TEXT    NOT NULL DEFAULT '',
-                created_at TEXT    DEFAULT (datetime('now','localtime'))
+                created_at TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
 
         # ── Кастомные поля ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS custom_fields (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 board_id      INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
                 name          TEXT    NOT NULL,
                 type          TEXT    NOT NULL,
@@ -4155,7 +4155,7 @@ def migrate_db():
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_custom_field_values (
-                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                id       INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 card_id  INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 field_id INTEGER NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
                 value    TEXT    NOT NULL DEFAULT '',
@@ -4163,42 +4163,38 @@ def migrate_db():
             )
         ''')
 
-        # ── Зеркальные карточки (Should №30) — не копия, а «окно» в исходную карточку:
-        # ссылка на column_id/position, где показывается; данные всегда читаются из
-        # исходной карточки, поэтому изменения видны сразу везде при следующей загрузке доски ──
+        # ── Зеркальные карточки (Should №30) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_mirrors (
-                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                id             INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 source_card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 column_id      INTEGER NOT NULL REFERENCES columns(id) ON DELETE CASCADE,
                 position       INTEGER DEFAULT 0,
-                created_at     TEXT    DEFAULT (datetime('now','localtime'))
+                created_at     TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
 
-        # ── Автоматизация по триггеру (Should №52) — базовый вид: только
-        # «карточка попала в колонку X» ⇒ одно действие. Без условий/расписания/
-        # межбордовой автоматизации — это отдельные пункты чек-листа (№54-57). ──
+        # ── Автоматизация по триггеру (Should №52) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS automation_rules (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 board_id          INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
                 name              TEXT    NOT NULL DEFAULT '',
                 trigger_column_id INTEGER NOT NULL REFERENCES columns(id) ON DELETE CASCADE,
                 action_type       TEXT    NOT NULL,
                 action_value      TEXT    DEFAULT '',
                 enabled           INTEGER DEFAULT 1,
-                created_at        TEXT    DEFAULT (datetime('now','localtime'))
+                created_at        TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS'))
             )
         ''')
 
         # ── Двусторонняя связь карточка↔карточка (Should №31) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_relations (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 card_a_id  INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 card_b_id  INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
-                created_at TEXT    DEFAULT (datetime('now','localtime')),
+                created_at TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')),
                 UNIQUE(card_a_id, card_b_id)
             )
         ''')
