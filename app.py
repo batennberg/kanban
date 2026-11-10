@@ -4273,9 +4273,6 @@ def migrate_db():
         ''')
 
         # ── Разовый перенос меток-приоритетов (введённых временно 27.07) в cards.importance ──
-        # Метки-приоритеты когда-то хранились в card_labels наравне с обычными метками;
-        # теперь важность — отдельное поле карточки, а card_labels снова свободен для
-        # произвольных пользовательских меток.
         placeholders = ','.join(['%s'] * len(IMPORTANCE_LEVELS))
         importance_rows = conn.execute(
             f'SELECT card_id, name FROM card_labels WHERE name IN ({placeholders}) ORDER BY id DESC',
@@ -4284,7 +4281,7 @@ def migrate_db():
         seen_cards = set()
         for row in importance_rows:
             if row['card_id'] in seen_cards:
-                continue  # на карточке уже была только одна метка-приоритет, но на всякий случай
+                continue
             seen_cards.add(row['card_id'])
             conn.execute('UPDATE cards SET importance=%s WHERE id=%s', (row['name'], row['card_id']))
         conn.execute(
@@ -4293,36 +4290,18 @@ def migrate_db():
         )
 
         # ── Повторяющиеся карточки (Should №60) ──
-        try:
-            conn.execute("ALTER TABLE cards ADD COLUMN repeat_pattern TEXT DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass
+        conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS repeat_pattern TEXT DEFAULT ''")
 
         # ── Автоматизация по приближению срока (Should №55) ──
-        try:
-            conn.execute("ALTER TABLE automation_rules ADD COLUMN trigger_type TEXT DEFAULT 'column'")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            conn.execute("ALTER TABLE automation_rules ADD COLUMN trigger_value TEXT DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass
+        conn.execute("ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS trigger_type TEXT DEFAULT 'column'")
+        conn.execute("ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS trigger_value TEXT DEFAULT ''")
 
         # ── Условия в правилах (Should №56) ──
-        try:
-            conn.execute("ALTER TABLE automation_rules ADD COLUMN condition_type TEXT DEFAULT 'none'")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            conn.execute("ALTER TABLE automation_rules ADD COLUMN condition_value TEXT DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass
+        conn.execute("ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS condition_type TEXT DEFAULT 'none'")
+        conn.execute("ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS condition_value TEXT DEFAULT ''")
 
         # ── Автоматизация между досками (Should №57) ──
-        try:
-            conn.execute("ALTER TABLE automation_rules ADD COLUMN target_board_id INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
+        conn.execute("ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS target_board_id INTEGER DEFAULT 0")
 
         # ── Реакции на комментариях (Nice №26) ──
         conn.execute('''
