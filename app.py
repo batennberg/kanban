@@ -4306,11 +4306,11 @@ def migrate_db():
         # ── Реакции на комментариях (Nice №26) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS comment_reactions (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 comment_id INTEGER NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
                 user_email TEXT    NOT NULL,
                 emoji      TEXT    NOT NULL,
-                created_at TEXT    DEFAULT (datetime('now','localtime')),
+                created_at TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')),
                 UNIQUE(comment_id, user_email, emoji)
             )
         ''')
@@ -4318,19 +4318,16 @@ def migrate_db():
         # ── Cycle time — история колонок (Nice №101) ──
         conn.execute('''
             CREATE TABLE IF NOT EXISTS card_column_history (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 column_id  INTEGER NOT NULL,
-                entered_at TEXT    DEFAULT (datetime('now','localtime')),
+                entered_at TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')),
                 left_at    TEXT
             )
         ''')
 
         # ── Зависимости задач (Nice №32) ──
-        try:
-            conn.execute("ALTER TABLE card_relations ADD COLUMN relation_type TEXT DEFAULT 'related'")
-        except sqlite3.OperationalError:
-            pass
+        conn.execute("ALTER TABLE card_relations ADD COLUMN IF NOT EXISTS relation_type TEXT DEFAULT 'related'")
 
         # ── Голосование (Nice №33) ──
         conn.execute('''
@@ -4338,22 +4335,16 @@ def migrate_db():
                 card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
                 user_email TEXT    NOT NULL,
                 vote       INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT    DEFAULT (datetime('now','localtime')),
+                created_at TEXT    DEFAULT (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')),
                 PRIMARY KEY (card_id, user_email)
             )
         ''')
 
         # ── Webhook форматы (Nice №70) ──
-        try:
-            conn.execute("ALTER TABLE webhooks ADD COLUMN format TEXT DEFAULT 'raw'")
-        except sqlite3.OperationalError:
-            pass
+        conn.execute("ALTER TABLE webhooks ADD COLUMN IF NOT EXISTS format TEXT DEFAULT 'raw'")
 
         # ── AI-суммаризация — столбец кэша (Nice №75) ──
-        try:
-            conn.execute("ALTER TABLE cards ADD COLUMN ai_summary TEXT")
-        except sqlite3.OperationalError:
-            pass
+        conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS ai_summary TEXT")
 
         # ── Персональные настройки уведомлений ──
         conn.execute('''
