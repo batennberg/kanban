@@ -577,7 +577,7 @@ if not _secret:
 app.secret_key = _secret
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = bool(os.environ.get('SECRET_KEY'))
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', '').strip().lower() == 'true'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 МБ
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
 
