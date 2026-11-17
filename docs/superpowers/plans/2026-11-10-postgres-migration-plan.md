@@ -2001,6 +2001,58 @@ If anything fails: do not proceed to writing the follow-up plan — fix the root
 
 ---
 
+## Task 19: Fix two real bugs found by Task 18's rehearsal (addendum, added post-hoc)
+
+**Why this task exists:** Task 18's live rehearsal against real migrated data found two genuine defects that no task 1-17 was ever scoped to catch — both are confirmed, deterministic, reproducible bugs, not test-setup issues. This task was not in the original plan; it's added here, after the fact, because the plan's own process ("if anything fails: fix the root cause... and re-verify") requires it before the plan can be considered done.
+
+**Files:**
+- Modify: `app.py` at lines 655, 702, 2180, 2189, 3590 (bug 1) and ~856 (bug 2)
+
+**Bug 1 — `date('now','localtime')` is SQLite-only syntax, never ported.** The original plan's audit (which later became Task 13) only searched for `datetime('now'` — it missed this separate, shorter SQLite function `date('now','localtime')`, used identically at all 5 sites to check whether a board-access grant (`board_access.expires_at`) has expired. All 5 are the literal substring `date('now','localtime')` inside a comparison against `expires_at` (a `TEXT` column storing a `YYYY-MM-DD`-shaped date string). Breaks: non-admin login (board-access lookup), board-members listing, admin board-access management.
+
+- [ ] **Step 1: Fix all 5 sites with the same substitution**
+
+Replace `date('now','localtime')` with `(to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD'))` — the same fixed-offset convention used everywhere else in this migration, truncated to date-only format (no time component) to match what `expires_at` stores and what SQLite's `date(...)` (as opposed to `datetime(...)`) returned.
+
+This is identical at all 5 occurrences — a safe, uniform find-replace:
+```python
+# before (all 5 sites, e.g. line 655)
+WHERE user_id=%s AND (expires_at IS NULL OR expires_at='' OR expires_at >= date('now','localtime'))
+# after
+WHERE user_id=%s AND (expires_at IS NULL OR expires_at='' OR expires_at >= (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD')))
+```
+Line 3590 uses `<` instead of `>=` (checking the EXPIRED case, not the valid case) — same substitution, just keep that site's existing comparison operator unchanged.
+
+- [ ] **Step 2: Verify no `date('now'` remains**
+
+Run: `grep -n "date('now'" app.py`
+Expected: no output.
+
+**Bug 2 — `app.py`'s `board()` view (`/board/<int:board_id>` route) calls `conn.execute(...)` AFTER its `with get_db() as conn:` block has already exited and closed the connection.** The line `boards_all = conn.execute('SELECT id, name FROM boards ORDER BY name').fetchall()` sits at the same indentation as the `with` statement itself (i.e. outside the block), not inside it. Under SQLite this silently worked (SQLite's context-manager `__exit__` only commits/rolls back, never closes the connection object). Under `PGConnWrapper` (Task 2), `__exit__` explicitly closes the underlying psycopg2 connection — so this line now raises `psycopg2.InterfaceError: connection already closed`, 500ing the board page for every user, every time. This is a pre-existing structural bug in the original code that only Task 2's (correct) resource-closing behavior exposes — not a regression introduced by any specific porting task.
+
+- [ ] **Step 3: Move the misplaced line inside the `with` block**
+
+Find the end of the `with get_db() as conn:` block in the `board()` view (the block ends right after the `for col in conn.execute(...)` loop that builds `board_data['columns']`). Move `boards_all = conn.execute('SELECT id, name FROM boards ORDER BY name').fetchall()` to be the last statement inside that block (indented to match the block's other statements), before the `with` block's indentation returns to the outer level and before `return render_template(...)`.
+
+- [ ] **Step 4: Verify no other occurrence of this pattern**
+
+Run: `grep -n "^    with get_db" app.py` and for each match, manually confirm every `conn.execute`/`conn.`-anything reference between that line and the next line at the same or lower indentation is actually inside the block (indented further). This task's brief already identified this as the ONLY occurrence in the whole file (per Task 18's static re-scan) — this step is a second independent confirmation, not a search for more unknowns.
+
+- [ ] **Step 5: Re-verify the two specific smoke-test items Task 18 found broken**
+
+Using the same `app.test_client()` approach Task 18 used (see that task's report for the exact pattern), against the SAME already-migrated Postgres data from Task 18's rehearsal (don't re-run the ETL — the data is still there and this task doesn't change it):
+- Log in as `user@almaly.kz` / `user123` (non-admin) — confirm success (was failing before this fix).
+- `GET /board/1` (or any valid board id) — confirm 200, not 500 (was failing before this fix).
+
+- [ ] **Step 6: `python -m py_compile app.py`, commit**
+
+```bash
+git add app.py
+git commit -m "Fix date('now','localtime') SQLite syntax and misplaced conn.execute outside with-block (found by Task 18 rehearsal)"
+```
+
+---
+
 ## Self-Review Notes
 
 - **Spec coverage:** every section of the spec's "Изменения в коде приложения" and "Перенос данных работающего приложения" (data-migration parts) is covered by Tasks 1-18. The spec's Docker/compose/backups/cutover sections are explicitly deferred to a follow-up plan (stated in this plan's header and Task 18 Step 6) — this is a scope split, not a gap.
