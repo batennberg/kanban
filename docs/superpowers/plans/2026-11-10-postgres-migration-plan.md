@@ -2040,7 +2040,7 @@ Run: `grep -n "^    with get_db" app.py` and for each match, manually confirm ev
 
 - [ ] **Step 5: Re-verify the two specific smoke-test items Task 18 found broken**
 
-Using the same `app.test_client()` approach Task 18 used (see that task's report for the exact pattern), against the SAME already-migrated Postgres data from Task 18's rehearsal (don't re-run the ETL — the data is still there and this task doesn't change it):
+Using the same `app.test_client()` approach Task 18 used (see that task's report for the exact pattern). **Correction: Task 18 left Postgres reset to its clean, seed-only state afterward — the migrated rehearsal data no longer exists.** That's fine: both bugs are unconditional (a SQL syntax/type error and a closed-connection error respectively), not data-dependent, so they reproduce identically against the current seed data. No need to re-run the ETL for this verification — just use whatever's currently in the local dev Postgres (seed data from `models.py`'s `_seed()`/`_seed_users()`, which already includes a non-admin `user@almaly.kz` and board id 1):
 - Log in as `user@almaly.kz` / `user123` (non-admin) — confirm success (was failing before this fix).
 - `GET /board/1` (or any valid board id) — confirm 200, not 500 (was failing before this fix).
 
