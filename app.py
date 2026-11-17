@@ -652,7 +652,7 @@ def login():
                     with get_db() as conn:
                         board_ids = [r[0] for r in conn.execute('''
                             SELECT board_id FROM board_access
-                            WHERE user_id=%s AND (expires_at IS NULL OR expires_at='' OR expires_at >= date('now','localtime'))
+                            WHERE user_id=%s AND (expires_at IS NULL OR expires_at='' OR expires_at >= (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD')))
                         ''', (user['id'],)).fetchall()]
                 session['user'] = {
                     'id':           user['id'],
@@ -699,7 +699,7 @@ def _get_board_ids():
     with get_db() as conn:
         rows = conn.execute('''
             SELECT board_id FROM board_access
-            WHERE user_id=%s AND (expires_at IS NULL OR expires_at='' OR expires_at >= date('now','localtime'))
+            WHERE user_id=%s AND (expires_at IS NULL OR expires_at='' OR expires_at >= (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD')))
         ''', (user_id,)).fetchall()
     return [r[0] for r in rows]
 
@@ -853,7 +853,7 @@ def board(board_id):
                 col_dict['cards'].append(card_dict)
             col_dict['mirrors'] = mirrors_by_column.get(col['id'], [])
             board_data['columns'].append(col_dict)
-    boards_all = conn.execute('SELECT id, name FROM boards ORDER BY name').fetchall()
+        boards_all = conn.execute('SELECT id, name FROM boards ORDER BY name').fetchall()
     return render_template('board.html', board=board_data, board_id=board_id, user=session['user'], boards_all=boards_all)
 
 
@@ -2177,7 +2177,7 @@ def api_get_board_members(board_id):
                 SELECT DISTINCT u.email, u.name
                 FROM users u
                 LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = %s
-                    AND (ba.expires_at IS NULL OR ba.expires_at='' OR ba.expires_at >= date('now','localtime'))
+                    AND (ba.expires_at IS NULL OR ba.expires_at='' OR ba.expires_at >= (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD')))
                 WHERE u.role = 'admin' OR ba.user_id IS NOT NULL
                 ORDER BY u.name
             ''', (board_id,)).fetchall()
@@ -2186,7 +2186,7 @@ def api_get_board_members(board_id):
                 SELECT DISTINCT u.email, u.name
                 FROM users u
                 JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = %s
-                    AND (ba.expires_at IS NULL OR ba.expires_at='' OR ba.expires_at >= date('now','localtime'))
+                    AND (ba.expires_at IS NULL OR ba.expires_at='' OR ba.expires_at >= (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD')))
                 WHERE u.role != 'admin'
                 ORDER BY u.name
             ''', (board_id,)).fetchall()
@@ -3587,7 +3587,7 @@ def api_get_board_access(board_id):
             SELECT u.id, u.name, u.email,
                    CASE WHEN ba.user_id IS NOT NULL THEN 1 ELSE 0 END AS has_access,
                    ba.expires_at AS expires_at,
-                   CASE WHEN ba.expires_at IS NOT NULL AND ba.expires_at != '' AND ba.expires_at < date('now','localtime')
+                   CASE WHEN ba.expires_at IS NOT NULL AND ba.expires_at != '' AND ba.expires_at < (to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD'))
                         THEN 1 ELSE 0 END AS is_expired
             FROM users u
             LEFT JOIN board_access ba ON ba.user_id = u.id AND ba.board_id = %s
