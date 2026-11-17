@@ -1948,6 +1948,12 @@ init_db(); migrate_db()
 "
 ```
 
+**Ruling (added during execution, not in the original plan text):** `init_db()` unconditionally seeds demo data into `users`/`workspaces`/`boards`/`columns`/`cards` whenever those tables are empty — which they always are right after a schema reset. This means the ETL script's documented precondition ("empty-but-schema-initialized Postgres") is never actually true after this step, and Step 3's ETL run would hit primary-key conflicts on exactly those 5 tables. Task 17's implementer discovered this and worked around it in its own dry run by truncating the seeded tables afterward — add that same step here, before running the ETL:
+```bash
+PGPASSWORD=devpass psql -U kanban -h localhost -d kanban -c "TRUNCATE cards, columns, boards, workspaces, users RESTART IDENTITY CASCADE;"
+```
+Cost if this ruling is wrong: low — this only removes demo seed data that has no value once real production data is about to be loaded in its place; nothing downstream depends on the seed rows surviving. (This same precondition gap will also affect the real production cutover in the follow-up Docker/Linux plan — flagged there too, not just here.)
+
 - [ ] **Step 3: Run the ETL script against the real data copy**
 
 ```bash
