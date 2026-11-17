@@ -1,6 +1,7 @@
 import os
 import psycopg2
 import psycopg2.extras
+import psycopg2.extensions
 
 
 class PGConnWrapper:
@@ -26,10 +27,12 @@ class PGConnWrapper:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         try:
-            if exc_type is None:
-                self._conn.commit()
-            else:
+            if exc_type is not None:
                 self._conn.rollback()
+            elif self._conn.get_transaction_status() == psycopg2.extensions.TRANSACTION_STATUS_INERROR:
+                self._conn.rollback()
+            else:
+                self._conn.commit()
         finally:
             self._conn.close()
         return False
@@ -43,6 +46,7 @@ def get_db():
         user=os.environ['POSTGRES_USER'],
         password=os.environ['POSTGRES_PASSWORD'],
         cursor_factory=psycopg2.extras.DictCursor,
+        connect_timeout=5,
     )
     return PGConnWrapper(conn)
 

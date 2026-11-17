@@ -5,7 +5,13 @@ future INSERTs continue after the highest migrated id.
 
 Must be run against a Postgres database that already has the schema applied
 (via `from models import init_db; from app import migrate_db; init_db(); migrate_db()`
-pointed at the target Postgres connection).
+pointed at the target Postgres connection) -- AND whose target tables are
+empty. init_db() seeds demo rows into users/workspaces/boards/columns/cards
+whenever they're empty, which this script's own primary-key preservation
+will then conflict with. This script checks for that and aborts with a
+clear message rather than failing confusingly partway through; if it
+aborts, truncate the seeded tables first:
+    TRUNCATE cards, columns, boards, workspaces, users RESTART IDENTITY CASCADE;
 
 NOT resumable: if this script fails partway through, do not re-run it against
 the same Postgres database — it will hit primary-key conflicts on tables it
@@ -51,6 +57,8 @@ def _relativize_attachment_path(upload_folder, old_filepath):
     UPLOAD_FOLDER prefix, so we reconstruct the relative form from those."""
     normalized = old_filepath.replace('\\', '/')
     parts = normalized.split('/')
+    if len(parts) < 2:
+        return normalized
     card_dir, filename = parts[-2], parts[-1]
     return f'{card_dir}/{filename}'
 
@@ -106,8 +114,12 @@ def main():
     parser.add_argument('--pg-port', default='5432')
     parser.add_argument('--pg-db', required=True)
     parser.add_argument('--pg-user', required=True)
-    parser.add_argument('--pg-password', required=True)
+    parser.add_argument('--pg-password', default=os.environ.get('PGPASSWORD'),
+                         help='Postgres password. Prefer the PGPASSWORD env var over this flag '
+                              '(a CLI arg is visible in shell history and the process list).')
     args = parser.parse_args()
+    if not args.pg_password:
+        parser.error('--pg-password or the PGPASSWORD env var is required')
 
     sqlite_conn = sqlite3.connect(args.sqlite)
     sqlite_conn.row_factory = sqlite3.Row
@@ -117,6 +129,21 @@ def main():
         user=args.pg_user, password=args.pg_password,
     )
 
+    with pg_conn.cursor() as check_cur:
+        non_empty = []
+        for table in TABLE_ORDER:
+            check_cur.execute(f'SELECT COUNT(*) FROM {table}')
+            if check_cur.fetchone()[0] > 0:
+                non_empty.append(table)
+    if non_empty:
+        print(f'ERROR: target tables are not empty: {non_empty}')
+        print("init_db() seeds demo data whenever users/workspaces/boards/columns/cards")
+        print("are empty -- truncate them before running this script:")
+        print("  TRUNCATE cards, columns, boards, workspaces, users RESTART IDENTITY CASCADE;")
+        sqlite_conn.close()
+        pg_conn.close()
+        return 1
+
     print(f'Migrating {args.sqlite} -> postgres://{args.pg_host}:{args.pg_port}/{args.pg_db}')
     total = 0
     for table in TABLE_ORDER:
@@ -125,7 +152,9 @@ def main():
     print(f'Done. {total} rows migrated across {len(TABLE_ORDER)} tables.')
     sqlite_conn.close()
     pg_conn.close()
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    sys.exit(main() or 0)

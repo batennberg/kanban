@@ -81,7 +81,7 @@ def _find_mentioned_users(conn, text):
             rows = conn.execute(
                 '''
                 SELECT email, name FROM users
-                WHERE LOWER(email)=%s OR LOWER(name)=%s OR LOWER(name)=%s OR LOWER(SUBSTR(email, 1, CASE WHEN INSTR(email, '@') > 0 THEN INSTR(email, '@') - 1 ELSE LENGTH(email) END))=%s
+                WHERE LOWER(email)=%s OR LOWER(name)=%s OR LOWER(name)=%s OR LOWER(split_part(email, '@', 1))=%s
                 ''',
                 (mention, mention, mention, mention)
             ).fetchall()
@@ -2076,7 +2076,7 @@ def api_save_slack():
     with get_db() as conn:
         existing = conn.execute('SELECT id FROM slack_settings WHERE board_id=%s', (board_id,)).fetchone()
         if existing:
-            conn.execute('UPDATE slack_settings SET webhook_url=%s, events=%s, active=%s, updated_at=datetime("now","localtime") WHERE id=%s',
+            conn.execute("UPDATE slack_settings SET webhook_url=%s, events=%s, active=%s, updated_at=(to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYY-MM-DD HH24:MI:SS')) WHERE id=%s",
                          (url, events, 1 if url else 0, existing['id']))
             wh_id = existing['id']
         else:
@@ -2324,7 +2324,7 @@ def api_update_card(card_id):
     for f in allowed:
         if f in d:
             fields.append(f'{f}=%s')
-            values.append(d[f])
+            values.append((1 if d[f] else 0) if f == 'completed' else d[f])
     automations = []
     if fields:
         with get_db() as conn:
@@ -2571,7 +2571,7 @@ def api_update_checklist_item(item_id):
     for f in ['text', 'checked', 'due_date', 'assignee_email', 'assignee_name', 'position', 'checklist_id']:
         if f in d:
             fields.append(f'{f}=%s')
-            values.append(d[f])
+            values.append((1 if d[f] else 0) if f == 'checked' else d[f])
     if fields:
         with get_db() as conn:
             before = conn.execute('SELECT * FROM checklist_items WHERE id=%s', (item_id,)).fetchone()
@@ -2712,12 +2712,12 @@ def api_board_workload(board_id):
     if 'user' not in session: return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         rows = conn.execute('''
-            SELECT cm.user_email, cm.user_name,
+            SELECT cm.user_email, MAX(cm.user_name) AS user_name,
                    COUNT(c.id) AS total,
                    SUM(CASE WHEN c.completed=1 THEN 1 ELSE 0 END) AS done,
                    SUM(CASE WHEN c.due_date != '' AND c.due_date IS NOT NULL
                        AND (substr(c.due_date,7,4)||substr(c.due_date,4,2)||substr(c.due_date,1,2))
-                       < strftime('%Y%m%d','now','localtime')
+                       < to_char((now() AT TIME ZONE 'UTC') + interval '5 hours', 'YYYYMMDD')
                        AND (c.completed=0 OR c.completed IS NULL) THEN 1 ELSE 0 END) AS overdue
             FROM card_members cm
             JOIN cards c ON c.id = cm.card_id
@@ -2746,7 +2746,7 @@ def api_get_inbox():
         if unread_only:
             sql += ' AND is_read=0'
         if board_id:
-            sql += " AND (board_id=%s OR json_extract(payload,'$.board_id')=%s)"
+            sql += " AND (board_id=%s OR (payload LIKE '{%%' AND (payload::jsonb->>'board_id')::int = %s))"
             params += [board_id, board_id]
         sql += ' ORDER BY created_at DESC, id DESC LIMIT %s'
         params.append(limit)
@@ -4501,8 +4501,8 @@ def health():
         with get_db() as conn:
             conn.execute('SELECT 1')
         return jsonify({'status': 'ok'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'detail': str(e)}), 503
+    except Exception:
+        return jsonify({'status': 'error', 'detail': 'database unavailable'}), 503
 
 
 # ===== Автоматизация по приближению срока (Should №55) =====
